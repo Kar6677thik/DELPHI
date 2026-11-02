@@ -17,6 +17,7 @@ the integrity of KB versions and the audit log, and the home server itself.
 | Denial of service | Hammering Guardian or LLM endpoints | Rate limits (doc 16); LLM daily token budget; bounded job concurrency (worker: 2 concurrent jobs); Cloudflare rate limiting rule on `/api/v1/auth/login` |
 | Elevation of privilege | VIEWER calling write endpoints; container escape | Permission check in every router dependency (deny by default) with tests per endpoint; containers non-root, read-only root FS, no privilege escalation, all capabilities dropped |
 | Prompt injection | Malicious text in evidence reaching the LLM | Evidence is data inside delimiters; the LLM has no tools; its output is validated; the LLM cannot affect decisions (ADR-0004) |
+| Malicious image publish | A collaborator's branch workflow pushes a `sha-…` tag that Image Updater deploys | Package linked to the repo with Read only; publishing only via the `main`-restricted `production` environment secret; reviewed PRs to `main` (doc 23 §3) |
 | Supply chain | Malicious dependency or action | Lockfiles (uv, pnpm); dependency review; `pip-audit`, `pnpm audit`, Trivy image scan; actions pinned by commit SHA; Dependabot for updates |
 | Home network exposure | Inbound ports on the router | Cloudflare Tunnel is outbound-only; no port forwarding; the cluster API is never exposed to GitHub (ADR-0009) |
 
@@ -66,8 +67,7 @@ draft. This applies even to ADMIN.
 | DB passwords (`delphi_app`, `delphi_sim`, postgres superuser) | k8s Secret `delphi-db` | Manual (runbook) |
 | `ANTHROPIC_API_KEY`, `DELPHI_SECRET_KEY`, bootstrap admin | k8s Secret `delphi-app` | Manual; rotate the API key if it ever appears in a log |
 | Cloudflare tunnel token | k8s Secret `cloudflared-token` | Via the Cloudflare dashboard |
-| GHCR pull credentials | k8s Secret `ghcr-pull` (dockerconfigjson, read:packages PAT) | Yearly PAT expiry |
-| Image Updater registry credentials | Secret in the `argocd` namespace | Same PAT |
+| `GHCR_PUSH_TOKEN` (classic PAT, `write:packages` only) | GitHub environment `production` secret, usable only from `main` (doc 23 §3) | On PAT expiry; immediately if leaked. No cluster pull credentials are needed (public package, A-05) |
 
 Secrets are never committed. `gitleaks` runs in CI. `.env` files are git-ignored, and
 `.env.example` documents the names.

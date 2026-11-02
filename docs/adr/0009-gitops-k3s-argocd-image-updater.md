@@ -9,8 +9,11 @@ k3s to manage everything else, on every push to `main` and on manual runs. Every
 authored by the owner only, so CI must not commit.
 
 ## Decision
-- GitHub Actions runs CI, builds the image and pushes `ghcr.io/kar6677thik/delphi:sha-<sha>`
-  with `GITHUB_TOKEN` (packages: write).
+- GitHub Actions runs CI, builds the image and pushes `ghcr.io/kar6677thik/delphi:sha-<sha>`.
+  The push uses a `write:packages` token held as a secret of the `production` environment,
+  which only `main` may use. The repo's own `GITHUB_TOKEN` has Read access to the package. So a
+  workflow on another branch cannot publish a deployable tag (amended 2026-11-02, when
+  collaborators gained write access; doc 23 §3).
 - In the cluster, Argo CD syncs `deploy/k8s/overlays/home` from `main`.
 - Argo CD Image Updater (strategy newest-build, tags `^sha-[0-9a-f]{40}$`, write-back method
   `argocd`) sets the image override on the Application without committing to git.
