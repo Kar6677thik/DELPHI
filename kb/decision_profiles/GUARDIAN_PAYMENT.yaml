@@ -1,0 +1,17 @@
+key: GUARDIAN_PAYMENT
+context: OUTBOUND_PAYMENT
+source_kind: PROBE
+amount_basis: PAYMENT_AMOUNT
+description: "Payment-time decision (Guardian loop)."
+decisions: [RELEASE, HOLD_FOR_REVIEW, PROTECTIVE_HOLD, DECLINE]   # less intrusive first (tie-break order)
+loss:   # GENUINE and UNEXPLAINED cells here; typology cells live in hypothesis files
+  GENUINE:
+    RELEASE: [0, 0, false]
+    HOLD_FOR_REVIEW: [1000, 0.03, false]
+    PROTECTIVE_HOLD: [3000, 0.04, false]
+    DECLINE: [2000, 0.05, false]
+  UNEXPLAINED:
+    RELEASE: [0, 0.6, true]
+    HOLD_FOR_REVIEW: [500, 0.02, false]
+    PROTECTIVE_HOLD: [500, 0.02, false]
+    DECLINE: [100, 0.05, false]

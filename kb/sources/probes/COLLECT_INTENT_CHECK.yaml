@@ -1,0 +1,15 @@
+key: COLLECT_INTENT_CHECK
+kind: PROBE
+mode: ACTIVE
+friction_tier: LOW
+outcomes: [EXPECTS_TO_RECEIVE, UNDERSTANDS_PAYING]
+contexts: [OUTBOUND_PAYMENT]
+channels: [UPI_COLLECT_APPROVAL]
+exclusive_group: null
+requires_consent: null
+question: true
+answer_options: [YES_RECEIVING, NO_I_AM_PAYING]
+expected_latency_s: 10
+enabled: false
+classifier: COLLECT_INTENT_CHECK
+description: "Asks whether the customer believes a collect request will pay them. Disabled in KB v1; enabled in demo story S-4."

@@ -1,0 +1,15 @@
+key: BIOMETRIC_STEP_UP
+kind: PROBE
+mode: ACTIVE
+friction_tier: LOW
+outcomes: [PASSED, FAILED_OR_ABANDONED]
+contexts: [OUTBOUND_PAYMENT]
+channels: null
+exclusive_group: STEP_UP_AUTH
+requires_consent: null
+question: false
+answer_options: null
+expected_latency_s: 8
+enabled: true
+classifier: BIOMETRIC_STEP_UP
+description: "Device biometric challenge."

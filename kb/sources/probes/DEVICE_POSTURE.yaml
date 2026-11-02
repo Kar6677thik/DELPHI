@@ -1,0 +1,15 @@
+key: DEVICE_POSTURE
+kind: PROBE
+mode: PASSIVE
+friction_tier: NONE
+outcomes: [REMOTE_ACCESS_ACTIVE, NEW_DEVICE, KNOWN_DEVICE]
+contexts: [OUTBOUND_PAYMENT]
+channels: null
+exclusive_group: null
+requires_consent: null
+question: false
+answer_options: null
+expected_latency_s: 0.1
+enabled: true
+classifier: DEVICE_POSTURE
+description: "Remote-access and screen-share flags, and device age."

@@ -1,0 +1,15 @@
+key: SPELL_BREAKER_INVESTMENT
+kind: PROBE
+mode: ACTIVE
+friction_tier: MEDIUM
+outcomes: [HESITATION_OR_APP_SWITCH, ANSWERED_YES, ANSWERED_NO_NORMAL]
+contexts: [OUTBOUND_PAYMENT]
+channels: null
+exclusive_group: null
+requires_consent: null
+question: true
+answer_options: ["YES", "NO"]
+expected_latency_s: 15
+enabled: true
+classifier: SPELL_BREAKER_INVESTMENT
+description: "Investment-scam spell-breaker question, scored on response behaviour."

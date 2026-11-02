@@ -1,0 +1,30 @@
+key: GENUINE
+display_name: "Genuine"
+kind: GENUINE
+contexts: [OUTBOUND_PAYMENT, ACCOUNT_REVIEW]
+f3_stages: []
+color: "#15803D"
+description: >
+  The customer (or account holder) is acting freely and legitimately.
+likelihoods:   # probs in the source's outcome order; alpha = probs * ess (doc 06 §2)
+  BENEFICIARY_INTEL: { probs: [0.005, 0.025, 0.55, 0.42], ess: 20 }
+  COUNTERPARTY_PHONE_RISK: { probs: [0.01, 0.04, 0.95], ess: 20 }
+  DEVICE_POSTURE: { probs: [0.01, 0.07, 0.92], ess: 20 }
+  SESSION_BEHAVIOUR: { probs: [0.08, 0.02, 0.9], ess: 20 }
+  CALL_STATUS: { probs: [0.08, 0.12, 0.8], ess: 20 }
+  OTP_STEP_UP: { probs: [0.98, 0.02], ess: 20 }
+  BIOMETRIC_STEP_UP: { probs: [0.97, 0.03], ess: 20 }
+  PURPOSE_QUESTION: { probs: [0.88, 0.06, 0.05, 0.01], ess: 20 }
+  SPELL_BREAKER_DIGITAL_ARREST: { probs: [0.05, 0.01, 0.94], ess: 20 }
+  SPELL_BREAKER_INVESTMENT: { probs: [0.05, 0.01, 0.94], ess: 20 }
+  COOLING_OFF: { probs: [0.05, 0.1, 0.85], ess: 20 }
+  COLLECT_INTENT_CHECK: { probs: [0.02, 0.98], ess: 20 }
+  BENEFICIARY_DEVICE_SHARING: { probs: [0.02, 0.08, 0.9], ess: 20 }
+  INBOUND_FAN_IN: { probs: [0.03, 0.12, 0.85], ess: 20 }
+  PASS_THROUGH_DWELL: { probs: [0.03, 0.17, 0.8], ess: 20 }
+  ACCOUNT_PROFILE: { probs: [0.05, 0.15, 0.8], ess: 20 }
+  LINKED_COMPLAINTS: { probs: [0.01, 0.99], ess: 20 }
+  CRM_CONTACT_HISTORY: { probs: [0.02, 0.98], ess: 20 }
+  LOGIN_GEO_VELOCITY: { probs: [0.005, 0.095, 0.9], ess: 20 }
+  PAYEE_RELATIONSHIP: { probs: [0.45, 0.25, 0.3], ess: 20 }
+  CUSTOMER_OUTREACH_CALL: { probs: [0.01, 0.85, 0.02, 0.12], ess: 20 }

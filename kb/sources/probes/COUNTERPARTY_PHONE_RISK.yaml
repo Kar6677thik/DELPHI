@@ -1,0 +1,15 @@
+key: COUNTERPARTY_PHONE_RISK
+kind: PROBE
+mode: PASSIVE
+friction_tier: NONE
+outcomes: [VERY_HIGH, MEDIUM_HIGH, LOW_OR_UNKNOWN]
+contexts: [OUTBOUND_PAYMENT]
+channels: null
+exclusive_group: null
+requires_consent: null
+question: false
+answer_options: null
+expected_latency_s: 0.1
+enabled: true
+classifier: COUNTERPARTY_PHONE_RISK
+description: "FRI-style risk category of the phone number linked to the payee."

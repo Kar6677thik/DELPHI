@@ -1,0 +1,9 @@
+key: ACCOUNT_PROFILE
+kind: EVIDENCE
+subject: COUNTERPARTY
+outcomes: [NEW_MINIMAL_KYC, NEW_FULL_KYC, ESTABLISHED]
+contexts: [OUTBOUND_PAYMENT, ACCOUNT_REVIEW]
+expected_minutes: 0.5
+enabled: true
+classifier: ACCOUNT_PROFILE
+description: "Account age and KYC level."

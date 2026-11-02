@@ -1,0 +1,9 @@
+key: INBOUND_FAN_IN
+kind: EVIDENCE
+subject: COUNTERPARTY
+outcomes: [HIGH, MODERATE, LOW]
+contexts: [OUTBOUND_PAYMENT, ACCOUNT_REVIEW]
+expected_minutes: 0.5
+enabled: true
+classifier: INBOUND_FAN_IN
+description: "Distinct unrelated payers into the subject account in the last 48 h."

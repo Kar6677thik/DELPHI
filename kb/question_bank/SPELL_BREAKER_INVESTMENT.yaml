@@ -1,0 +1,25 @@
+probe_key: SPELL_BREAKER_INVESTMENT
+variants:
+  - variant_id: SBINV-en-1
+    language: en
+    status: APPROVED
+    text: >-
+      Has someone promised you guaranteed or very high returns, added you to a trading group, or
+      asked you to pay a fee or tax before you can withdraw your profits?
+    options: &yes_no_en
+      - { key: "YES", text: "Yes" }
+      - { key: "NO", text: "No" }
+  - variant_id: SBINV-en-2
+    language: en
+    status: APPROVED
+    text: >-
+      Is this payment so that you can withdraw profits from an app, website or group that you
+      were introduced to online?
+    options: *yes_no_en
+  - variant_id: SBINV-en-3
+    language: en
+    status: APPROVED
+    text: >-
+      Did someone you met online or on WhatsApp/Telegram recommend this investment and ask you to
+      pay this account?
+    options: *yes_no_en

@@ -1,0 +1,9 @@
+key: PAYEE_RELATIONSHIP
+kind: EVIDENCE
+subject: PAYER_TO_COUNTERPARTY
+outcomes: [NO_PRIOR_RELATION, PRIOR_SMALL_PAYMENTS, ESTABLISHED_PAYEE]
+contexts: [OUTBOUND_PAYMENT]
+expected_minutes: 0.5
+enabled: true
+classifier: PAYEE_RELATIONSHIP
+description: "Earlier executed payments from payer to payee."

@@ -1,0 +1,15 @@
+key: COOLING_OFF
+kind: PROBE
+mode: ACTIVE
+friction_tier: MEDIUM
+outcomes: [PERSISTED_OR_ESCALATED, CANCELLED_BY_CUSTOMER, WAITED_NORMALLY]
+contexts: [OUTBOUND_PAYMENT]
+channels: null
+exclusive_group: null
+requires_consent: null
+question: false
+answer_options: null
+expected_latency_s: 600
+enabled: true
+classifier: COOLING_OFF
+description: "Delayed execution with a cancel option; watches for persistence (retries, limit raises)."
