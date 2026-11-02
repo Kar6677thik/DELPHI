@@ -12,7 +12,7 @@ real LLM, fixed seeds.
 | Property-based | Hypothesis | engine invariants (§2), taint conservation, KB round-trip | every push |
 | Golden | pytest | doc 06 §16 worked example; demo-story engine traces; template narratives | every push |
 | Simulation determinism | pytest | `test` profile dataset SHA-256; response-model freeze file unchanged | every push |
-| Integration | pytest + real PostgreSQL 16 (CI service container; locally docker compose) | repositories, migrations, jobs (claim/retry/idempotency), API routers with auth/RBAC, SSE outbox replay, Guardian session resume after "crash" | every push |
+| Integration | pytest + real PostgreSQL 16 (CI service container; locally `docker compose up -d postgres`). The tests read the server from `DELPHI_TEST_DATABASE_URL` and create and drop their own databases; without it they skip, except in CI, where `DELPHI_REQUIRE_INTEGRATION=1` turns the skip into a failure | repositories, migrations, jobs (claim/retry/idempotency), API routers with auth/RBAC, SSE outbox replay, Guardian session resume after "crash" | every push |
 | Contract | pytest | `openapi.json` up to date; generated TS types up to date | every push |
 | Architecture | import-linter | doc 04 §4.1 contracts | every push |
 | Frontend unit | Vitest + Testing Library | components (HypothesisBar, CandidatesTable, MoneyText, forms) | every push |

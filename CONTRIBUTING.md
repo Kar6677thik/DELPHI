@@ -18,4 +18,24 @@ The short version:
 
 Using a coding agent (Claude Code, Codex, Cursor, …)? It must follow [`AGENTS.md`](AGENTS.md).
 
-Local setup: see [Getting Started](https://github.com/Kar6677thik/DELPHI/wiki/Getting-Started).
+## Local setup
+
+Python 3.12 and [uv](https://docs.astral.sh/uv/); Docker for PostgreSQL. More detail is on the
+wiki's [Getting Started](https://github.com/Kar6677thik/DELPHI/wiki/Getting-Started) page.
+
+```sh
+git config core.hooksPath .githooks
+cd backend && uv sync --frozen
+uv run pytest                       # unit, property and golden tests; integration tests skip
+
+docker compose up -d postgres       # from the repo root: PostgreSQL 16 on localhost:5432
+export DELPHI_TEST_DATABASE_URL=postgresql://postgres:dev-only@localhost:5432/postgres
+uv run pytest                       # now including the integration tests
+
+export DELPHI_DATABASE_URL=postgresql://postgres:dev-only@localhost:5432/delphi
+uv run delphi migrate && uv run delphi api   # http://localhost:8000/api/v1/ready
+```
+
+The integration tests create and drop their own databases on the server you point them at, so
+never point `DELPHI_TEST_DATABASE_URL` at a database you care about. All settings are listed in
+[docs/23 §4.1](docs/23-deployment.md#41-process-settings).

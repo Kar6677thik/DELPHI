@@ -17,7 +17,7 @@ condition). Milestones (doc 25) reference these IDs. "Doc" points to the detaile
 | FR-PLT-06 | Mutable aggregates use optimistic locking via ETag/If-Match | Test: stale If-Match → 412 | 16 §1 |
 | FR-PLT-07 | Jobs are claimed with SKIP LOCKED, retried up to 3 times with backoff, and are idempotent | Integration tests incl. a crash mid-job | 04 §5.4 |
 | FR-PLT-08 | SSE delivers events with replay via Last-Event-ID | Integration test | 16 §3 |
-| FR-PLT-09 | `/health` returns the build version; `/ready` reflects DB, migrations, KB and models | Integration test; deploy verify | 20 §3 |
+| FR-PLT-09 | `/health` returns the build version without touching the DB; `/ready` reflects the DB, the migration head and (from the KB versions table) an ACTIVE KB. Dataset and model readiness are reported by `/status`, not `/ready` | Integration test; deploy verify | 20 §3 |
 | FR-PLT-10 | Admins manage users (create, disable, reset password, change role) | E2E-RBAC | 16 §2 |
 
 ### Knowledge base (KB)

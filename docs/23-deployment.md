@@ -137,6 +137,29 @@ accepted, because only the owner holds either.
 Overlay `home` sets the image `ghcr.io/kar6677thik/delphi` with the initial `newTag:
 sha-<first deployed sha>` (Image Updater overrides it afterwards), and the public host.
 
+### 4.1 Process settings
+
+Every process reads `DELPHI_*` environment variables (`delphi.platform.settings`) and refuses
+to start, exit code 2, naming the variable, if one is missing or invalid.
+
+| Variable | Default | Used by | Source |
+|---|---|---|---|
+| `DELPHI_DATABASE_URL` | required | api, worker, migrate | Secret `delphi-db`, key `app-url` (role `delphi_app`) |
+| `DELPHI_SIM_DATABASE_URL` | unset | worker only | Secret `delphi-db`, key `sim-url` (role `delphi_sim`). **Never mounted into the api pod**, so the api cannot read `sim_truth` even by mistake (doc 17 §2) |
+| `DELPHI_MIGRATE_DATABASE_URL` | `DELPHI_DATABASE_URL` | migrate Job only | Secret `delphi-db`, key `owner-url` (the schema owner) |
+| `DELPHI_MIGRATIONS_DIR` | `backend/migrations` in a checkout | migrate, api, worker | The image sets `/app/migrations` |
+| `DELPHI_VERSION` | `dev` | all | Image build arg (§2) |
+| `DELPHI_ENV` | `dev` | all | ConfigMap (`dev`, `test` or `demo`) |
+| `DELPHI_LOG_LEVEL` | `INFO` | all | ConfigMap |
+| `DELPHI_HTTP_HOST` / `DELPHI_HTTP_PORT` | `0.0.0.0` / `8000` | api | — |
+| `DELPHI_METRICS_PORT` | `9000` | api, worker | — |
+| `DELPHI_DB_POOL_SIZE` | `5` | api, worker | — |
+| `DELPHI_DB_CONNECT_TIMEOUT_S` | `5` | api, worker | — |
+| `DELPHI_READY_DB_TIMEOUT_MS` | `500` | api | doc 20 §3 |
+
+Later milestones add their settings to this table (`DELPHI_SECRET_KEY`, `DELPHI_PUBLIC_ORIGIN`,
+`DELPHI_LLM_*`, `DELPHI_TIME_MODE`, the bootstrap admin) together with the code that reads them.
+
 ## 5. Argo CD and Image Updater
 
 `deploy/argocd/application.yaml`:
@@ -200,7 +223,9 @@ boundary").
    needed (public package).
 3. If the repo is private: add the repo to Argo CD with a read-only deploy key.
 4. Create namespace `delphi` and the secrets (values generated locally, e.g. `openssl rand -hex 32`):
-   - `delphi-db`: `POSTGRES_PASSWORD`, `DELPHI_APP_DB_PASSWORD`, `DELPHI_SIM_DB_PASSWORD`
+   - `delphi-db`: `POSTGRES_PASSWORD`, `DELPHI_APP_DB_PASSWORD`, `DELPHI_SIM_DB_PASSWORD`, and the
+     URLs built from them (§4.1): `app-url`, `sim-url`, `owner-url`
+     (`postgresql://<role>:<password>@delphi-postgres:5432/delphi`)
    - `delphi-app`: `DELPHI_SECRET_KEY`, `ANTHROPIC_API_KEY`, `DELPHI_BOOTSTRAP_ADMIN_USERNAME`,
      `DELPHI_BOOTSTRAP_ADMIN_PASSWORD`
    - `cloudflared-token`: `TUNNEL_TOKEN`
