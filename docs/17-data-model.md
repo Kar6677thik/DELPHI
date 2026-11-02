@@ -11,8 +11,9 @@
   `bigint generated always as identity`.
 - Money `bigint` paise with `CHECK (x >= 0)` where applicable. Probabilities `jsonb`
   (`{key: float}`). Timestamps `timestamptz`.
-- Every table has `created_at timestamptz not null default now()`. Mutable aggregates have
-  `version int not null default 1`.
+- Every table has `created_at timestamptz not null default now()`, except append-only logs
+  (`audit_log`, `outbox_events`, `trace_events`, …), whose `at` column is the creation time.
+  Mutable aggregates have `version int not null default 1`.
 - Foreign keys are always declared and indexed. Enums are PostgreSQL `text` + `CHECK (col IN …)`,
   which are easier to evolve than native enums.
 - All queries are parameterised (SQLAlchemy). No string-built SQL.
@@ -25,9 +26,20 @@
 | `delphi` | product tables (sessions, cases, KB, jobs, audit …) | app: read/write; `audit_log`: INSERT/SELECT only |
 | `sim_truth` | ground truth | `delphi_sim` role only. The app role `delphi_app` has **no grant** |
 
-Two database roles are created by the first migration: `delphi_app` (used by the api) and
-`delphi_sim` (used by the `sim` and `evaluation` code paths in the worker, which hold a second
-connection pool). The DSN for each comes from the Secret `delphi-db`.
+Two database roles: `delphi_app` (used by the api) and `delphi_sim` (used by the `sim` and
+`evaluation` code paths in the worker, which hold a second connection pool). The DSN for each
+comes from the Secret `delphi-db`.
+
+- **Who creates the roles.** In the home deployment, the Postgres init script creates both as
+  LOGIN roles with passwords from `delphi-db` (doc 23 §4). The first migration creates them as
+  NOLOGIN roles only if they do not exist yet (CI, a fresh local database), then applies the
+  grants. Roles are cluster-wide and are never dropped by a downgrade.
+- **Who owns the schema.** Migrations run as one owner role (`DELPHI_MIGRATE_DATABASE_URL`; the
+  `postgres` superuser in the home deployment), always the same one, because the default
+  privileges below belong to the role that creates the tables.
+- **Grants.** `delphi_app`: USAGE on `delphi` and `bank`, DML on their tables and sequences
+  (via default privileges), no DDL. `delphi_sim`: the same plus `sim_truth`. Both:
+  INSERT/SELECT only on `audit_log`; SELECT on `public.alembic_version` (for `/ready`).
 
 ## 3. Tables
 

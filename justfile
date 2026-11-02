@@ -33,3 +33,22 @@ test:
 # Enable the repository's git hooks (commit authorship rule)
 hooks:
     git config core.hooksPath .githooks
+
+# Start the local PostgreSQL 16 (compose.yaml)
+db:
+    docker compose up -d postgres
+
+# Apply migrations to $DELPHI_DATABASE_URL
+[working-directory: 'backend']
+migrate:
+    uv run delphi migrate
+
+# Serve the API on :8000 (needs DELPHI_DATABASE_URL)
+[working-directory: 'backend']
+api:
+    uv run delphi api
+
+# Run the worker (needs DELPHI_DATABASE_URL)
+[working-directory: 'backend']
+worker:
+    uv run delphi worker
