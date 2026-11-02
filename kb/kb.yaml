@@ -1,0 +1,29 @@
+# DELPHI knowledge base manifest (docs/07-knowledge-base.md).
+kb_format_version: 1
+name: "DELPHI KB v1"
+description: >
+  Seed knowledge base. Likelihood rows are the team's placeholder elicitation (ESS 20),
+  to be replaced by investigator elicitation in FDE workshops.
+hypothesis_order: [GENUINE, ATO, APP_DIGITAL_ARREST, APP_INVESTMENT, MULE]
+source_order:
+  - BENEFICIARY_INTEL
+  - COUNTERPARTY_PHONE_RISK
+  - DEVICE_POSTURE
+  - SESSION_BEHAVIOUR
+  - CALL_STATUS
+  - OTP_STEP_UP
+  - BIOMETRIC_STEP_UP
+  - PURPOSE_QUESTION
+  - SPELL_BREAKER_DIGITAL_ARREST
+  - SPELL_BREAKER_INVESTMENT
+  - COOLING_OFF
+  - COLLECT_INTENT_CHECK
+  - BENEFICIARY_DEVICE_SHARING
+  - INBOUND_FAN_IN
+  - PASS_THROUGH_DWELL
+  - ACCOUNT_PROFILE
+  - LINKED_COMPLAINTS
+  - CRM_CONTACT_HISTORY
+  - LOGIN_GEO_VELOCITY
+  - PAYEE_RELATIONSHIP
+  - CUSTOMER_OUTREACH_CALL

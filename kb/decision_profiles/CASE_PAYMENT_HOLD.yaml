@@ -1,0 +1,13 @@
+key: CASE_PAYMENT_HOLD
+context: OUTBOUND_PAYMENT
+source_kind: EVIDENCE
+amount_basis: PAYMENT_AMOUNT
+description: "Disposition of a held payment (Navigator loop)."
+decisions: [RELEASE, CONFIRM_FRAUD]   # less intrusive first (tie-break order)
+loss:   # GENUINE and UNEXPLAINED cells here; typology cells live in hypothesis files
+  GENUINE:
+    RELEASE: [0, 0, false]
+    CONFIRM_FRAUD: [2000, 0.05, false]
+  UNEXPLAINED:
+    RELEASE: [0, 0.6, true]
+    CONFIRM_FRAUD: [200, 0, false]

@@ -1,0 +1,26 @@
+probe_key: SPELL_BREAKER_DIGITAL_ARREST
+variants:
+  - variant_id: SBDA-en-1
+    language: en
+    status: APPROVED
+    text: >-
+      Has anyone claiming to be from the police, CBI, customs, a court or the RBI told you that
+      you are under investigation, asked you to stay on a call or video call, or told you to keep
+      this payment secret?
+    options: &yes_no_en
+      - { key: "YES", text: "Yes" }
+      - { key: "NO", text: "No" }
+  - variant_id: SBDA-en-2
+    language: en
+    status: APPROVED
+    text: >-
+      Is someone who says they are an officer (police, CBI, customs, court or RBI) asking you to
+      make this payment, or to stay on a call while you do it?
+    options: *yes_no_en
+  - variant_id: SBDA-en-3
+    language: en
+    status: APPROVED
+    text: >-
+      Have you been told you are under arrest or investigation, and that paying now will clear
+      your name?
+    options: *yes_no_en

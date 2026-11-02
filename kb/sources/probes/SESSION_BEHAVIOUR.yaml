@@ -1,0 +1,15 @@
+key: SESSION_BEHAVIOUR
+kind: PROBE
+mode: PASSIVE
+friction_tier: NONE
+outcomes: [HESITANT_OR_PASTED, CADENCE_MISMATCH, NORMAL]
+contexts: [OUTBOUND_PAYMENT]
+channels: null
+exclusive_group: null
+requires_consent: null
+question: false
+answer_options: null
+expected_latency_s: 0.1
+enabled: true
+classifier: SESSION_BEHAVIOUR
+description: "Hesitation, pasted account numbers and typing-cadence deviation in the payment session."

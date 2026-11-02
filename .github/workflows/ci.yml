@@ -1,0 +1,49 @@
+# CI (docs/23 §3). Backend job only so far; frontend, contract, secrets, e2e and image-scan jobs
+# arrive with the rest of M0. This workflow never writes to the repository.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches-ignore: [main]
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          working-directory: backend
+      - name: Install
+        run: uv sync --frozen
+      - name: Lint
+        run: uv run ruff check src tests
+      - name: Format
+        run: uv run ruff format --check src tests
+      - name: Types
+        run: uv run mypy
+      - name: Module contracts
+        run: uv run lint-imports
+      - name: Validate KB
+        run: uv run delphi kb validate ../kb
+      - name: Tests
+        run: uv run coverage run -m pytest
+      - name: Coverage gates (engine ≥ 95%, overall ≥ 80%)
+        run: |
+          uv run coverage report --include="src/delphi/engine/*" --fail-under=95
+          uv run coverage report --fail-under=80

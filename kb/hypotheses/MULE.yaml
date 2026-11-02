@@ -1,0 +1,43 @@
+key: MULE
+display_name: "Mule account"
+kind: TYPOLOGY
+contexts: [OUTBOUND_PAYMENT, ACCOUNT_REVIEW]
+f3_stages: [MONETIZATION]
+color: "#1D4ED8"
+open_mass_share: 0.5   # only used while the sensing model lacks this class (doc 06 §11)
+description: >
+  The account is controlled by or rented to a laundering network and forwards fraud proceeds.
+likelihoods:   # probs in the source's outcome order; alpha = probs * ess (doc 06 §2)
+  BENEFICIARY_INTEL: { probs: [0.2, 0.45, 0.05, 0.3], ess: 20 }
+  COUNTERPARTY_PHONE_RISK: { probs: [0.2, 0.3, 0.5], ess: 20 }
+  DEVICE_POSTURE: { probs: [0.05, 0.35, 0.6], ess: 20 }
+  SESSION_BEHAVIOUR: { probs: [0.45, 0.1, 0.45], ess: 20 }
+  CALL_STATUS: { probs: [0.15, 0.1, 0.75], ess: 20 }
+  OTP_STEP_UP: { probs: [0.99, 0.01], ess: 20 }
+  BIOMETRIC_STEP_UP: { probs: [0.97, 0.03], ess: 20 }
+  PURPOSE_QUESTION: { probs: [0.6, 0.1, 0.29, 0.01], ess: 20 }
+  SPELL_BREAKER_DIGITAL_ARREST: { probs: [0.15, 0.01, 0.84], ess: 20 }
+  SPELL_BREAKER_INVESTMENT: { probs: [0.15, 0.01, 0.84], ess: 20 }
+  COOLING_OFF: { probs: [0.5, 0.05, 0.45], ess: 20 }
+  COLLECT_INTENT_CHECK: { probs: [0.02, 0.98], ess: 20 }
+  BENEFICIARY_DEVICE_SHARING: { probs: [0.55, 0.25, 0.2], ess: 20 }
+  INBOUND_FAN_IN: { probs: [0.65, 0.25, 0.1], ess: 20 }
+  PASS_THROUGH_DWELL: { probs: [0.7, 0.2, 0.1], ess: 20 }
+  ACCOUNT_PROFILE: { probs: [0.55, 0.25, 0.2], ess: 20 }
+  LINKED_COMPLAINTS: { probs: [0.45, 0.55], ess: 20 }
+  CRM_CONTACT_HISTORY: { probs: [0.03, 0.97], ess: 20 }
+  LOGIN_GEO_VELOCITY: { probs: [0.1, 0.3, 0.6], ess: 20 }
+  PAYEE_RELATIONSHIP: { probs: [0.7, 0.25, 0.05], ess: 20 }
+  CUSTOMER_OUTREACH_CALL: { probs: [0.02, 0.38, 0.05, 0.55], ess: 20 }
+loss:          # [base_inr, rate, vulnerability_scaled] per decision (doc 07 §8)
+  GUARDIAN_PAYMENT:
+    RELEASE: [0, 0.5, false]
+    HOLD_FOR_REVIEW: [200, 0.01, false]
+    PROTECTIVE_HOLD: [1000, 0.01, false]
+    DECLINE: [50, 0.02, false]
+  CASE_PAYMENT_HOLD:
+    RELEASE: [0, 0.5, false]
+    CONFIRM_FRAUD: [50, 0, false]
+  CASE_ACCOUNT_REVIEW:
+    CLEAR: [0, 0.5, false]
+    CONFIRM_MULE: [100, 0, false]

@@ -1,0 +1,9 @@
+key: CUSTOMER_OUTREACH_CALL
+kind: EVIDENCE
+subject: PAYER
+outcomes: [CONFIRMS_COERCION, CONFIRMS_GENUINE_PURPOSE, DENIES_INITIATING, UNREACHABLE]
+contexts: [OUTBOUND_PAYMENT, ACCOUNT_REVIEW]
+expected_minutes: 8.0
+enabled: true
+classifier: CUSTOMER_OUTREACH_CALL
+description: "Investigator calls the customer from a verified number."

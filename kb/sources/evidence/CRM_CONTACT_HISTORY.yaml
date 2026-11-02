@@ -1,0 +1,9 @@
+key: CRM_CONTACT_HISTORY
+kind: EVIDENCE
+subject: PAYER
+outcomes: [SIM_SWAP_OR_DEVICE_LOSS_REPORTED, NONE]
+contexts: [OUTBOUND_PAYMENT, ACCOUNT_REVIEW]
+expected_minutes: 1.0
+enabled: true
+classifier: CRM_CONTACT_HISTORY
+description: "SIM-swap or device-loss reports in the last 14 days."

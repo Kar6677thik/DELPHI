@@ -1,0 +1,9 @@
+key: PASS_THROUGH_DWELL
+kind: EVIDENCE
+subject: COUNTERPARTY
+outcomes: [UNDER_30_MIN, BETWEEN_30_MIN_24_H, OVER_24_H]
+contexts: [OUTBOUND_PAYMENT, ACCOUNT_REVIEW]
+expected_minutes: 1.0
+enabled: true
+classifier: PASS_THROUGH_DWELL
+description: "Median time for 80% of a credit to leave the account (last 7 days)."

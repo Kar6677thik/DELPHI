@@ -1,0 +1,9 @@
+key: LOGIN_GEO_VELOCITY
+kind: EVIDENCE
+subject: PAYER
+outcomes: [IMPOSSIBLE_TRAVEL, NEW_LOCATION, USUAL]
+contexts: [OUTBOUND_PAYMENT, ACCOUNT_REVIEW]
+expected_minutes: 0.5
+enabled: true
+classifier: LOGIN_GEO_VELOCITY
+description: "Login geography and implied travel speed in the last 24 h."

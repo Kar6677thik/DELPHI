@@ -1,0 +1,100 @@
+[project]
+name = "delphi"
+version = "0.1.0"
+description = "DELPHI — Dynamic Evidence-Led Probing of fraud Hypotheses & Interventions"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "numpy>=2.1",
+  "pydantic>=2.9",
+  "pyyaml>=6.0.2",
+]
+
+[project.scripts]
+delphi = "delphi.cli:main"
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3",
+  "hypothesis>=6.120",
+  "coverage[toml]>=7.6",
+  "ruff>=0.8",
+  "mypy>=1.13",
+  "import-linter>=2.1",
+  "types-PyYAML>=6.0",
+]
+
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/delphi"]
+
+# ---------------------------------------------------------------- pytest
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+  "benchmark: timing checks (warn-level in CI per docs/21 §1)",
+]
+
+# ---------------------------------------------------------------- ruff
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "PL", "RUF"]
+ignore = [
+  "PLR0913",  # engine functions legitimately take many explicit parameters
+  "PLR0911",
+  "PLR0912",
+  "RUF001",   # maths symbols (×, ≤, Σ, σ, −) are intentional: docstrings quote the spec's formulas
+  "RUF002",
+  "RUF003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["PLR2004", "PLR0917", "PLC0415"]
+
+# ---------------------------------------------------------------- mypy
+[tool.mypy]
+python_version = "3.12"
+mypy_path = "src"
+packages = ["delphi"]
+warn_unused_configs = true
+
+[[tool.mypy.overrides]]
+module = ["delphi.engine.*", "delphi.kb.*"]
+strict = true
+
+# ---------------------------------------------------------------- coverage
+[tool.coverage.run]
+source = ["delphi"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+
+# ---------------------------------------------------------------- import-linter (docs/04 §4.1)
+[tool.importlinter]
+root_package = "delphi"
+
+[[tool.importlinter.contracts]]
+name = "engine is pure: only kb.model from delphi"
+type = "forbidden"
+source_modules = ["delphi.engine"]
+forbidden_modules = [
+  "delphi.kb.loader",
+  "delphi.kb.validate",
+  "delphi.probes",
+  "delphi.cli",
+]
+
+[[tool.importlinter.contracts]]
+name = "kb.model depends on nothing in delphi"
+type = "forbidden"
+source_modules = ["delphi.kb.model"]
+forbidden_modules = ["delphi.engine", "delphi.probes", "delphi.cli", "delphi.kb.loader", "delphi.kb.validate"]

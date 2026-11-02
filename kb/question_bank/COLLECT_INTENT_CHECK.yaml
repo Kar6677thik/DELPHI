@@ -1,0 +1,21 @@
+probe_key: COLLECT_INTENT_CHECK
+variants:
+  - variant_id: CIC-en-1
+    language: en
+    status: APPROVED
+    text: "Are you expecting to RECEIVE money from this request, e.g. a refund, cashback or prize?"
+    options: &collect_options_en
+      - { key: YES_RECEIVING, text: "Yes, I should receive money" }
+      - { key: NO_I_AM_PAYING, text: "No, I am paying" }
+  - variant_id: CIC-en-2
+    language: en
+    status: APPROVED
+    text: "Approving this request will SEND money from your account. Is that what you want?"
+    options:
+      - { key: NO_I_AM_PAYING, text: "Yes, I am paying" }
+      - { key: YES_RECEIVING, text: "No, I thought I would receive money" }
+  - variant_id: CIC-en-3
+    language: en
+    status: APPROVED
+    text: "Do you think this request will add money to your account?"
+    options: *collect_options_en

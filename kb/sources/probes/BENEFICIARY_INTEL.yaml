@@ -1,0 +1,15 @@
+key: BENEFICIARY_INTEL
+kind: PROBE
+mode: PASSIVE
+friction_tier: NONE
+outcomes: [LISTED_SUSPECT, HIGH_MULE_SCORE, CLEAN_KNOWN_ENTITY, CLEAN_UNKNOWN]
+contexts: [OUTBOUND_PAYMENT]
+channels: null
+exclusive_group: null
+requires_consent: null
+question: false
+answer_options: null
+expected_latency_s: 0.1
+enabled: true
+classifier: BENEFICIARY_INTEL
+description: "Payee account checked against the suspect registry, the mule score and known-entity status."

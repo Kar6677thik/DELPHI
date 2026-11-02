@@ -1,0 +1,76 @@
+# Engine constants, guardrails, costs and thresholds (docs/07-knowledge-base.md §7).
+# Keys marked "time-scaled" are multiplied by time.demo_time_scale when DELPHI_TIME_MODE=DEMO.
+engine:
+  lookahead_depth: { guardian: 3, navigator: 2 }
+  stop_epsilon_paise: 100
+  exploration_epsilon: 0.05
+  exploration_seed: 20261031
+  vulnerability_multiplier: 1.5
+  vulnerable_age_threshold: 70
+  open_mass_base: 0.02
+  open_mass_slope: 0.18
+  unexplained_routing_threshold: 0.35
+  fast_path: { min_p_genuine: 0.995, max_amount_inr: 10000, max_anomaly_percentile: 0.90 }
+guardrails:
+  max_active_probes_per_session: 3
+  max_medium_plus_per_session: 2
+  max_active_sessions_per_customer_30d: 3
+  passive_adapter_timeout_ms: 300
+  active_probe_response_timeout_s: 60      # human answer time; NOT time-scaled
+  cooling_off_extra_timeout_s: 30
+  session_max_duration_s: 900              # excludes the COOLING_OFF window; NOT time-scaled
+costs:
+  friction_cost_inr: { NONE: 0, LOW: 20, MEDIUM: 150, HIGH: 600 }
+  delay_cost_inr_per_s: 0.5
+  investigator_cost_inr_per_min: 15
+classifiers:
+  mule_score_high: 0.50
+  established_payee_min_payments: 3
+  established_payee_min_distinct_customers: 3
+  established_payee_min_age_days: 90
+  new_device_days: 7
+  paste_or_dwell_max_field_dwell_s: 20
+  cadence_mismatch_z: 3.0
+  purpose_fast_s: 1.5
+  purpose_slow_s: 15
+  spell_breaker_hesitation_s: 8
+  otp_max_attempts: 3
+  cooling_off_window_s: 600                # time-scaled
+  cooling_off_send_now_presses: 2
+  fan_in_high: 10
+  fan_in_moderate: 3
+  dwell_fast_min: 30
+  dwell_slow_h: 24
+  new_account_days: 90
+  crm_lookback_days: 14
+  impossible_travel_kmh: 500
+  small_payment_inr: 5000
+navigator:
+  mule_sweep_threshold: 0.70
+  mule_sweep_interval_min: 15              # time-scaled
+  campaign_window_days: 7
+chase:
+  min_trace_inr: 500
+  freeze_latency_internal_s: 60            # time-scaled
+  freeze_latency_external_min: 30          # time-scaled
+  dwell_fallback_mule_min: 20              # time-scaled
+  dwell_fallback_other_h: 24               # time-scaled
+  lawful_hold_kappa: 0.30
+  wrongful_base_inr: 5000
+  wrongful_rate: 0.02
+  max_liens_per_round: 10
+  retrace_interval_min: 2                  # time-scaled, floor 20 s real time
+  ticket_expiry_min: 120                   # time-scaled
+  visibility_lag_min: { demo: 0, eval: 5 }
+scout:
+  min_cluster_size: 5
+  min_samples: 3
+  lookback_days: 30
+  auto_trigger_new_items: 10
+  shadow_min_sessions: 200
+  shadow_min_sessions_demo: 10
+time:
+  demo_time_scale: 0.0333333333
+elicitation:
+  default_ess: 20
+  confidence_ess: { LOW: 10, MEDIUM: 20, HIGH: 50 }

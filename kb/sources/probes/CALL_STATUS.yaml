@@ -1,0 +1,15 @@
+key: CALL_STATUS
+kind: PROBE
+mode: PASSIVE
+friction_tier: NONE
+outcomes: [ON_CALL_UNKNOWN_NUMBER, ON_CALL_KNOWN_CONTACT, NOT_ON_CALL]
+contexts: [OUTBOUND_PAYMENT]
+channels: null
+exclusive_group: null
+requires_consent: call_status
+question: false
+answer_options: null
+expected_latency_s: 0.1
+enabled: true
+classifier: CALL_STATUS
+description: "Whether the customer is on a live call, and with whom (metadata only; consent required)."

@@ -1,0 +1,13 @@
+# Regulatory parameters (docs/07-knowledge-base.md §10). Draft RBI mule SOP, not final.
+profile: RBI_DRAFT_MULE_SOP_2026_09
+account_review:
+  customer_response_window_days: 20
+  bank_decision_window_days: 10
+  max_debit_hold_days: 60
+case_sla:                                  # all time-scaled
+  hold_review_sla_minutes: 240
+  protective_sla_minutes: 30
+  account_review_sla_minutes: 14400
+chase:
+  golden_hour_minutes: 60
+  lien_review_interval_days: 10

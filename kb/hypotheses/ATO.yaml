@@ -1,0 +1,40 @@
+key: ATO
+display_name: "Account takeover"
+kind: TYPOLOGY
+contexts: [OUTBOUND_PAYMENT]
+f3_stages: [INITIAL_ACCESS, POSITIONING, EXECUTION]
+color: "#7C3AED"
+open_mass_share: 0.5   # only used while the sensing model lacks this class (doc 06 §11)
+description: >
+  A fraudster controls the customer's credentials or device (e.g. after a SIM swap or phishing) and pays out.
+likelihoods:   # probs in the source's outcome order; alpha = probs * ess (doc 06 §2)
+  BENEFICIARY_INTEL: { probs: [0.15, 0.3, 0.05, 0.5], ess: 20 }
+  COUNTERPARTY_PHONE_RISK: { probs: [0.1, 0.2, 0.7], ess: 20 }
+  DEVICE_POSTURE: { probs: [0.25, 0.65, 0.1], ess: 20 }
+  SESSION_BEHAVIOUR: { probs: [0.15, 0.6, 0.25], ess: 20 }
+  CALL_STATUS: { probs: [0.1, 0.05, 0.85], ess: 20 }
+  OTP_STEP_UP: { probs: [0.3, 0.7], ess: 20 }
+  BIOMETRIC_STEP_UP: { probs: [0.15, 0.85], ess: 20 }
+  PURPOSE_QUESTION: { probs: [0.4, 0.1, 0.49, 0.01], ess: 20 }
+  SPELL_BREAKER_DIGITAL_ARREST: { probs: [0.2, 0.01, 0.79], ess: 20 }
+  SPELL_BREAKER_INVESTMENT: { probs: [0.2, 0.01, 0.79], ess: 20 }
+  COOLING_OFF: { probs: [0.6, 0.05, 0.35], ess: 20 }
+  COLLECT_INTENT_CHECK: { probs: [0.02, 0.98], ess: 20 }
+  BENEFICIARY_DEVICE_SHARING: { probs: [0.3, 0.2, 0.5], ess: 20 }
+  INBOUND_FAN_IN: { probs: [0.3, 0.3, 0.4], ess: 20 }
+  PASS_THROUGH_DWELL: { probs: [0.4, 0.3, 0.3], ess: 20 }
+  ACCOUNT_PROFILE: { probs: [0.35, 0.25, 0.4], ess: 20 }
+  LINKED_COMPLAINTS: { probs: [0.25, 0.75], ess: 20 }
+  CRM_CONTACT_HISTORY: { probs: [0.45, 0.55], ess: 20 }
+  LOGIN_GEO_VELOCITY: { probs: [0.35, 0.45, 0.2], ess: 20 }
+  PAYEE_RELATIONSHIP: { probs: [0.9, 0.08, 0.02], ess: 20 }
+  CUSTOMER_OUTREACH_CALL: { probs: [0.02, 0.03, 0.8, 0.15], ess: 20 }
+loss:          # [base_inr, rate, vulnerability_scaled] per decision (doc 07 §8)
+  GUARDIAN_PAYMENT:
+    RELEASE: [0, 0.9, true]
+    HOLD_FOR_REVIEW: [200, 0.01, false]
+    PROTECTIVE_HOLD: [300, 0.01, false]
+    DECLINE: [50, 0, false]
+  CASE_PAYMENT_HOLD:
+    RELEASE: [0, 0.9, true]
+    CONFIRM_FRAUD: [50, 0, false]

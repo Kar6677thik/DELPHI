@@ -1,0 +1,28 @@
+probe_key: PURPOSE_QUESTION
+variants:
+  - variant_id: PQ-en-1
+    language: en
+    status: APPROVED
+    text: "What is this payment for?"
+    options: &purpose_options_en
+      - { key: FAMILY_OR_FRIEND, text: "Family or a friend" }
+      - { key: BILLS_OR_SHOPPING, text: "Bills or shopping" }
+      - { key: MEDICAL, text: "Medical / hospital" }
+      - { key: EDUCATION, text: "Education" }
+      - { key: PROPERTY_OR_LOAN, text: "Property or loan" }
+      - { key: INVESTMENT, text: "Investment or trading" }
+      - { key: GOVT_POLICE_OR_COURT_FEE, text: "Government, police or court fee" }
+      - { key: SAFE_ACCOUNT_TRANSFER, text: "Moving money to a 'safe' account" }
+      - { key: CUSTOMS_OR_PARCEL, text: "Customs or parcel charges" }
+      - { key: RECEIVING_REFUND_OR_PRIZE, text: "I am receiving a refund or prize" }
+      - { key: OTHER, text: "Something else" }
+  - variant_id: PQ-en-2
+    language: en
+    status: APPROVED
+    text: "Before we send this, please tell us what the money is for."
+    options: *purpose_options_en
+  - variant_id: PQ-en-3
+    language: en
+    status: APPROVED
+    text: "Which of these best describes why you are making this payment?"
+    options: *purpose_options_en

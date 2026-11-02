@@ -1,0 +1,15 @@
+key: PURPOSE_QUESTION
+kind: PROBE
+mode: ACTIVE
+friction_tier: LOW
+outcomes: [PLAUSIBLE_NORMAL_TIMING, HIGH_RISK_PURPOSE, TIMING_ANOMALOUS, BELIEVES_RECEIVING_MONEY]
+contexts: [OUTBOUND_PAYMENT]
+channels: null
+exclusive_group: null
+requires_consent: null
+question: true
+answer_options: [FAMILY_OR_FRIEND, BILLS_OR_SHOPPING, MEDICAL, EDUCATION, PROPERTY_OR_LOAN, INVESTMENT, GOVT_POLICE_OR_COURT_FEE, SAFE_ACCOUNT_TRANSFER, CUSTOMS_OR_PARCEL, RECEIVING_REFUND_OR_PRIZE, OTHER]
+expected_latency_s: 12
+enabled: true
+classifier: PURPOSE_QUESTION
+description: "Structured payment-purpose question, scored on the answer and on how it is given."

@@ -1,0 +1,9 @@
+key: LINKED_COMPLAINTS
+kind: EVIDENCE
+subject: COUNTERPARTY
+outcomes: [ONE_OR_MORE, NONE]
+contexts: [OUTBOUND_PAYMENT, ACCOUNT_REVIEW]
+expected_minutes: 1.0
+enabled: true
+classifier: LINKED_COMPLAINTS
+description: "Complaints naming the subject account."

@@ -1,0 +1,9 @@
+key: BENEFICIARY_DEVICE_SHARING
+kind: EVIDENCE
+subject: COUNTERPARTY
+outcomes: [SHARED_3_PLUS, SHARED_1_2, NOT_SHARED]
+contexts: [OUTBOUND_PAYMENT, ACCOUNT_REVIEW]
+expected_minutes: 0.5
+enabled: true
+classifier: BENEFICIARY_DEVICE_SHARING
+description: "Other accounts whose owners used the subject owner's devices in the last 30 days."
