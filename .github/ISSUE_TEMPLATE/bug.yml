@@ -1,0 +1,29 @@
+name: Bug
+description: Something behaves differently from the spec or crashes
+labels: ["type:bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What the spec says should happen
+      description: Link the docs/ section if there is one.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      description: Commands, inputs, seed, KB version / commit SHA.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Commit SHA or deployed version
+      description: The deployed version is shown by /api/v1/health.

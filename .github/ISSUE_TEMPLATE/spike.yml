@@ -1,0 +1,24 @@
+name: Spike / question
+description: A time-boxed investigation, or a question the spec does not answer
+labels: ["type:spike"]
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: Question to answer
+    validations:
+      required: true
+  - type: input
+    id: timebox
+    attributes:
+      label: Time box
+      placeholder: e.g. 0.5 day
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Expected outcome
+      description: An answer, a spec change (PR), or an ADR.
+    validations:
+      required: true

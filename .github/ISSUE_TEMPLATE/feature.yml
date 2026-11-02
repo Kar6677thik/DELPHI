@@ -1,0 +1,38 @@
+name: Feature / task
+description: A piece of planned work from the spec or the milestones
+labels: ["type:feature"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What
+      description: What should exist when this is done?
+    validations:
+      required: true
+  - type: input
+    id: spec
+    attributes:
+      label: Spec sections
+      description: The docs/ sections this implements, e.g. "docs/08 §2, §5".
+      placeholder: docs/NN §N
+    validations:
+      required: true
+  - type: input
+    id: requirements
+    attributes:
+      label: Requirement IDs
+      description: FR-/NFR- IDs from docs/03-requirements.md, if any.
+      placeholder: FR-GDN-04, NFR-03
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Checkable conditions, ideally the tests that prove it.
+      value: |
+        - [ ]
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes / dependencies

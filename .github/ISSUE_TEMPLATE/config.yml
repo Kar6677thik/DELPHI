@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Contributor guide (wiki)
+    url: https://github.com/Kar6677thik/DELPHI/wiki/Contributing
+    about: How we work: issues, branches, PRs, definition of done.
+  - name: Specification
+    url: https://github.com/Kar6677thik/DELPHI/blob/main/docs/README.md
+    about: The spec in docs/ is the source of truth. Read it before opening a question.
