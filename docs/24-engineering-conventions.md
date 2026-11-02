@@ -79,7 +79,8 @@ description explaining why (make vs reuse, EFG §1).
 
 ## 5. Git workflow
 
-- **Authorship (non-negotiable):** every commit is authored by the repo owner only. No
+- **Authorship (non-negotiable):** every commit is authored by the human contributor who made
+  it, under their own git identity. No
   `Co-Authored-By` trailers, no AI attribution lines in commits or PRs, no `--author`
   overrides. CI never commits. A `commit-msg` hook in `.githooks/` (enabled with
   `git config core.hooksPath .githooks`) rejects messages containing `Co-Authored-By`.
@@ -89,7 +90,8 @@ description explaining why (make vs reuse, EFG §1).
   `tracking` issue listing its deliverables. The **wiki** holds onboarding, how-tos and meeting
   notes, and it links to `docs/`. It never restates the spec: the spec stays in the repo, where
   it is versioned and reviewed with the code.
-- Branches: `main` is protected. Work goes on `m<N>/<short-topic>` (e.g. `m1/engine-lookahead`).
+- Branches: `main` is protected. Work goes on `m<N>/<issue>-<short-topic>` (e.g.
+  `m2/17-mule-networks`). Coding agents follow `AGENTS.md` (`CLAUDE.md` imports it).
 - Commits: Conventional Commits (`feat(engine): add depth-limited lookahead`), imperative mood,
   ≤ 72-char subject.
 - PRs: small (aim for ≤ 400 changed lines excluding generated files), squash-merged, with a
