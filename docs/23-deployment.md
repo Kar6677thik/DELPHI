@@ -79,8 +79,8 @@ concurrency: { group: deploy-main, cancel-in-progress: false }
 jobs:
   guard:       # workflow_dispatch is allowed only on refs/heads/main
   ci:          uses: ./.github/workflows/ci.yml
-  publish:     needs ci; permissions: { contents: read, packages: write }
-               docker/setup-buildx → login ghcr with GITHUB_TOKEN → build-push
+  publish:     needs ci; environment: production; permissions: { contents: read }
+               docker/setup-buildx → login ghcr with secrets.GHCR_PUSH_TOKEN (environment secret) → build-push
                tags: ghcr.io/kar6677thik/delphi:sha-${{ github.sha }}, ghcr.io/kar6677thik/delphi:main
                cache: type=gha
   verify:      needs publish; runs-on ubuntu-latest; timeout-minutes 20
@@ -91,16 +91,39 @@ jobs:
 - No step creates commits, tags or releases in the repo.
 - Re-running `workflow_dispatch` on the same SHA rebuilds and pushes the same tag. The cluster
   is unaffected, because the image is identical, and verify passes at once.
-- GitHub repo settings: branch protection on `main` (required checks: backend, frontend,
-  contract, secrets, e2e, image-scan; linear history; squash merge only). Repo variable
-  `DELPHI_PUBLIC_URL` (e.g. `https://delphi.example.com`) and optional `IMAGE_PLATFORMS`.
-  No repo secrets are needed.
+- GitHub repo settings: branch protection on `main` (PR + 1 CODEOWNER approval, required
+  checks: backend, frontend, contract, secrets, e2e, image-scan; linear history; squash merge
+  only). Repo variable `DELPHI_PUBLIC_URL` (e.g. `https://delphi.example.com`) and optional
+  `IMAGE_PLATFORMS`.
+
+### Image publishing trust boundary
+
+Image Updater deploys **any** tag matching `^sha-[0-9a-f]{40}$` (§5). Whoever can push such a
+tag can run code on the home server. With collaborators holding write access, the default
+`GITHUB_TOKEN` would let a workflow on *any branch* push to the package. So:
+
+1. **The package is linked to the repo with Read access only.** In package settings →
+   "Manage Actions access", set `Kar6677thik/DELPHI` to **Read**. No repo workflow's
+   `GITHUB_TOKEN` can push. Workflows never request `packages: write`.
+2. **Only the `production` environment can publish.** The repo has an environment `production`
+   with deployment branches limited to `main`. Its secret `GHCR_PUSH_TOKEN` is a classic PAT of
+   the owner with only `write:packages` (classic PATs are required for GHCR pushes; set an
+   expiry and a calendar reminder). A job on any other branch that names this environment is
+   rejected by GitHub before it can read the secret.
+3. **`main` only changes through reviewed PRs** (branch protection), so changing
+   `deploy.yml` itself also needs owner approval.
+4. **Bootstrap order:** the first push creates the package. Do it from `main` with the PAT, then
+   immediately set the repo's package access to Read and the package visibility to public
+   (A-05).
+
+Residual risk: someone with admin on the repo or the owner's PAT can still publish. This is
+accepted, because only the owner holds either.
 
 ## 4. Kubernetes manifests (kustomize base, namespace `delphi`)
 
 | Resource | Key settings |
 |---|---|
-| `Deployment delphi-api` | 1 replica; RollingUpdate maxSurge 1 / maxUnavailable 0; `imagePullSecrets: ghcr-pull`; env from Secret `delphi-app` + ConfigMap `delphi-config`; ports 8000 and 9000; startupProbe `/api/v1/health` (failureThreshold 30, period 2 s); livenessProbe `/api/v1/health` (period 10 s); readinessProbe `/api/v1/ready` (period 5 s); requests 250m/512Mi, limits 2 CPU/1.5Gi; securityContext runAsNonRoot, readOnlyRootFilesystem, allowPrivilegeEscalation false, capabilities drop ALL, seccomp RuntimeDefault |
+| `Deployment delphi-api` | 1 replica; RollingUpdate maxSurge 1 / maxUnavailable 0; no image pull secret (public package, A-05); env from Secret `delphi-app` + ConfigMap `delphi-config`; ports 8000 and 9000; startupProbe `/api/v1/health` (failureThreshold 30, period 2 s); livenessProbe `/api/v1/health` (period 10 s); readinessProbe `/api/v1/ready` (period 5 s); requests 250m/512Mi, limits 2 CPU/1.5Gi; securityContext runAsNonRoot, readOnlyRootFilesystem, allowPrivilegeEscalation false, capabilities drop ALL, seccomp RuntimeDefault |
 | `Deployment delphi-worker` | 1 replica; same image, `args: ["worker"]`; requests 500m/1Gi, limits 3 CPU/3Gi; liveness on worker `:9000/health`; `terminationGracePeriodSeconds: 60` (finish or release the current job) |
 | `StatefulSet delphi-postgres` | `postgres:16` pinned; PVC 10Gi `local-path`; requests 250m/512Mi; init script creates the `delphi_app` / `delphi_sim` roles from Secret `delphi-db`; liveness `pg_isready` |
 | `Service delphi-api` (ClusterIP 8000), `delphi-postgres` (headless 5432) | |
@@ -161,24 +184,25 @@ Notes:
 - The `argocd` write-back stores the override in the Application. If the Application is
   recreated, Image Updater re-applies the newest tag within one polling interval. Until then,
   the overlay's pinned tag runs. This is acceptable.
-- Image Updater needs GHCR read credentials (Secret `ghcr-creds` in `argocd`, referenced per
-  the pinned version's registry config).
+- Image Updater and kubelet pull anonymously from the public package (A-05). If the repo is
+  ever made private, add read credentials (Secret `ghcr-creds` in `argocd`, plus `ghcr-pull`
+  in `delphi`).
 - If the repo is private, Argo CD needs a read-only deploy key (`argocd repo add`).
 
 ## 6. One-time bootstrap runbook (owner, on the server)
 
-Prerequisites: k3s running; `kubectl` access; a Cloudflare account with the domain; a GitHub
-fine-grained PAT with `read:packages` (for pulls).
+Prerequisites: k3s running; `kubectl` access; a Cloudflare account with the domain; in GitHub,
+the `production` environment with its `GHCR_PUSH_TOKEN` secret (§3, "Image publishing trust
+boundary").
 
 1. Install Argo CD (pinned version) into namespace `argocd` (upstream install manifest).
-2. Install Argo CD Image Updater (pinned v1.x) into `argocd`. Create the GHCR credentials
-   secret.
+2. Install Argo CD Image Updater (pinned v1.x) into `argocd`. No registry credentials are
+   needed (public package).
 3. If the repo is private: add the repo to Argo CD with a read-only deploy key.
 4. Create namespace `delphi` and the secrets (values generated locally, e.g. `openssl rand -hex 32`):
    - `delphi-db`: `POSTGRES_PASSWORD`, `DELPHI_APP_DB_PASSWORD`, `DELPHI_SIM_DB_PASSWORD`
    - `delphi-app`: `DELPHI_SECRET_KEY`, `ANTHROPIC_API_KEY`, `DELPHI_BOOTSTRAP_ADMIN_USERNAME`,
      `DELPHI_BOOTSTRAP_ADMIN_PASSWORD`
-   - `ghcr-pull`: `kubectl create secret docker-registry ghcr-pull --docker-server=ghcr.io …`
    - `cloudflared-token`: `TUNNEL_TOKEN`
 5. In Cloudflare Zero Trust: create a remotely-managed tunnel; add the public hostname
    `delphi.<domain>` → service `http://delphi-api.delphi.svc.cluster.local:8000`. Optional: a
@@ -208,7 +232,7 @@ fine-grained PAT with `read:packages` (for pulls).
 
 | Symptom | Steps |
 |---|---|
-| Deploy verify job timed out | `kubectl -n argocd get applications delphi -o yaml` (sync status, image override); Image Updater logs (did it see the tag? registry auth?); `kubectl -n delphi get pods` (ImagePullBackOff → `ghcr-pull`; CrashLoop → logs; migrate hook failed → `kubectl logs job/delphi-migrate`) |
+| Deploy verify job timed out | `kubectl -n argocd get applications delphi -o yaml` (sync status, image override); Image Updater logs (did it see the tag? registry auth?); `kubectl -n delphi get pods` (ImagePullBackOff → package visibility/tag; CrashLoop → logs; migrate hook failed → `kubectl logs job/delphi-migrate`) |
 | Rollback | Fast: in the Argo CD UI, roll back the `delphi` Application to the previous revision (the image override is part of the history), *or* revert the commit on `main` (a new image deploys). A migration that is not backward-compatible must never ship (expand/contract), so rollbacks are safe |
 | Site down but pods healthy | `kubectl -n delphi logs deploy/cloudflared`; Cloudflare tunnel status page |
 | LLM failing | Overview alert shows the fallback rate; check `llm_calls` errors; set `DELPHI_LLM_PROVIDER=template` in the ConfigMap via git to kill it |

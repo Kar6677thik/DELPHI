@@ -165,7 +165,7 @@ condition). Milestones (doc 25) reference these IDs. "Doc" points to the detaile
 | ID | Requirement | Acceptance | Doc |
 |---|---|---|---|
 | FR-DEP-01 | Every push to `main` and every manual dispatch on `main` builds, tests, publishes and verifies the deployment | A green deploy workflow run with the verify step | 23 §3 |
-| FR-DEP-02 | No cluster credentials or repo-write credentials in GitHub Actions; no bot commits | Workflow review checklist; `permissions` blocks | 23 |
+| FR-DEP-02 | No cluster credentials or repo-write credentials in GitHub Actions; no bot commits; only `main` can publish a deployable image | Workflow review checklist; `permissions` blocks; a test workflow run from a non-main branch that names `production` is rejected; the package's repo access is Read | 23 §3 |
 | FR-DEP-03 | Migrations run as a PreSync hook; seeding is idempotent as a PostSync hook | First deploy on an empty cluster; a second deploy is a no-op seed | 23 §4 |
 | FR-DEP-04 | Public access only via the Cloudflare Tunnel; metrics not reachable publicly | From outside: `GET /metrics` and `GET /api/v1/metrics` must not return a Prometheus exposition body (no `# HELP` lines). The SPA fallback serves `index.html` only for non-`/api` paths, and unknown `/api/*` paths return a 404 problem+json | 23 §4 |
 | FR-DEP-05 | Nightly backups and a passing restore drill | Drill report | 23 §7 |
