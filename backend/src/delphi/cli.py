@@ -1,5 +1,5 @@
-"""The ``delphi`` command (docs/04 §4): ``api``, ``worker``, ``migrate``, ``kb validate`` and
-``sim freeze-response-models``.
+"""The ``delphi`` command (docs/04 §4): ``api``, ``worker``, ``migrate``, ``openapi``,
+``kb validate`` and ``sim freeze-response-models``.
 
 This module is the process entrypoint and the only importer of ``delphi.api``. Configuration
 errors exit with status 2 and a message naming the variable (fail fast, docs/24 §1).
@@ -18,6 +18,7 @@ import uvicorn
 from alembic import command
 
 from delphi.api.app import create_app
+from delphi.api.contract import OPENAPI_FILE, openapi_document
 from delphi.kb.canonical import content_sha256
 from delphi.kb.issues import KbValidationError
 from delphi.kb.loader import load_and_validate
@@ -47,6 +48,20 @@ def _kb_validate(args: argparse.Namespace) -> int:
         f"KB valid: {kb.name} - {len(kb.hypotheses)} hypotheses, {len(kb.sources)} sources, "
         f"sha256 {content_sha256(kb)}"
     )
+    return 0
+
+
+def _openapi(args: argparse.Namespace) -> int:
+    out = Path(args.out)
+    document = openapi_document()
+    if args.check:
+        if not out.is_file() or out.read_text(encoding="utf-8") != document:
+            print(f"{out} is out of date: run `uv run delphi openapi`", file=sys.stderr)
+            return 1
+        print(f"{out} is up to date")
+        return 0
+    out.write_text(document, encoding="utf-8")
+    print(f"wrote {out}")
     return 0
 
 
@@ -137,6 +152,13 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("migrate", help="apply database migrations (alembic upgrade head)").set_defaults(
         func=_with_settings(_migrate)
     )
+
+    openapi = sub.add_parser("openapi", help="write the OpenAPI contract (docs/16)")
+    openapi.add_argument("--out", default=str(OPENAPI_FILE), help="default: backend/openapi.json")
+    openapi.add_argument(
+        "--check", action="store_true", help="fail if the file differs instead of writing it"
+    )
+    openapi.set_defaults(func=_openapi)
 
     kb = sub.add_parser("kb", help="knowledge base tools").add_subparsers(
         dest="kb_command", required=True
