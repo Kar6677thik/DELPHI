@@ -156,13 +156,25 @@ generation (not the KB) until they do, and record the change in the generator ch
 
 | Situation | Label | Source | Delay |
 |---|---|---|---|
-| Released fraud payment, victim reports | true hypothesis if it is in the ACTIVE KB, else `FRAUD_OTHER` | `CUSTOMER_COMPLAINT` | report probability: APP 0.70, ATO 0.90, COLLECT_REFUND 0.60; delay log-normal (median 2 days; ATO 4 h) |
+| Released fraud payment, victim reports | true hypothesis if it is in the ACTIVE KB, else `FRAUD_OTHER` (collect-refund: `APP_COLLECT_REFUND` once promoted) | `CUSTOMER_COMPLAINT` | report probability: APP 0.70, ATO 0.90, COLLECT_REFUND 0.60; delay log-normal (median 2 days; ATO 4 h) |
 | Released genuine payment | GENUINE | `NO_COMPLAINT_60D` | `no_complaint_maturity_days` (60; 7 on `test`) |
 | Released fraud, never reported | none until maturity, then GENUINE (a **wrong** label, by design: real-world label noise) | `NO_COMPLAINT_60D` | `no_complaint_maturity_days` |
 | Held/declined, DELPHI outreach confirms | leading fraud hypothesis | `OUTREACH_CONFIRMED` | at the outcome |
 | Held, investigator disposition | disposition | `INVESTIGATOR_DISPOSITION` | at disposition |
 | Held/declined in the legacy policy with no investigation | none | — | never (selective labels) |
 | Mule account listed in the registry | MULE | `REGISTRY_LISTING` | log-normal, median 5 days after first fraud credit |
+
+How the model applies the table (`delphi.sim.labels`, numbers in `sim/config/labels.yaml`):
+
+- **Delays** are log-normal, `median · exp(σ·z)`, with `label_delay_sigma` σ = 0.8 (its own
+  key, equal to the mule-dwell spread in §4).
+- **Who reports.** Scenarios with no report probability above are never reported by a victim.
+  `MULE_FORWARDING` payments leave a mule's own account, so they mature as GENUINE (noise) and
+  the account is labelled only through the registry.
+- **Late complaints.** A complaint that falls after `no_complaint_maturity_days` arrives after
+  the GENUINE label; label precedence (doc 05 §6) then lets the complaint win.
+- **ACTIVE KB.** The schedule stores the ground-truth key; `LABEL_DELIVERY` maps a complaint to
+  `FRAUD_OTHER` if that key is not in the ACTIVE KB at delivery time.
 
 ## 8. Live simulation in the deployed demo
 
