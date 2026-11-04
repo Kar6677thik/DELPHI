@@ -8,12 +8,14 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from delphi.api.request_id import current_request_id
 from delphi.platform.errors import STATUS_BY_CODE, DelphiError, ProblemCode
 
 PROBLEM_JSON = "application/problem+json"
+_JSON = "application/json"
 
 # Framework-raised HTTP errors (unknown route, wrong method) mapped to stable codes.
 _CODE_BY_STATUS = {
@@ -22,6 +24,51 @@ _CODE_BY_STATUS = {
     HTTPStatus.UNAUTHORIZED: ProblemCode.UNAUTHENTICATED,
     HTTPStatus.FORBIDDEN: ProblemCode.FORBIDDEN,
 }
+
+
+class ProblemFieldError(BaseModel):
+    path: str
+    code: str
+    message: str
+
+
+class Problem(BaseModel):
+    """The body of every error response: RFC 9457 plus the stable ``code`` (docs/16 §1)."""
+
+    type: str
+    title: str
+    status: int
+    detail: str
+    code: ProblemCode
+    instance: str
+    request_id: str
+    errors: list[ProblemFieldError] | None = None
+
+
+# Declared on the app, so every operation documents its error body (docs/16 §1).
+PROBLEM_RESPONSES: dict[int | str, dict[str, Any]] = {
+    "default": {"model": Problem, "description": "An RFC 9457 problem (docs/16 §1)"},
+}
+
+
+def document_problem_media_type(app: FastAPI) -> None:
+    """FastAPI documents every response model as application/json. Error bodies are
+    application/problem+json, so the generated contract says so (docs/16 preamble)."""
+    generate = app.openapi
+
+    def openapi() -> dict[str, Any]:
+        if app.openapi_schema is None:
+            schema = generate()
+            for path_item in schema.get("paths", {}).values():
+                for operation in path_item.values():
+                    default = operation.get("responses", {}).get("default", {})
+                    content = default.get("content", {})
+                    if _JSON in content:
+                        content[PROBLEM_JSON] = content.pop(_JSON)
+            app.openapi_schema = schema
+        return app.openapi_schema
+
+    app.openapi = openapi  # type: ignore[method-assign]
 
 
 def problem_response(

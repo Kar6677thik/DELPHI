@@ -148,6 +148,7 @@ to start, exit code 2, naming the variable, if one is missing or invalid.
 | `DELPHI_SIM_DATABASE_URL` | unset | worker only | Secret `delphi-db`, key `sim-url` (role `delphi_sim`). **Never mounted into the api pod**, so the api cannot read `sim_truth` even by mistake (doc 17 §2) |
 | `DELPHI_MIGRATE_DATABASE_URL` | `DELPHI_DATABASE_URL` | migrate Job only | Secret `delphi-db`, key `owner-url` (the schema owner) |
 | `DELPHI_MIGRATIONS_DIR` | `backend/migrations` in a checkout | migrate, api, worker | The image sets `/app/migrations` |
+| `DELPHI_STATIC_DIR` | `frontend/dist` in a checkout | api | The image sets `/app/static`. Without an `index.html` there, the api serves no SPA and `/` is a 404 problem |
 | `DELPHI_VERSION` | `dev` | all | Image build arg (§2) |
 | `DELPHI_ENV` | `dev` | all | ConfigMap (`dev`, `test` or `demo`) |
 | `DELPHI_LOG_LEVEL` | `INFO` | all | ConfigMap |

@@ -16,6 +16,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # src/delphi/platform/settings.py → backend/
 _BACKEND_DIR = Path(__file__).resolve().parents[3]
+_REPO_DIR = _BACKEND_DIR.parent
 _POSTGRES_SCHEMES = ("postgresql://", "postgresql+psycopg://")
 
 Port = Annotated[int, Field(ge=1, le=65535)]
@@ -55,6 +56,9 @@ class Settings(BaseSettings):
     # Defaults to `database_url` (local development with a single superuser).
     migrate_database_url: str | None = None
     migrations_dir: Path = _BACKEND_DIR / "migrations"
+    # The built frontend (`pnpm build` output), served by the api at `/` (docs/18, ADR-0008).
+    # The image sets /app/static (docs/23 §2). If it holds no index.html, nothing is served.
+    static_dir: Path = _REPO_DIR / "frontend" / "dist"
 
     db_pool_size: int = Field(default=5, ge=1, le=50)
     db_connect_timeout_s: int = Field(default=5, ge=1, le=60)
