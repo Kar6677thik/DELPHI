@@ -61,6 +61,9 @@ needed, add it here first.
 | **Persona** | `persona` | A named, scripted synthetic customer used in demo stories (Kamala, Arjun, …) |
 | **Scenario** | `scenario_type` | A simulated behaviour pattern (genuine routine, ATO, digital arrest, …) that generates payments and signals |
 | **Response model** | `response_model` | The simulator's *true* distribution of signals per scenario. It deliberately differs from the KB's likelihood tables |
+| **Telemetry targets** | `telemetry_targets` | The approximate rate of each telemetry-driven passive signal per scenario, which the generator aims for (doc 14 §5.1) |
+| **Coached victim** | `coached` | A DA or INV victim told by the fraudster what to answer; they answer the purpose and spell-breaker probes partly like a genuine customer (doc 14 §5.2) |
+| **Coaching adaptation** | `coaching_adaptation` | An optional simulator switch that moves one scenario's answers to one probe toward the GENUINE row over time, to demo yield drift (doc 14 §5.3) |
 | **Time scale** | `time_scale` | Factor that compresses simulated durations in demo mode (default 1/30) |
 | **Amount at stake** | `amount_paise` (A) | The ₹ value the loss table scales with: the payment amount for payments, the 7-day credits for accounts |
 | **Vulnerable customer** | `is_vulnerable` | A customer aged ≥ 70 or flagged with a disability (research §6) |

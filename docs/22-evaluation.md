@@ -53,8 +53,8 @@ recorded as `DECLINE`.
 
 ## 4. Metrics (definitions are normative)
 
-Let F be the fraud payments in the eval stream (sim truth; `UPI_COLLECT_REFUND` counts as
-fraud), G the genuine ones. "Stopped" = final payment status ≠ EXECUTED.
+Let F be the fraud payments in the eval stream (sim truth; the `UPI_COLLECT_REFUND` scenario,
+ground truth `APP_COLLECT_REFUND`, counts as fraud), G the genuine ones. "Stopped" = final payment status ≠ EXECUTED.
 
 | Metric | Definition |
 |---|---|

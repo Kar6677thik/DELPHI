@@ -1,4 +1,5 @@
-"""The ``delphi`` command (docs/04 §4): ``api``, ``worker``, ``migrate`` and ``kb validate``.
+"""The ``delphi`` command (docs/04 §4): ``api``, ``worker``, ``migrate``, ``kb validate`` and
+``sim freeze-response-models``.
 
 This module is the process entrypoint and the only importer of ``delphi.api``. Configuration
 errors exit with status 2 and a message naming the variable (fail fast, docs/24 §1).
@@ -26,8 +27,11 @@ from delphi.platform.settings import Settings, SettingsError, load_settings
 from delphi.platform.wiring import build_platform
 from delphi.platform.worker import install_stop_handlers, run_worker
 from delphi.probes.registry import CLASSIFIER_NAMES
+from delphi.sim.response_models import GENERATED_FILE, dump_yaml, freeze, load_config
 
 EXIT_CONFIG_ERROR = 2
+# src/delphi/cli.py → the repository's kb/ (KB v1)
+_REPO_KB_DIR = Path(__file__).resolve().parents[3] / "kb"
 log = get_logger(__name__)
 
 
@@ -43,6 +47,28 @@ def _kb_validate(args: argparse.Namespace) -> int:
         f"KB valid: {kb.name} - {len(kb.hypotheses)} hypotheses, {len(kb.sources)} sources, "
         f"sha256 {content_sha256(kb)}"
     )
+    return 0
+
+
+def _freeze_response_models(args: argparse.Namespace) -> int:
+    try:
+        kb = load_and_validate(Path(args.kb), CLASSIFIER_NAMES)
+    except KbValidationError as exc:
+        print(f"KB invalid: {len(exc.issues)} issue(s); run `delphi kb validate`", file=sys.stderr)
+        return 1
+    text = dump_yaml(freeze(kb, load_config()))
+    out = Path(args.out)
+    if args.check:
+        if not out.is_file() or out.read_text(encoding="utf-8") != text:
+            print(
+                f"{out} is out of date: run `uv run delphi sim freeze-response-models`",
+                file=sys.stderr,
+            )
+            return 1
+        print(f"{out} is up to date")
+        return 0
+    out.write_text(text, encoding="utf-8")
+    print(f"wrote {out}")
     return 0
 
 
@@ -118,6 +144,17 @@ def build_parser() -> argparse.ArgumentParser:
     validate = kb.add_parser("validate", help="validate a KB YAML tree (docs/07 §3)")
     validate.add_argument("path", nargs="?", default="kb")
     validate.set_defaults(func=_kb_validate)
+
+    sim = sub.add_parser("sim", help="simulator tools").add_subparsers(
+        dest="sim_command", required=True
+    )
+    frz = sim.add_parser(
+        "freeze-response-models", help="regenerate the frozen response models (docs/14 §5.2)"
+    )
+    frz.add_argument("--kb", default=str(_REPO_KB_DIR), help="KB v1 directory (default: kb/)")
+    frz.add_argument("--out", default=str(GENERATED_FILE))
+    frz.add_argument("--check", action="store_true", help="fail if the file differs")
+    frz.set_defaults(func=_freeze_response_models)
     return parser
 
 
