@@ -20,11 +20,14 @@ UNREACHABLE_DB = "postgresql://nobody:x@127.0.0.1:1/none"
 
 
 @pytest.fixture
-def app() -> Iterator[FastAPI]:
+def app(tmp_path: Path) -> Iterator[FastAPI]:
     settings = Settings(
         database_url=UNREACHABLE_DB,
         version="deadbeef",
         migrations_dir=MIGRATIONS_DIR,
+        # No SPA: its catch-all would shadow the routes added below, and the result must not
+        # depend on whether a local frontend build exists.
+        static_dir=tmp_path / "no-frontend-build",
         db_connect_timeout_s=1,
     )
     platform = build_platform(settings, process="test")
