@@ -1,4 +1,4 @@
-import { DropdownMenu } from 'radix-ui';
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { useNavigate } from 'react-router';
 
 import { useLogout } from '../api/auth';
