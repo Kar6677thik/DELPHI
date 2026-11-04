@@ -63,7 +63,7 @@ relative to reality so the metrics have power (stated in the report).
 | `APP_DIGITAL_ARREST` | APP_DIGITAL_ARREST | 30 | Victim age skewed older (P(≥ 60) = 0.6); on a call; 1–4 large transfers over 1–3 days to mule accounts |
 | `APP_INVESTMENT` | APP_INVESTMENT | 40 | 3–8 escalating payments over 2–6 weeks to "platform" accounts, then "withdrawal fee" payments |
 | `MULE_FORWARDING` | MULE (outbound) | 30 | A home-bank mule account forwards credits onward within minutes |
-| `UPI_COLLECT_REFUND` (hidden) | none in KB v1 → ground truth `UPI_COLLECT_REFUND` | 10 (live/eval window only) | Channel `UPI_COLLECT_APPROVAL`; victim believes they are receiving a refund; amounts ₹2k–₹50k; on a call with an unknown number in 60% of cases |
+| `UPI_COLLECT_REFUND` (hidden) | `APP_COLLECT_REFUND`, the key the S-4 script promotes (doc 11 §7); not in KB v1 | 10 (live/eval window only) | Channel `UPI_COLLECT_APPROVAL`; victim believes they are receiving a refund; amounts ₹2k–₹50k; on a call with an unknown number in 60% of cases |
 
 **Mule networks:** rings of 5–30 accounts across banks, with 1–4 layers. Dwell time per layer is
 log-normal (median 12 min at layer 1, 25 min at deeper layers, σ = 0.8). Each onward transfer
@@ -104,13 +104,37 @@ with these overrides:
 - **GENUINE_UNUSUAL**: SESSION_BEHAVIOUR hesitant 0.20, PURPOSE timing-anomalous 0.12.
 - **UPI_COLLECT_REFUND** (no KB row exists, so it is explicit): PURPOSE_QUESTION =
   (0.15, 0.03, 0.12, 0.70); SPELL_BREAKER_* = (0.10, 0.02, 0.88); OTP/BIOMETRIC pass 0.97;
-  COOLING_OFF = (0.15, 0.25, 0.60); COLLECT_INTENT_CHECK = (0.88, 0.12).
+  COOLING_OFF = (0.15, 0.25, 0.60); COLLECT_INTENT_CHECK = (0.88, 0.12);
+  CUSTOMER_OUTREACH_CALL = (0.50, 0.25, 0.05, 0.20), the same as APP_INVESTMENT (the victim
+  realises once a verified bank caller explains).
+
+How the freeze is done (`delphi sim freeze-response-models`; the inputs are in
+`sim/config/response_models.yaml`):
+
+- **Streams.** Each row (scenario s, source a) is drawn from its own PCG64 stream,
+  `SeedSequence(99, spawn_key=sha256("s/a")[:16] as four 32-bit words)`, so adding a scenario or
+  a source later never changes a row already frozen. The rows cover every ACTIVE probe plus
+  `CUSTOMER_OUTREACH_CALL` (§9). The KB v1 content hash is recorded in the file.
+- **P_true(GENUINE)** in the coached mix is the `GENUINE_ROUTINE` row. The mix is stored as
+  separate `coached` rows; which instances are coached (30%) is decided per payment by the
+  scenario generator and recorded in `sim_truth.payment_truth.coached`.
+- **Pinned outcomes.** GENUINE_UNUSUAL's PURPOSE_QUESTION row is drawn like the others, then
+  TIMING_ANOMALOUS is set to 0.12 and the other outcomes keep their drawn proportions of the
+  remaining 0.88. "SESSION_BEHAVIOUR hesitant 0.20" is its §5.1 paste/long-dwell target.
+- **UPI_COLLECT_REFUND** takes the vectors above exactly, without perturbation. A scenario with
+  explicit answers must list every answered source, and a scenario without them must have a KB
+  v1 hypothesis: a missing row fails the freeze, never falls back.
+- The snapshot test fails if the committed file differs from a fresh freeze. A deliberate change
+  bumps `generator_version` and is recorded in `sim/config/CHANGELOG.md` (§5.4).
 
 ### 5.3 Coaching adaptation (optional switch)
 
-`coaching_adaptation: {start_day, probe, shift}` gradually moves a scenario's answers toward the
-GENUINE row (e.g. the DA spell-breaker loses half its signal over 14 days). It is off by default
-and is used to demo the yield-drift detector (doc 12 §5).
+`coaching_adaptation: [{scenario, probe, start_day, ramp_days, shift}]` gradually moves a
+scenario's answers toward the GENUINE row (e.g. the DA spell-breaker loses half its signal over
+14 days: `start_day` d, `shift: 0.5`; `ramp_days` defaults to 14). The answers become
+`(1 − w)·P(own) + w·P_true(GENUINE)` with `w = shift · clip((day − start_day) / ramp_days, 0, 1)`,
+where `day` counts sim days from the start of the profile's history. It is off by default and is
+used to demo the yield-drift detector (doc 12 §5).
 
 ### 5.4 Calibration requirement for demo story S-4
 

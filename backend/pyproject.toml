@@ -102,6 +102,7 @@ forbidden_modules = [
   "delphi.platform",
   "delphi.api",
   "delphi.cli",
+  "delphi.sim",
 ]
 
 [[tool.importlinter.contracts]]
@@ -121,11 +122,11 @@ forbidden_modules = [
 [[tool.importlinter.contracts]]
 name = "nothing imports the api layer except the CLI (docs/04 §4.1 rule 4)"
 type = "forbidden"
-source_modules = ["delphi.engine", "delphi.kb", "delphi.probes", "delphi.platform"]
+source_modules = ["delphi.engine", "delphi.kb", "delphi.probes", "delphi.platform", "delphi.sim"]
 forbidden_modules = ["delphi.api", "delphi.cli"]
 
 [[tool.importlinter.contracts]]
 name = "platform holds no business logic: it imports no feature module"
 type = "forbidden"
 source_modules = ["delphi.platform"]
-forbidden_modules = ["delphi.engine", "delphi.kb", "delphi.probes"]
+forbidden_modules = ["delphi.engine", "delphi.kb", "delphi.probes", "delphi.sim"]

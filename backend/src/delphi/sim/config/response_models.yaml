@@ -1,0 +1,57 @@
+# Inputs to the simulator's response models (docs/14 §5). Every number here is from docs/14.
+# The frozen answer distributions are generated from this file and KB v1 into
+# response_models.generated.yaml by `uv run delphi sim freeze-response-models`.
+# A change to either file is a new generator_version (record it in CHANGELOG.md).
+generator_version: 1
+
+# §5.2: P_true(· | s, a) ~ Dirichlet(concentration · P_kb(· | h(s), a)), sampled once, each
+# row from its own stream derived from freeze_seed and the (scenario, source) names.
+freeze_seed: 99
+concentration: 50
+# Evidence answered from a perturbed KB row as well (docs/14 §9, customer outreach call).
+perturbed_evidence: [CUSTOMER_OUTREACH_CALL]
+
+# §5.1: approximate rates of the telemetry-driven passive outcomes, per scenario.
+# GENUINE_UNUSUAL's "SESSION_BEHAVIOUR hesitant 0.20" (§5.2) is its paste/long-dwell rate.
+telemetry_targets:
+  GENUINE_ROUTINE: { on_call_unknown_number: 0.05, remote_access_active: 0.005, paste_or_long_dwell: 0.06, cadence_mismatch: 0.02 }
+  GENUINE_UNUSUAL: { on_call_unknown_number: 0.10, remote_access_active: 0.01, paste_or_long_dwell: 0.20, cadence_mismatch: 0.05 }
+  ATO: { on_call_unknown_number: 0.08, remote_access_active: 0.20, paste_or_long_dwell: 0.12, cadence_mismatch: 0.65 }
+  APP_DIGITAL_ARREST: { on_call_unknown_number: 0.80, remote_access_active: 0.25, paste_or_long_dwell: 0.50, cadence_mismatch: 0.04 }
+  APP_INVESTMENT: { on_call_unknown_number: 0.40, remote_access_active: 0.10, paste_or_long_dwell: 0.35, cadence_mismatch: 0.04 }
+  MULE_FORWARDING: { on_call_unknown_number: 0.12, remote_access_active: 0.04, paste_or_long_dwell: 0.50, cadence_mismatch: 0.10 }
+  UPI_COLLECT_REFUND: { on_call_unknown_number: 0.60, remote_access_active: 0.05, paste_or_long_dwell: 0.30, cadence_mismatch: 0.03 }
+
+# §5.2 well-coached victims: this share of DA and INV instances answers these probes from
+# genuine_weight · P_true(GENUINE) + (1 − genuine_weight) · P_true(own).
+coached_victims:
+  share: 0.30
+  genuine_weight: 0.5
+  scenarios: [APP_DIGITAL_ARREST, APP_INVESTMENT]
+  probes: [PURPOSE_QUESTION, SPELL_BREAKER_DIGITAL_ARREST, SPELL_BREAKER_INVESTMENT]
+
+# §5.2: one outcome pinned after the draw; the other outcomes keep their drawn proportions.
+pinned_outcomes:
+  GENUINE_UNUSUAL:
+    PURPOSE_QUESTION: { TIMING_ANOMALOUS: 0.12 }
+
+# §5.2: scenarios with no KB v1 row take these distributions exactly, in the KB outcome order.
+# Every answered source needs a row; a missing one fails the freeze.
+explicit_answers:
+  UPI_COLLECT_REFUND:
+    OTP_STEP_UP: [0.97, 0.03]
+    BIOMETRIC_STEP_UP: [0.97, 0.03]
+    PURPOSE_QUESTION: [0.15, 0.03, 0.12, 0.70]
+    SPELL_BREAKER_DIGITAL_ARREST: [0.10, 0.02, 0.88]
+    SPELL_BREAKER_INVESTMENT: [0.10, 0.02, 0.88]
+    COOLING_OFF: [0.15, 0.25, 0.60]
+    COLLECT_INTENT_CHECK: [0.88, 0.12]
+    # Same as APP_INVESTMENT: the victim realises once a verified bank caller explains.
+    CUSTOMER_OUTREACH_CALL: [0.50, 0.25, 0.05, 0.20]
+
+# §5.3: off by default. Each entry moves one scenario's answers to one probe linearly toward
+# the GENUINE row: weight = shift · clip((sim_day − start_day) / ramp_days, 0, 1). Example
+# from §5.3, the DA spell-breaker losing half its signal over 14 days:
+#   - { scenario: APP_DIGITAL_ARREST, probe: SPELL_BREAKER_DIGITAL_ARREST, start_day: 0, shift: 0.5 }
+# ramp_days defaults to 14.
+coaching_adaptation: []
