@@ -256,7 +256,7 @@ engine:
   open_mass_base: 0.02
   open_mass_slope: 0.18
   unexplained_routing_threshold: 0.35     # terminal P(UNEXPLAINED) ≥ this → Scout queue
-  fast_path: { min_p_genuine: 0.995, max_amount_inr: 10000, max_anomaly_percentile: 0.90 }
+  fast_path: { min_p_genuine: 0.995, max_amount_inr: 10000, max_anomaly_percentile: 0.90 }  # on p_model, doc 08 §3
 guardrails:
   max_active_probes_per_session: 3
   max_medium_plus_per_session: 2

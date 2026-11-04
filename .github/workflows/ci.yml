@@ -16,6 +16,32 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Every commit is authored by its human contributor with no AI attribution (docs/24 §5).
+  # The commit-msg hook enforces this locally, but cloud agents may not run it, and squash
+  # merges copy the PR's commit messages onto main, so CI checks every commit of the PR too.
+  commit-policy:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: No AI attribution in commit messages
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          fail=0
+          for c in $(git rev-list "$BASE..$HEAD"); do
+            if git log -1 --format=%B "$c" | grep -qiE '^co-authored-by:|generated with \[?claude'; then
+              echo "::error::$(git log -1 --format='%h %s' "$c"): AI attribution is not allowed (AGENTS.md §2)"
+              fail=1
+            fi
+          done
+          [ "$fail" -eq 0 ] && echo "No attribution in $(git rev-list --count "$BASE..$HEAD") commit(s)."
+          exit "$fail"
+
   backend:
     runs-on: ubuntu-latest
     timeout-minutes: 20
