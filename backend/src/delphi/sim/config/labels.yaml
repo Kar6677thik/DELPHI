@@ -1,0 +1,17 @@
+# Label arrival: what the bank learns, and when (docs/14 §7, FR-SIM-04).
+
+# Probability that the victim of a released fraud payment reports it. Scenarios without an
+# entry are never reported by a victim: MULE_FORWARDING payments leave a mule's own account,
+# so their label comes only from the registry (docs/14 §7).
+report_probability:
+  APP_DIGITAL_ARREST: 0.70
+  APP_INVESTMENT: 0.70
+  ATO: 0.90
+  UPI_COLLECT_REFUND: 0.60
+
+# Delays are log-normal: median · exp(label_delay_sigma · z), z ~ N(0, 1) (docs/14 §7).
+label_delay_sigma: 0.8
+complaint_delay_median_hours: 48
+complaint_delay_median_hours_by_scenario:
+  ATO: 4
+registry_delay_median_hours: 120
