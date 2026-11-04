@@ -47,8 +47,14 @@ resolved as timed out (FR-GDN-14).
 
 ## 3. Fast path
 
-`RELEASE` immediately when **all** of these hold: p0(GENUINE) ≥ 0.995, amount ≤ ₹10,000, and
-q < 0.90. The session is still persisted with its prior, so fast-path decisions are auditable
+`RELEASE` immediately when **all** of these hold: p_model(GENUINE) ≥ 0.995, amount ≤ ₹10,000,
+and q < 0.90.
+
+The threshold applies to **p_model**, the sensing model's probability (doc 13), not to the prior
+p0. The prior always reserves the open mass u ≥ `open_mass.base` (0.02) for typologies the model
+lacks and for UNEXPLAINED (doc 06 §11), so p0(GENUINE) ≤ 0.98 and a p0 threshold of 0.995 could
+never be met. Because q < 0.90 also holds, u is exactly its base, so the rule is equivalent to
+p0(GENUINE) ≥ 0.995 · (1 − 0.02) ≈ 0.975. The session is still persisted with its prior, so fast-path decisions are auditable
 and count in the metrics.
 
 ## 4. Customer channel contract (mock phone)

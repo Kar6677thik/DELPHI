@@ -85,6 +85,28 @@ def test_fast_path(p_g: float, amount_inr: float, q: float, expected: bool) -> N
     )
 
 
+def test_fast_path_is_reachable_from_a_realistic_prior(guardian: CompiledProfile) -> None:
+    """Regression: the threshold is on p_model. The prior itself tops out at 1 − u = 0.98."""
+    p_model = {
+        "GENUINE": 0.997,
+        "ATO": 0.001,
+        "APP_DIGITAL_ARREST": 0.001,
+        "APP_INVESTMENT": 0.0005,
+        "MULE": 0.0005,
+    }
+    q = 0.5
+    prior = build_prior(guardian, p_model, q)
+    assert prior[guardian.hypotheses.index("GENUINE")] < 0.995  # a p0 rule could never fire
+    assert is_fast_path(
+        p_model["GENUINE"],
+        500_000,
+        q,
+        min_p_genuine=0.995,
+        max_amount_inr=10_000,
+        max_anomaly_percentile=0.90,
+    )
+
+
 class TestExplain:
     def test_wcmm_finds_the_most_likely_flip(self, navigator_hold: CompiledProfile) -> None:
         """Near the boundary (CONFIRM_FRAUD at 10% fraud mass), clean device-sharing evidence

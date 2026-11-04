@@ -57,7 +57,7 @@ def build_prior(
 
 
 def is_fast_path(
-    p_genuine: float,
+    p_model_genuine: float,
     amount_paise: float,
     anomaly_percentile: float,
     *,
@@ -65,9 +65,13 @@ def is_fast_path(
     max_amount_inr: float,
     max_anomaly_percentile: float,
 ) -> bool:
-    """docs/08 §3: release without probes when overwhelmingly genuine and small."""
+    """docs/08 §3: release without probes when overwhelmingly genuine, small and not anomalous.
+
+    ``p_model_genuine`` is the sensing model's probability, not the prior: the prior reserves
+    at least ``open_mass.base`` for the open world, so p0(GENUINE) can never reach 0.995.
+    """
     return (
-        p_genuine >= min_p_genuine
+        p_model_genuine >= min_p_genuine
         and amount_paise <= max_amount_inr * 100.0
         and anomaly_percentile < max_anomaly_percentile
     )

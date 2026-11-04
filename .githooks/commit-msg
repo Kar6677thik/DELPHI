@@ -1,7 +1,8 @@
 #!/bin/sh
 # Rejects AI/co-author attribution in commit messages (docs/24-engineering-conventions.md §5).
 # Enable once per clone:  git config core.hooksPath .githooks
-if grep -qiE '^(co-authored-by:|generated with)' "$1"; then
-  echo "commit-msg: attribution trailers are not allowed in this repository (see CLAUDE.md rule 1)." >&2
+# Same pattern as the commit-policy CI job (.github/workflows/ci.yml); keep the two in sync.
+if grep -qiE '^co-authored-by:|generated with \[?claude' "$1"; then
+  echo "commit-msg: attribution trailers are not allowed in this repository (see AGENTS.md §2)." >&2
   exit 1
 fi

@@ -31,7 +31,7 @@ needed, add it here first.
 | **Friction tier** | `friction_tier` | `NONE`, `LOW`, `MEDIUM`, `HIGH`. How intrusive a probe is for the customer |
 | **Guardrail** | `guardrail` | A hard rule that makes a source ineligible regardless of value (budgets, consent, fairness caps) |
 | **Exclusive group** | `exclusive_group` | A set of sources of which at most one may run per session, e.g. `STEP_UP_AUTH` = {OTP, biometric} |
-| **Fast path** | `fast_path` | Immediate `RELEASE` without probes when the prior is overwhelmingly genuine and the amount is small |
+| **Fast path** | `fast_path` | Immediate `RELEASE` without probes when the sensing model is overwhelmingly confident the payment is genuine (p_model, not the prior; doc 08 §3), the amount is small and the payment is not anomalous |
 | **Guardian session** | `guardian_session` | One payment-time decision process: sensing → passive probes → active probes → decision |
 | **Probe run** | `probe_run` | One execution of a probe inside a session, with its candidates table, propensity and outcome |
 | **Case** | `case` | A unit of investigation in Navigator. Its type is `PAYMENT_HOLD` or `ACCOUNT_REVIEW` |

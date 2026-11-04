@@ -83,7 +83,9 @@ description explaining why (make vs reuse, EFG §1).
   it, under their own git identity. No
   `Co-Authored-By` trailers, no AI attribution lines in commits or PRs, no `--author`
   overrides. CI never commits. A `commit-msg` hook in `.githooks/` (enabled with
-  `git config core.hooksPath .githooks`) rejects messages containing `Co-Authored-By`.
+  `git config core.hooksPath .githooks`) rejects messages containing `Co-Authored-By` or
+  "Generated with Claude", and the CI job `commit-policy` checks every commit of a PR the same
+  way. Cloud agents may skip local hooks, and squash merges copy commit messages onto `main`.
 - **Planning lives in GitHub.** Every piece of work is an issue (templates in
   `.github/ISSUE_TEMPLATE/`), assigned to a milestone `M0`…`M9` that mirrors doc 25, and labelled
   `type:*`, `area:*` and, when useful, `P1`/`P2` or `status:*`. Each milestone has one
