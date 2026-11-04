@@ -134,7 +134,8 @@ async def _validation_error(request: Request, exc: Exception) -> JSONResponse:
     return problem(request, ProblemCode.VALIDATION_FAILED, "The request is invalid.", errors=errors)
 
 
-async def _http_error(request: Request, exc: Exception) -> JSONResponse:
+async def http_error(request: Request, exc: Exception) -> JSONResponse:
+    """Render a framework HTTP error (unknown route, wrong method) as a problem."""
     assert isinstance(exc, StarletteHTTPException)
     status = HTTPStatus(exc.status_code)
     code = _CODE_BY_STATUS.get(status, ProblemCode.INTERNAL)
@@ -150,6 +151,6 @@ async def _http_error(request: Request, exc: Exception) -> JSONResponse:
 def install_problem_handlers(app: FastAPI) -> None:
     app.add_exception_handler(DelphiError, _delphi_error)
     app.add_exception_handler(RequestValidationError, _validation_error)
-    app.add_exception_handler(StarletteHTTPException, _http_error)
+    app.add_exception_handler(StarletteHTTPException, http_error)
     # Unhandled exceptions are rendered by RequestContextMiddleware, which still knows the
     # request id; Starlette would render them outside every middleware.
