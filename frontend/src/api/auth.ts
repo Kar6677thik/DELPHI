@@ -13,7 +13,10 @@ export function useLogin() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (request: LoginRequest) => postJson('/auth/login', request),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ME_QUERY_KEY }),
+    // Reset, not invalidate: after an expired session the query sits in `error`, and an
+    // invalidated query keeps that status while it refetches, so RequireSession would send the
+    // user straight back to /login. A reset starts the new session from `pending`.
+    onSuccess: () => queryClient.resetQueries({ queryKey: ME_QUERY_KEY }),
   });
 }
 

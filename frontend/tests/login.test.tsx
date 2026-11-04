@@ -1,7 +1,8 @@
-import { screen, waitFor } from '@testing-library/react';
+import { act, screen, waitFor } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { describe, expect, it } from 'vitest';
 
+import { ME_QUERY_KEY } from '../src/api/auth';
 import { safeNext } from '../src/lib/safeNext';
 import { MOCK_PASSWORD, setMockSession } from '../src/mocks/handlers';
 import { server } from '../src/mocks/node';
@@ -18,6 +19,29 @@ describe('login and session', () => {
     await user.click(screen.getByRole('button', { name: 'Sign in' }));
 
     await screen.findByRole('heading', { name: 'Overview' });
+    expect(router.state.location.pathname).toBe('/');
+    expect(router.state.location.search).toBe('?view=queues');
+  });
+
+  it('signs back in after the session expires, without looping to /login (#38 review)', async () => {
+    setMockSession('admin');
+    const { router, user, queryClient } = renderApp('/?view=queues');
+    await screen.findByRole('heading', { name: 'Overview' });
+
+    // The session expires: the next /auth/me answers 401 and the shell sends the user to login.
+    setMockSession(null);
+    await act(() => queryClient.refetchQueries({ queryKey: ME_QUERY_KEY }));
+    await screen.findByRole('heading', { name: 'Sign in to DELPHI' });
+    expect(router.state.location.search).toBe('?next=%2F%3Fview%3Dqueues');
+
+    await user.type(screen.getByLabelText('Username'), 'admin');
+    await user.type(screen.getByLabelText('Password'), MOCK_PASSWORD);
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    await screen.findByRole('heading', { name: 'Overview' });
+    // Still signed in once every pending render has settled: no bounce back to /login.
+    await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+    expect(screen.queryByRole('heading', { name: 'Sign in to DELPHI' })).not.toBeInTheDocument();
     expect(router.state.location.pathname).toBe('/');
     expect(router.state.location.search).toBe('?view=queues');
   });

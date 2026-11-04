@@ -8,7 +8,8 @@ import { routes } from '../src/routes/router';
 
 export function renderApp(path: string) {
   const router = createMemoryRouter(routes, { initialEntries: [path] });
+  const queryClient = createQueryClient();
   const user = userEvent.setup();
-  render(<App router={router} queryClient={createQueryClient()} />);
-  return { router, user };
+  render(<App router={router} queryClient={queryClient} />);
+  return { router, user, queryClient };
 }
