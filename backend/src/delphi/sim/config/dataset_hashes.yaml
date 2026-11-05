@@ -1,0 +1,5 @@
+# SHA-256 of the canonical export (delphi.sim.export) of the `test` profile, per
+# generator_version (docs/14 §1, docs/21 §1). A generator change that alters the data bumps
+# generator_version and adds its hash here; old entries stay as a record.
+test:
+  2: 0dcb4e7f3a0c3e5fdfe9fa9dc3d1f959c0ed309662c2c05e4927a00d5463c6d2

@@ -8,6 +8,14 @@ upgrade changes them, `test_committed_freeze_matches_kb_v1_and_config` fails eve
 input changed. Then either keep the previous numpy, or regenerate with
 `uv run delphi sim freeze-response-models`, bump `generator_version` and record the upgrade here.
 
+## 2
+
+- The population (docs/14 §2–3, #17): customers, their home-bank accounts, devices and
+  established payees, the merchants (0.15 per customer, 1 in 15 a hospital) and the external
+  counterparties they pay. Numbers in `generator.yaml`; the gaps it fills are listed in docs/14
+  §3. Response models unchanged.
+- The `test` profile's canonical-export hash is recorded in `dataset_hashes.yaml`.
+
 ## 1
 
 - Response models frozen from KB v1 with seed 99 and concentration 50 (docs/14 §5.2), one
