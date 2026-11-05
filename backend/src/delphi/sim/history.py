@@ -1,5 +1,9 @@
 """The history period's genuine payments, decided by the legacy policy B1 (docs/14 §4, #17).
 
+GENUINE_UNUSUAL events (a large one-off to a new merchant, or from a new phone; 30% at night)
+run at each customer's routine rate × 150 / 9,700, genuine new phones appear once per 400 days,
+and every customer session starts with a login.
+
 Each customer plans its GENUINE_ROUTINE payments from its own stream,
 ``keyed_rng(seed, "routine", i)``: a daily rate λ ~ Gamma(2, 0.3), Poisson counts per day,
 Zipf-weighted payees, log-normal amounts per payee type at a habitual local hour, plus a monthly
@@ -32,7 +36,8 @@ from delphi.sim.labels import (
     schedule_payment_labels,
 )
 from delphi.sim.legacy_policy import decide_b1
-from delphi.sim.population import ACTIVE, FULL_KYC, Account, Population
+from delphi.sim.logins import LoginEvent, login_before
+from delphi.sim.population import ACTIVE, FULL_KYC, Account, Device, Payee, Population, _choice
 from delphi.sim.response_models import TelemetryTargets, draw_signals
 from delphi.sim.rng import keyed_rng
 from delphi.sim.scenarios import ScenarioType, ground_truth_key
@@ -103,6 +108,9 @@ class History:
     payment_truth: tuple[PaymentTruth, ...]
     labels: tuple[ScheduledLabel, ...]
     balances: Mapping[UUID, int]  # every account's balance at the end of the history
+    devices: tuple[Device, ...] = ()  # phones first seen during the history
+    payees: tuple[Payee, ...] = ()  # payees saved during the history
+    logins: tuple[LoginEvent, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,6 +127,8 @@ class _Intent:
     instance: UUID
     decided: bool  # a customer payment B1 decides; a salary credit is not
     telemetry: SessionTelemetry | None
+    scenario: ScenarioType = ScenarioType.GENUINE_ROUTINE
+    login: LoginEvent | None = None
 
 
 def _lognormal_paise(rng: np.random.Generator, median_inr: float, sigma: float) -> int:
@@ -137,7 +147,7 @@ class _Planner:
         self,
         config: GeneratorConfig,
         population: Population,
-        targets: TelemetryTargets,
+        targets: Mapping[ScenarioType, TelemetryTargets],
         thresholds: ClassifierThresholds,
     ) -> None:
         self.cfg = config
@@ -153,9 +163,19 @@ class _Planner:
         self.payees: dict[UUID, list[UUID]] = {}
         for payee in population.payees:
             self.payees.setdefault(payee.customer_id, []).append(payee.account_id)
-        self.devices: dict[UUID, list[UUID]] = {}
+        self.devices: dict[UUID, list[Device]] = {}
         for device in population.devices:
-            self.devices.setdefault(device.customer_id, []).append(device.id)
+            self.devices.setdefault(device.customer_id, []).append(device)
+        self.new_device_ids = IdStream(self.seed, "history_device")
+        self.new_payee_ids = IdStream(self.seed, "history_payee")
+        self.login_ids = IdStream(self.seed, "login")
+        self.new_devices: list[Device] = []
+        self.new_payees: list[Payee] = []
+        self.unusual_merchants = [
+            a.id
+            for a in population.accounts
+            if a.is_merchant and a.merchant_category in config.genuine_unusual.merchant_categories
+        ]
         payroll_ids = IdStream(self.seed, "payroll_account")
         banks = config.population.external_banks
         self.payroll = tuple(
@@ -186,6 +206,141 @@ class _Planner:
             day += timedelta(days=1)
         return days
 
+    def _new_device(self, rng: np.random.Generator, customer_id: UUID, at: datetime) -> Device:
+        device = Device(
+            id=self.new_device_ids.next(),
+            customer_id=customer_id,
+            fingerprint=rng.bytes(16).hex(),
+            os=_choice(rng, self.cfg.population.device_os),
+            first_seen_at=at,
+        )
+        self.new_devices.append(device)
+        return device
+
+    @staticmethod
+    def _device_at(
+        rng: np.random.Generator, original: list[Device], phones: list[Device], at: datetime
+    ) -> Device:
+        """The newest phone first seen by `at`, else one of the customer's original devices."""
+        current = [d for d in phones if d.first_seen_at <= at]
+        if current:
+            return max(current, key=lambda d: d.first_seen_at)
+        return original[int(rng.integers(len(original)))]
+
+    def _session(
+        self,
+        rng: np.random.Generator,
+        scenario: ScenarioType,
+        *,
+        customer_index: int,
+        payer: UUID,
+        payee: UUID,
+        amount_paise: int,
+        channel: str,
+        at: datetime,
+        device: Device,
+        instance: UUID,
+    ) -> _Intent:
+        customer = self.pop.customers[customer_index]
+        payment_id = self.payment_ids.next()
+        signals = draw_signals(rng, self.targets[scenario])
+        telemetry = render_telemetry(rng, payment_id, signals, self.cfg.telemetry, self.thresholds)
+        login = login_before(
+            rng,
+            login_id=self.login_ids.next(),
+            customer_id=customer.id,
+            device_id=device.id,
+            fingerprint=device.fingerprint,
+            city_name=customer.home_city,
+            city=self.cfg.cities[customer.home_city],
+            session_at=at,
+            lead_s=self.cfg.login_lead_s,
+        )
+        return _Intent(
+            id=payment_id,
+            payer=payer,
+            payee=payee,
+            amount_paise=amount_paise,
+            channel=channel,
+            at=at,
+            device=device.id,
+            instance=instance,
+            decided=True,
+            telemetry=telemetry,
+            scenario=scenario,
+            login=login,
+        )
+
+    def _unusual(
+        self,
+        rng: np.random.Generator,
+        *,
+        index: int,
+        day: datetime,
+        habit: float,
+        original: list[Device],
+        phones: list[Device],
+        intents: list[_Intent],
+        instances: list[ScenarioInstance],
+    ) -> None:
+        cfg = self.cfg.genuine_unusual
+        customer = self.pop.customers[index]
+        account = self.home_account[customer.id]
+        scale = self.cfg.population.income_amount_scale[customer.income_band]
+        if rng.random() < cfg.night_share:
+            hour = cfg.night_hours.min + rng.random() * (cfg.night_hours.max - cfg.night_hours.min)
+        else:
+            hour = habit + self.routine.hour_sd * rng.standard_normal()
+        at = day + timedelta(seconds=int(hour % _HOURS_PER_DAY * _SECONDS_PER_HOUR))
+        lead = timedelta(
+            minutes=cfg.lead_minutes.min
+            + rng.random() * (cfg.lead_minutes.max - cfg.lead_minutes.min)
+        )
+        kind = _choice(rng, cfg.kind)
+        saved = set(self.payees.get(customer.id, []))
+        if kind == "NEW_MERCHANT":
+            options = [m for m in self.unusual_merchants if m not in saved]
+            payee = options[int(rng.integers(len(options)))]
+            self.new_payees.append(
+                Payee(
+                    id=self.new_payee_ids.next(),
+                    customer_id=customer.id,
+                    account_id=payee,
+                    label=(self.accounts[payee].merchant_category or "").title().replace("_", " "),
+                    added_at=at - lead,
+                )
+            )
+            device = self._device_at(rng, original, phones, at)
+        else:  # NEW_PHONE: a large payment to family from a phone first seen minutes ago
+            family = [a for a in saved if not self.accounts[a].is_merchant] or sorted(saved)
+            payee = family[int(rng.integers(len(family)))]
+            device = self._new_device(rng, customer.id, at - lead)
+            phones.append(device)
+        instance = ScenarioInstance(
+            id=self.instance_ids.next(),
+            scenario_type=ScenarioType.GENUINE_UNUSUAL.value,
+            hypothesis_key=ground_truth_key(ScenarioType.GENUINE_UNUSUAL),
+            params={"customer_id": str(customer.id), "kind": kind},
+            started_at=at - lead,
+        )
+        instances.append(instance)
+        intents.append(
+            self._session(
+                rng,
+                ScenarioType.GENUINE_UNUSUAL,
+                customer_index=index,
+                payer=account.id,
+                payee=payee,
+                amount_paise=_lognormal_paise(
+                    rng, cfg.amount_inr.median * scale, cfg.amount_inr.sigma
+                ),
+                channel=cfg.channel,
+                at=at,
+                device=device,
+                instance=instance.id,
+            )
+        )
+
     def customer(
         self, index: int, intents: list[_Intent], instances: list[ScenarioInstance]
     ) -> None:
@@ -203,6 +358,8 @@ class _Planner:
         )
         instances.append(instance)
         rate = rng.gamma(routine.daily_rate_gamma["shape"], routine.daily_rate_gamma["scale"])
+        unusual = self.cfg.genuine_unusual
+        unusual_rate = rate * unusual.rate_per_10k / unusual.routine_rate_per_10k
         habit = routine.habitual_hour.min + rng.random() * (
             routine.habitual_hour.max - routine.habitual_hour.min
         )
@@ -211,7 +368,15 @@ class _Planner:
             [1 / (rank + 1) ** routine.zipf_exponent for rank in range(len(payees))]
         )
         cdf = list(np.cumsum(weights) / weights.sum()) if payees else []
-        devices = self.devices[customer.id]
+        original = self.devices[customer.id]
+        # docs/14 §3: genuine new phones, once per new_device_mean_days on average.
+        phones: list[Device] = []
+        at = self.pop.history_start
+        while True:
+            at += timedelta(days=float(rng.exponential(self.cfg.new_device_mean_days)))
+            if at >= self.pop.history_end:
+                break
+            phones.append(self._new_device(rng, customer.id, at))
         employer = self.payroll[int(rng.integers(len(self.payroll)))]
         for day in self._local_days():
             if day.day == 1:
@@ -238,29 +403,33 @@ class _Planner:
                 payee = payees[min(bisect.bisect_right(cdf, rng.random()), len(payees) - 1)]
                 payee_type = _payee_type(self.accounts[payee])
                 amount = routine.amount_inr[payee_type]
-                channels = routine.channel[payee_type]
-                names = list(channels)
-                channel_cdf = list(np.cumsum([channels[n] for n in names]))
-                channel = names[min(bisect.bisect_right(channel_cdf, rng.random()), len(names) - 1)]
+                channel = _choice(rng, routine.channel[payee_type])
                 hour = (habit + routine.hour_sd * rng.standard_normal()) % _HOURS_PER_DAY
                 at = day + timedelta(seconds=int(hour * _SECONDS_PER_HOUR))
-                payment_id = self.payment_ids.next()
-                signals = draw_signals(rng, self.targets)
                 intents.append(
-                    _Intent(
-                        id=payment_id,
+                    self._session(
+                        rng,
+                        ScenarioType.GENUINE_ROUTINE,
+                        customer_index=index,
                         payer=account.id,
                         payee=payee,
                         amount_paise=_lognormal_paise(rng, amount.median * scale, amount.sigma),
                         channel=channel,
                         at=at,
-                        device=devices[int(rng.integers(len(devices)))],
+                        device=self._device_at(rng, original, phones, at),
                         instance=instance.id,
-                        decided=True,
-                        telemetry=render_telemetry(
-                            rng, payment_id, signals, self.cfg.telemetry, self.thresholds
-                        ),
                     )
+                )
+            for _ in range(int(rng.poisson(unusual_rate)) if payees else 0):
+                self._unusual(
+                    rng,
+                    index=index,
+                    day=day,
+                    habit=habit,
+                    original=original,
+                    phones=phones,
+                    intents=intents,
+                    instances=instances,
                 )
 
 
@@ -268,14 +437,14 @@ def generate_history(
     config: GeneratorConfig,
     population: Population,
     *,
-    targets: TelemetryTargets,
+    targets: Mapping[ScenarioType, TelemetryTargets],
     thresholds: ClassifierThresholds,
     label_config: LabelConfig,
 ) -> History:
-    """GENUINE_ROUTINE payments and salaries over the history, decided by B1.
+    """Genuine payments and salaries over the history, decided by B1.
 
-    ``targets`` are the GENUINE_ROUTINE telemetry targets (docs/14 §5.1) and ``thresholds`` the
-    KB's classifier thresholds (docs/08 §5)."""
+    ``targets`` are the scenarios' telemetry targets (docs/14 §5.1) and ``thresholds`` the KB's
+    classifier thresholds (docs/08 §5)."""
     planner = _Planner(config, population, targets, thresholds)
     intents: list[_Intent] = []
     instances: list[ScenarioInstance] = []
@@ -291,17 +460,35 @@ def generate_history(
     telemetry: list[SessionTelemetry] = []
     truth: list[PaymentTruth] = []
     labels: list[ScheduledLabel] = []
+    logins: list[LoginEvent] = []
+    home = planner.home_account
+    saved_at = {
+        (home[p.customer_id].id, p.account_id): p.added_at
+        for p in (*population.payees, *planner.new_payees)
+    }
+    first_seen = {d.id: d.first_seen_at for d in (*population.devices, *planner.new_devices)}
+    new_device = timedelta(days=thresholds.new_device_days)
+    paid: set[tuple[UUID, UUID]] = set()
     for intent in intents:
-        # Established payees and known devices: B1 has nothing to hold in routine payments,
-        # but every customer payment still goes through it.
+        pair = (intent.payer, intent.payee)
+        added = saved_at.get(pair)
+        # docs/13 §3: a payee is new if saved < 24 h ago or never paid before. Payees saved
+        # before the history are established.
+        payee_is_new = added is None or (
+            added >= population.history_start
+            and (intent.at - added < timedelta(hours=24) or pair not in paid)
+        )
+        device_is_new = (
+            intent.device is not None and intent.at - first_seen[intent.device] < new_device
+        )
         decision = (
             decide_b1(
                 config.legacy_policy,
                 amount_paise=intent.amount_paise,
                 channel=intent.channel,
                 payee_listed=False,
-                payee_is_new=False,
-                device_is_new=False,
+                payee_is_new=payee_is_new,
+                device_is_new=device_is_new,
             )
             if intent.decided
             else PaymentDecision.RELEASED
@@ -323,7 +510,10 @@ def generate_history(
                 executed_at=intent.at if executed else None,
             )
         )
+        if intent.login is not None:
+            logins.append(intent.login)
         if executed:
+            paid.add(pair)
             balances[intent.payer] -= intent.amount_paise
             balances[intent.payee] += intent.amount_paise
             ledger.append(
@@ -343,14 +533,12 @@ def generate_history(
                 payment_id=intent.id,
                 scenario_instance_id=intent.instance,
                 is_fraud=False,
-                hypothesis_key=ground_truth_key(ScenarioType.GENUINE_ROUTINE),
+                hypothesis_key=ground_truth_key(intent.scenario),
                 coached=False,
             )
         )
         if intent.decided:
-            outcome = PaymentOutcome(
-                str(intent.id), ScenarioType.GENUINE_ROUTINE, decision, intent.at
-            )
+            outcome = PaymentOutcome(str(intent.id), intent.scenario, decision, intent.at)
             labels.extend(
                 schedule_payment_labels(
                     outcome, label_config, seed=spec.seed, maturity_days=spec.maturity_days
@@ -365,4 +553,7 @@ def generate_history(
         payment_truth=tuple(truth),
         labels=tuple(labels),
         balances=balances,
+        devices=tuple(planner.new_devices),
+        payees=tuple(planner.new_payees),
+        logins=tuple(logins),
     )

@@ -11,7 +11,6 @@ from delphi.sim.history import History, generate_history
 from delphi.sim.labels import load_label_config
 from delphi.sim.population import Population, generate_population
 from delphi.sim.response_models import load_config
-from delphi.sim.scenarios import ScenarioType
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,7 +31,7 @@ def generate_dataset(
     history = generate_history(
         config,
         population,
-        targets=load_config().telemetry_targets[ScenarioType.GENUINE_ROUTINE],
+        targets=load_config().telemetry_targets,
         thresholds=kb.config.classifiers,
         label_config=load_label_config(),
     )

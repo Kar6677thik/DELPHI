@@ -125,6 +125,30 @@ class TelemetryShape(_Frozen):
     session_duration_s: LogNormal
 
 
+class GenuineUnusualConfig(_Frozen):
+    rate_per_10k: float = Field(gt=0)
+    routine_rate_per_10k: float = Field(gt=0)
+    night_share: Probability
+    merchant_categories: tuple[str, ...]
+    kind: dict[str, float]
+    night_hours: Range
+    amount_inr: LogNormal
+    lead_minutes: Range
+    channel: str
+
+    @model_validator(mode="after")
+    def _kinds(self) -> GenuineUnusualConfig:
+        _distribution(self.kind, "genuine_unusual.kind")
+        if set(self.kind) != {"NEW_MERCHANT", "NEW_PHONE"}:
+            raise ValueError("genuine_unusual.kind must be NEW_MERCHANT and NEW_PHONE")
+        return self
+
+
+class City(_Frozen):
+    lat: float = Field(ge=-90, le=90)
+    lon: float = Field(ge=-180, le=180)
+
+
 class LegacyPolicyConfig(_Frozen):
     """Baseline B1 (docs/22 §2)."""
 
@@ -141,6 +165,18 @@ class GeneratorConfig(_Frozen):
     genuine_routine: GenuineRoutineConfig
     telemetry: TelemetryShape
     legacy_policy: LegacyPolicyConfig
+    genuine_unusual: GenuineUnusualConfig
+    new_device_mean_days: float = Field(gt=0)
+    login_lead_s: Range
+    cities: dict[str, City]
+
+    @model_validator(mode="after")
+    def _home_cities_have_coordinates(self) -> GeneratorConfig:
+        named = {city for cities in self.population.home_city.values() for city in cities}
+        missing = sorted(named - set(self.cities))
+        if missing:
+            raise ValueError(f"cities has no coordinates for {', '.join(missing)}")
+        return self
 
 
 def load_generator_config(path: Path = GENERATOR_CONFIG_FILE) -> GeneratorConfig:

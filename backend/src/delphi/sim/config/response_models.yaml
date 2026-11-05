@@ -2,7 +2,7 @@
 # The frozen answer distributions are generated from this file and KB v1 into
 # response_models.generated.yaml by `uv run delphi sim freeze-response-models`.
 # A change to either file is a new generator_version (record it in CHANGELOG.md).
-generator_version: 4
+generator_version: 5
 
 # §5.2: P_true(· | s, a) ~ Dirichlet(concentration · P_kb(· | h(s), a)), sampled once, each
 # row from its own stream derived from freeze_seed and the (scenario, source) names.

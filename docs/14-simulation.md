@@ -142,6 +142,23 @@ review pending):
   - **DECLINE:** ends `DECLINED`.
 
   Labels are scheduled by `schedule_payment_labels` (§7).
+- **GENUINE_UNUSUAL** runs at each customer's routine rate × 150 / 9,700 (the table's rates).
+  Each event is one of two kinds:
+  - **New merchant** (0.6): a hospital, wedding vendor or property merchant, saved 2–30 minutes
+    before paying it.
+  - **New phone** (0.4): a phone first seen 2–30 minutes before, paying an established family
+    payee.
+
+  The amount is log-normal, median ₹80,000 × the income scale, σ 0.7, by IMPS. 30% fall at
+  night (22:00–05:00 IST), the rest at the habitual hour.
+- **New phones** (§3, once per 400 days) arrive as a Poisson process; later payments use the
+  newest device.
+- **Logins.** Every customer session starts with a login 30–300 s earlier, from the session's
+  device (a stable synthetic `10.x.y.0/24` per device) in the home city.
+- **B1 inputs.** B1 sees a payee as new if it was saved < 24 h ago or has never been paid
+  (doc 13 §3; payees saved before the history are established). It sees a device as new if
+  first seen within the KB's `new_device_days`. So it holds most unusual payments, and those
+  never get a label.
 
 ## 5. Response models (the simulator's truth)
 
