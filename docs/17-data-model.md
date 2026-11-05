@@ -72,6 +72,22 @@ sim_schedule(id, due_at, kind (TRANSFER|TICKET_ACK|BACKGROUND_PAYMENT), payload 
              done_at null)           idx (done_at nulls first, due_at)   -- labels live in sim_truth.label_schedule
 ```
 
+Migration 0002 creates these tables, with SQLAlchemy Core definitions in `delphi.sim.bank`.
+Choices the list above leaves open:
+
+- Enums are CHECKed where doc 05 fixes the values: `language`, `income_band`, `bank_code`,
+  `kyc_level`, payment `channel`, `status` and `origin`, complaint `channel`, `sim_phone_risk`
+  `category` (`VERY_HIGH|HIGH|MEDIUM|LOW`) and `sim_schedule.kind`. Value sets the spec does not
+  fix yet (account `status`, customer `segment`, complaint `category`, `merchant_category`,
+  device `os`, CRM `type`) are plain `text` until the generator (#17) fixes them and adds
+  their CHECKs.
+- `payments.scheduled_by → sim_schedule`; `ip_prefix24` is a `cidr` /24; `balance_paise`,
+  `balance_after_paise ≥ 0`; `delta_paise ≠ 0`.
+- `login_events`, `crm_events` and `ledger_entries` are event logs: `at` is their creation time.
+  Every other table has `created_at` (§1).
+- `account_scores` is created in M3 with `delphi.model_artifacts`, which its foreign key needs
+  (docs/tech-debt.md TD-7).
+
 ### `delphi` schema
 
 ```
@@ -172,9 +188,18 @@ audit_log(id bigint identity, at, actor_type (USER|SYSTEM|ENGINE|LLM|JOB), actor
 scenario_instances(id, scenario_type, hypothesis_key, params jsonb, started_at)
 payment_truth(payment_id pk, scenario_instance_id, is_fraud bool, hypothesis_key, coached bool)
 account_truth(account_id pk, is_mule bool, ring_id null, layer null)
-response_overrides(scenario_type, source_key, probs jsonb)      -- frozen response models
-label_schedule(subject_type, subject_id, hypothesis_key, label_source, due_at, delivered bool)
+response_overrides(scenario_type, source_key, coached bool, probs jsonb,
+                   pk (scenario_type, source_key, coached))      -- frozen response models
+label_schedule(subject_type, subject_id, hypothesis_key, label_source, due_at, delivered bool,
+               pk (subject_type, subject_id, label_source))  idx (due_at) where not delivered
 ```
+
+Ground truth references the bank (`payment_truth.payment_id → bank.payments`,
+`account_truth.account_id → bank.accounts`) with the default NO ACTION, so deleting a bank row
+that truth still describes fails instead of silently dropping the truth. `response_overrides`
+keys coached rows separately (doc 14 §5.2) and stores `probs` as `{outcome: p}`. As everywhere
+(§1), every table also has `created_at`. The `delphi.sim.truth` module holds the SQLAlchemy Core
+definitions; only `delphi.sim` and `delphi.evaluation` may import it (doc 04 §4.1 rule 5).
 
 ## 4. Audit hash chain
 

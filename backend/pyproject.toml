@@ -130,3 +130,9 @@ name = "platform holds no business logic: it imports no feature module"
 type = "forbidden"
 source_modules = ["delphi.platform"]
 forbidden_modules = ["delphi.engine", "delphi.kb", "delphi.probes", "delphi.sim"]
+
+[[tool.importlinter.contracts]]
+name = "only sim and evaluation import ground truth (docs/04 §4.1 rule 5)"
+type = "protected"
+protected_modules = ["delphi.sim.truth"]
+allowed_importers = ["delphi.sim", "delphi.evaluation"]

@@ -58,7 +58,7 @@ def test_not_ready_when_migrations_are_behind(create_database: Callable[[], str]
     assert body["checks"]["database"]["status"] == "ok"
     assert body["checks"]["migrations"] == {
         "status": "failed",
-        "detail": "schema at no revision, expected 0001",
+        "detail": f"schema at no revision, expected {migration_head(MIGRATIONS_DIR)}",
     }
 
 

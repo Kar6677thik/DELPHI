@@ -29,7 +29,9 @@ Research §12 ("Data"). Module `delphi.sim`. The simulator is a first-class deli
 
 **Deterministic ids.** Every entity the generator creates (customers, accounts, payments, …)
 gets a UUID derived from the profile's RNG stream (`uuid.UUID(bytes=rng.bytes(16), version=4)`),
-so ids are identical across runs. Only entities created live through the API (phone payments,
+so ids are identical across runs. Each entity kind has its own stream,
+`keyed_rng(profile seed, "id", kind)` (`delphi.sim.ids.IdStream`), so adding a kind of entity
+never shifts the ids of the others. Only entities created live through the API (phone payments,
 cases, sessions) get random UUIDv7s.
 
 The history period ends at `history_end` = the dataset's creation time (demo) or a fixed virtual
