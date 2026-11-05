@@ -34,7 +34,9 @@ The specification in `docs/` is the source of truth. Start at `docs/README.md`.
 - **Authorship:** commits are authored by the human you work for, using their own git
   identity. **Never** add `Co-Authored-By:` trailers, "Generated with …" lines, or any other AI
   attribution to commits or PR descriptions. Never pass `--author`. The commit-msg hook rejects
-  attribution trailers. Don't bypass it with `--no-verify`.
+  attribution trailers, and the CI check `commit-policy` rejects them in commits and in the
+  PR description. Don't bypass it with `--no-verify`. Claude Code reads the repo's
+  `.claude/settings.json`, which already turns its attribution off.
 
 ## 3. While coding
 

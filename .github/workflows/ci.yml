@@ -1,5 +1,5 @@
-# CI (docs/23 §3). Backend job only so far; frontend, contract, secrets, e2e and image-scan jobs
-# arrive with the rest of M0. This workflow never writes to the repository.
+# CI (docs/23 §3): backend, frontend and contract jobs. The secrets, e2e and image-scan jobs
+# arrive with the rest of M0 (#10). The commit-policy check is in policy.yml. This workflow never writes to the repository.
 name: ci
 
 on:
@@ -16,32 +16,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Every commit is authored by its human contributor with no AI attribution (docs/24 §5).
-  # The commit-msg hook enforces this locally, but cloud agents may not run it, and squash
-  # merges copy the PR's commit messages onto main, so CI checks every commit of the PR too.
-  commit-policy:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-      - name: No AI attribution in commit messages
-        env:
-          BASE: ${{ github.event.pull_request.base.sha }}
-          HEAD: ${{ github.event.pull_request.head.sha }}
-        run: |
-          fail=0
-          for c in $(git rev-list "$BASE..$HEAD"); do
-            if git log -1 --format=%B "$c" | grep -qiE '^co-authored-by:|generated with \[?claude'; then
-              echo "::error::$(git log -1 --format='%h %s' "$c"): AI attribution is not allowed (AGENTS.md §2)"
-              fail=1
-            fi
-          done
-          [ "$fail" -eq 0 ] && echo "No attribution in $(git rev-list --count "$BASE..$HEAD") commit(s)."
-          exit "$fail"
-
   backend:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -87,3 +61,57 @@ jobs:
         run: |
           uv run coverage report --include="src/delphi/engine/*" --fail-under=95
           uv run coverage report --fail-under=80
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          package_json_file: frontend/package.json # pnpm version from "packageManager"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: frontend/.nvmrc
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Lint
+        run: pnpm lint
+      - name: Types
+        run: pnpm typecheck
+      - name: Format
+        run: pnpm format:check
+      - name: Tests (Vitest with coverage thresholds from vite.config.ts)
+        run: pnpm test
+      - name: Audit (production dependencies)
+        run: pnpm audit --prod
+      - name: Build
+        run: pnpm build
+
+  # The API contract (docs/16): the generated TypeScript types must match backend/openapi.json.
+  # backend/openapi.json itself is checked against the code by a backend test.
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          package_json_file: frontend/package.json
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: frontend/.nvmrc
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Generated API types are up to date
+        run: pnpm check:api
