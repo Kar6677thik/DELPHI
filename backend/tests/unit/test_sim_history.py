@@ -112,19 +112,21 @@ def test_telemetry_reproduces_the_routine_targets_through_the_classifiers(
 def test_truth_and_labels(test_dataset: Dataset) -> None:
     history = test_dataset.history
     assert {t.payment_id for t in history.payment_truth} == {p.id for p in history.payments}
-    assert not any(t.is_fraud for t in history.payment_truth)
     instances = {i.id: i for i in history.scenario_instances}
-    assert {instances[t.scenario_instance_id].scenario_type for t in history.payment_truth} <= {
-        "GENUINE_ROUTINE",
-        "GENUINE_UNUSUAL",
-    }
+    genuine = {"GENUINE_ROUTINE", "GENUINE_UNUSUAL"}
+    for t in history.payment_truth:
+        assert t.is_fraud == (instances[t.scenario_instance_id].scenario_type not in genuine)
+    fraud = {str(t.payment_id) for t in history.payment_truth if t.is_fraud}
 
     # Released genuine customer payments mature as GENUINE after 7 days on `test` (docs/14 §7);
     # held ones are never investigated, so they get no label (selective labels).
-    customer_payments = {str(p.id): p for p in history.payments if p.device_id is not None}
+    customer_payments = {
+        str(p.id): p for p in history.payments if p.device_id is not None and str(p.id) not in fraud
+    }
+    labels = [label for label in history.labels if label.subject_id not in fraud]
     released = {pid for pid, p in customer_payments.items() if p.status == "EXECUTED"}
-    assert {label.subject_id for label in history.labels} == released
-    for label in history.labels:
+    assert {label.subject_id for label in labels} == released
+    for label in labels:
         assert label.label_source is LabelSource.NO_COMPLAINT_60D
         assert (label.due_at - customer_payments[label.subject_id].initiated_at).days == 7
 
@@ -263,9 +265,11 @@ def test_every_customer_session_starts_with_a_login(long_test: Dataset) -> None:
     sessions = [p for p in history.payments if p.device_id is not None]
     assert len(history.logins) == len(sessions)
     home = {c.id: c.home_city for c in pop.customers}
+    attackers = {p.device_id for p in _by_scenario(long_test)["ATO"]}
     prefixes: dict[UUID, str] = {}
     for login in history.logins:
-        assert login.city == home[login.customer_id]
+        # ATO logins come from the attacker's device, in another city (docs/14 §4).
+        assert (login.city == home[login.customer_id]) == (login.device_id not in attackers)
         assert login.ip_prefix24.startswith("10.") and login.ip_prefix24.endswith(".0/24")
         assert prefixes.setdefault(login.device_id, login.ip_prefix24) == login.ip_prefix24
 

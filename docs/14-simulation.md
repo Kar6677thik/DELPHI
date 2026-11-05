@@ -169,6 +169,40 @@ review pending):
   first seen within the KB's `new_device_days`. So it holds most unusual payments, and those
   never get a label. It declines a payment to a payee the sim registry lists by then.
 
+`delphi.sim.fraud` adds the fraud victims to the history, also from `generator.yaml`:
+
+- **Rates.** Each scenario gets `rate × made / 9,850` payments, in whole instances, where
+  `made` counts the genuine sessions a dry run of the history actually makes (some are never
+  made, for want of funds). Each scenario draws from `keyed_rng(seed, "fraud", scenario)`, and
+  the sessions of an instance from `keyed_rng(seed, "fraud_session", instance_id)`. A victim
+  pays layer-1 mules of a uniformly chosen ring, saved as a payee 2–30 minutes before the
+  first payment to it.
+- **ATO.**
+  - Half are SIM swaps, which the CRM records (`SIM_SWAP_REPORTED`) 1–48 h before the login;
+    half are phishing.
+  - The attacker logs in from a new device in another city and saves the mule 1–5 minutes later.
+  - The transfers (IMPS 0.6 / UPI 0.4) fall uniformly in the rest of the 30 minutes. Transfer
+    j of k takes `d / k` of the first balance, d uniform over 60–95%, as a share of what is left.
+- **APP_DIGITAL_ARREST.** The victim is aged ≥ 60 with probability 0.6. Each transfer sends
+  30–80% of the balance at the time, to a layer-1 mule of the ring (IMPS 0.6 / NEFT 0.3 /
+  UPI 0.1).
+- **APP_INVESTMENT.**
+  - Deposits go to one "platform" mule, the first log-normal (median ₹5,000 × the income scale,
+    σ 0.5), each 1.5 × the last.
+  - 1–2 withdrawal fees of 10% of the deposits follow, in the last 20% of the span (UPI 0.7 /
+    IMPS 0.3).
+  - A victim never sends more than 90% of the balance at the time.
+- **Coached victims:** 30% of DA and INV instances (the §5.2 share), in
+  `payment_truth.coached`.
+- **Complaints.** A reported payment (§7) becomes a `bank.complaints` row at its complaint
+  time if that falls before the history ends: NCRP_1930 0.7 / BRANCH 0.3, from
+  `keyed_rng(seed, "complaint", payment_id)`. The categories are UNAUTHORISED_TRANSACTION (ATO),
+  DIGITAL_ARREST_SCAM and INVESTMENT_SCAM. Later complaints exist only in
+  `sim_truth.label_schedule`.
+- **Background CRM events.** Genuine customers report a SIM swap or a lost phone (0.5 / 0.5)
+  once per 500 days, from `keyed_rng(seed, "crm", i)`, so about 3% of genuine payments have
+  one in the 14-day CRM lookback.
+
 `delphi.sim.mules` builds the mule networks, also from `generator.yaml`:
 
 - **Rings.** There is one ring per 400 customers, at least 2 (2 on `test`, 5 on `demo`, 50 on

@@ -32,13 +32,15 @@ def generate_dataset(
         config, profile, history_end=end, vulnerable_age=kb.config.engine.vulnerable_age_threshold
     )
     network = generate_mule_network(config, population)
+    response_config = load_config()
     history = generate_history(
         config,
         population,
-        targets=load_config().telemetry_targets,
+        targets=response_config.telemetry_targets,
         thresholds=kb.config.classifiers,
         label_config=load_label_config(),
         network=network,
+        coached_share=response_config.coached_victims.share,
     )
     accounts = (*population.accounts, *network.accounts, *history.payroll_accounts)
     return Dataset(population, network, history, account_truth(network, accounts))

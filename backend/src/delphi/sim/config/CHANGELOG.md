@@ -8,6 +8,17 @@ upgrade changes them, `test_committed_freeze_matches_kb_v1_and_config` fails eve
 input changed. Then either keep the previous numpy, or regenerate with
 `uv run delphi sim freeze-response-models`, bump `generator_version` and record the upgrade here.
 
+## 7
+
+- The fraud victims' scenarios in the history (docs/14 §4) at their rates per 10,000
+  payments made: ATO 40 (new device in a new city, a mule payee, 1–3 transfers draining 60–95%
+  within 30 min, half after a SIM swap the CRM records), APP_DIGITAL_ARREST 30 (60% of victims
+  aged ≥ 60; 1–4 transfers over 1–3 days) and APP_INVESTMENT 40 (3–8 escalating deposits over
+  2–6 weeks, then withdrawal fees), all to layer-1 mules. 30% of DA and INV victims are
+  coached.
+- Complaints for reported fraud that the bank receives before the history ends; background
+  CRM events (SIM swap / lost phone) once per 500 days per customer.
+
 ## 6
 
 - Mule rings (docs/14 §4): 5–30 accounts in 1–4 layers across banks, one ring per 400
