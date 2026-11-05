@@ -15,12 +15,13 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
+from typing import Annotated
 
-import numpy as np
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from delphi.sim.response_models import CONFIG_DIR
+from delphi.sim.rng import keyed_rng
 from delphi.sim.scenarios import ScenarioType, ground_truth_key
 
 LABELS_CONFIG_FILE = CONFIG_DIR / "labels.yaml"
@@ -58,7 +59,9 @@ class _Frozen(BaseModel):
 
 
 class LabelConfig(_Frozen):
-    report_probability: dict[ScenarioType, float]
+    # Every fraud scenario is listed, even at 0.0, so a new or misspelled one cannot silently
+    # go unreported.
+    report_probability: dict[ScenarioType, Annotated[float, Field(ge=0, le=1)]]
     label_delay_sigma: float = Field(gt=0)
     complaint_delay_median_hours: float = Field(gt=0)
     complaint_delay_median_hours_by_scenario: dict[ScenarioType, float] = Field(
@@ -71,11 +74,20 @@ class LabelConfig(_Frozen):
             scenario, self.complaint_delay_median_hours
         )
 
-    def sample_delay(self, rng: np.random.Generator, median_hours: float) -> timedelta:
-        """Log-normal: median · exp(sigma · z), z ~ N(0, 1)."""
-        return timedelta(
-            hours=median_hours * math.exp(self.label_delay_sigma * rng.standard_normal())
-        )
+    @model_validator(mode="after")
+    def _every_fraud_scenario_has_a_report_probability(self) -> LabelConfig:
+        missing = [
+            s.value
+            for s in ScenarioType
+            if ground_truth_key(s) != GENUINE and s not in self.report_probability
+        ]
+        if missing:
+            raise ValueError(f"report_probability has no entry for {', '.join(missing)}")
+        return self
+
+    def delay(self, median_hours: float, z: float) -> timedelta:
+        """Log-normal: median · exp(sigma · z), for a standard normal draw z."""
+        return timedelta(hours=median_hours * math.exp(self.label_delay_sigma * z))
 
 
 def load_label_config(path: Path = LABELS_CONFIG_FILE) -> LabelConfig:
@@ -115,34 +127,42 @@ class ScheduledLabel:
     due_at: datetime
 
 
-_RESOLUTION_SOURCES = frozenset(
-    {LabelSource.OUTREACH_CONFIRMED, LabelSource.INVESTIGATOR_DISPOSITION}
-)
+# Which decisions each resolution can follow (docs/14 §7): DELPHI's outreach resolves a held or
+# declined payment; an investigator disposes of a held one.
+_RESOLVES = {
+    LabelSource.OUTREACH_CONFIRMED: frozenset({PaymentDecision.HELD, PaymentDecision.DECLINED}),
+    LabelSource.INVESTIGATOR_DISPOSITION: frozenset({PaymentDecision.HELD}),
+}
 
 
 def schedule_payment_labels(
     outcome: PaymentOutcome,
-    rng: np.random.Generator,
     config: LabelConfig,
     *,
+    seed: int,
     maturity_days: int,
 ) -> list[ScheduledLabel]:
     """The labels a payment will receive, by docs/14 §7, in due order.
 
-    ``maturity_days`` is the profile's ``no_complaint_maturity_days`` (docs/14 §2).
+    The draws come from the payment's own stream, keyed by ``seed`` (the profile seed, docs/14
+    §2) and its id, and both are made for every payment. So a payment gets the same report and
+    delay draws whatever was decided for any other payment: policies being compared share
+    their randomness (docs/22 §1). ``maturity_days`` is the profile's
+    ``no_complaint_maturity_days``.
     """
+    rng = keyed_rng(seed, "label", outcome.payment_id)
+    report_u, delay_z = rng.random(), rng.standard_normal()
 
     def label(key: str, source: LabelSource, due: datetime) -> ScheduledLabel:
         return ScheduledLabel(SubjectType.PAYMENT, outcome.payment_id, key, source, due)
 
     if outcome.decision is not PaymentDecision.RELEASED:
-        if outcome.resolution is None:
-            return []  # selective labels: nothing ever resolves it
-        if outcome.resolution.source not in _RESOLUTION_SOURCES:
-            source = outcome.resolution.source
-            msg = f"a hold is resolved by outreach or an investigator, not {source}"
-            raise ValueError(msg)
         r = outcome.resolution
+        if r is None:
+            return []  # selective labels: nothing ever resolves it
+        if outcome.decision not in _RESOLVES.get(r.source, frozenset()):
+            msg = f"a {outcome.decision.value} payment cannot be resolved by {r.source.value}"
+            raise ValueError(msg)
         return [label(r.hypothesis_key, r.source, r.at)]
     if outcome.resolution is not None:
         raise ValueError("a released payment has no hold to resolve")
@@ -155,13 +175,12 @@ def schedule_payment_labels(
     truth = ground_truth_key(outcome.scenario)
     if truth == GENUINE:
         return [matured]
-    if rng.random() >= config.report_probability.get(outcome.scenario, 0.0):
+    if report_u >= config.report_probability[outcome.scenario]:
         return [matured]  # never reported: a wrong GENUINE label, by design
     complaint = label(
         truth,
         LabelSource.CUSTOMER_COMPLAINT,
-        outcome.decided_at
-        + config.sample_delay(rng, config.complaint_median_hours(outcome.scenario)),
+        outcome.decided_at + config.delay(config.complaint_median_hours(outcome.scenario), delay_z),
     )
     # A complaint after maturity arrives after the bank has already labelled the payment
     # GENUINE; label precedence (docs/05 §6) then lets the complaint win.
@@ -171,17 +190,20 @@ def schedule_payment_labels(
 def schedule_registry_label(
     account_id: str,
     first_fraud_credit_at: datetime,
-    rng: np.random.Generator,
     config: LabelConfig,
+    *,
+    seed: int,
 ) -> ScheduledLabel:
-    """A MULE label for an account the sim registry lists (docs/14 §4, §7). Which accounts are
-    listed, true mules or false listings, is decided by the mule-network generator."""
+    """A MULE label for an account the sim registry lists (docs/14 §4, §7), from the account's
+    own stream. Which accounts are listed, true mules or false listings, is decided by the
+    mule-network generator."""
+    z = keyed_rng(seed, "registry", account_id).standard_normal()
     return ScheduledLabel(
         SubjectType.ACCOUNT,
         account_id,
         MULE,
         LabelSource.REGISTRY_LISTING,
-        first_fraud_credit_at + config.sample_delay(rng, config.registry_delay_median_hours),
+        first_fraud_credit_at + config.delay(config.registry_delay_median_hours, z),
     )
 
 

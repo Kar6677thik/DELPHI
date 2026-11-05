@@ -8,7 +8,7 @@ a Dirichlet perturbation of the KB v1 row, drawn once with a fixed seed and froz
 
 from __future__ import annotations
 
-import hashlib
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from delphi.kb.canonical import content_sha256
 from delphi.kb.model import KnowledgeBase
+from delphi.sim.rng import keyed_rng
 from delphi.sim.scenarios import GENUINE_REFERENCE, SCENARIO_HYPOTHESIS, ScenarioType
 
 CONFIG_DIR = Path(__file__).resolve().parent / "config"
@@ -130,10 +131,56 @@ def row_rng(freeze_seed: int, scenario: ScenarioType, source: str) -> np.random.
 
     Adding a scenario or a source later never changes the numbers already frozen.
     """
-    digest = hashlib.sha256(f"{scenario.value}/{source}".encode()).digest()
-    spawn_key = tuple(int.from_bytes(digest[i : i + 4], "big") for i in range(0, 16, 4))
-    seed = np.random.SeedSequence(freeze_seed, spawn_key=spawn_key)
-    return np.random.Generator(np.random.PCG64(seed))
+    return keyed_rng(freeze_seed, scenario.value, source)
+
+
+# An explicit row's probabilities must sum to 1 within this tolerance.
+_SUM_TOLERANCE = 1e-9
+
+
+def validate_config(kb: KnowledgeBase, config: ResponseModelConfig) -> None:
+    """Check the config against KB v1 before anything is drawn; raise one error listing every
+    problem, so a typo never surfaces as a bare KeyError or a silently ignored setting."""
+    sources = answered_sources(kb, config)
+    problems: list[str] = []
+    for scenario in ScenarioType:
+        explicit = config.explicit_answers.get(scenario)
+        hypothesis = SCENARIO_HYPOTHESIS[scenario]
+        if explicit is None:
+            if hypothesis not in kb.hypotheses:
+                problems.append(f"{scenario}: {hypothesis} has no KB row and no explicit_answers")
+            continue
+        for key in sources:
+            if key not in explicit:
+                problems.append(f"{scenario}: explicit_answers has no {key} row")
+        for key, probs in explicit.items():
+            where = f"explicit_answers.{scenario}.{key}"
+            if key not in sources:
+                problems.append(f"{where}: not an answered source")
+                continue
+            if len(probs) != len(kb.sources[key].outcomes):
+                outcomes = len(kb.sources[key].outcomes)
+                problems.append(f"{where}: {len(probs)} values for {outcomes} outcomes")
+            if min(probs) < 0 or not math.isclose(sum(probs), 1.0, abs_tol=_SUM_TOLERANCE):
+                problems.append(f"{where}: not a distribution (sum {sum(probs)!r})")
+    for scenario, rows in config.pinned_outcomes.items():
+        for key, pins in rows.items():
+            where = f"pinned_outcomes.{scenario}.{key}"
+            if scenario in config.explicit_answers:
+                problems.append(f"{where}: {scenario} has explicit answers, nothing is drawn")
+            if key not in sources:
+                problems.append(f"{where}: not an answered source")
+                continue
+            unknown = sorted(set(pins) - set(kb.sources[key].outcomes))
+            if unknown:
+                problems.append(f"{where}: unknown outcome(s) {', '.join(unknown)}")
+            if min(pins.values()) < 0 or sum(pins.values()) >= 1:
+                problems.append(f"{where}: pins must be ≥ 0 and sum below 1")
+    for probe in config.coached_victims.probes:
+        if probe not in sources:
+            problems.append(f"coached_victims.probes: {probe} is not an answered source")
+    if problems:
+        raise ValueError("invalid response-model config:\n  " + "\n  ".join(problems))
 
 
 def freeze(kb: KnowledgeBase, config: ResponseModelConfig) -> FrozenAnswers:
@@ -142,19 +189,15 @@ def freeze(kb: KnowledgeBase, config: ResponseModelConfig) -> FrozenAnswers:
     Scenarios listed in ``explicit_answers`` take those rows exactly; every other scenario
     draws each row from its KB v1 hypothesis. A missing row is an error, never a fallback.
     """
+    validate_config(kb, config)
     sources = answered_sources(kb, config)
     answers: dict[ScenarioType, dict[str, Probs]] = {}
     for scenario in ScenarioType:
         hypothesis = SCENARIO_HYPOTHESIS[scenario]
         explicit = config.explicit_answers.get(scenario)
-        if explicit is None and hypothesis not in kb.hypotheses:
-            msg = f"{scenario}: {hypothesis} has no KB row and no explicit_answers"
-            raise ValueError(msg)
         rows: dict[str, Probs] = {}
         for key in sources:
             if explicit is not None:
-                if key not in explicit:
-                    raise ValueError(f"{scenario}: explicit_answers has no {key} row")
                 rows[key] = tuple(float(p) for p in explicit[key])
                 continue
             kb_row = kb.hypotheses[hypothesis].likelihoods[key]

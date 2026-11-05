@@ -26,6 +26,8 @@ def dist(tmp_path: Path) -> Path:
     (root / "index.html").write_text(INDEX_HTML, encoding="utf-8")
     (root / "assets" / "index-abc123.js").write_text("console.log(1)", encoding="utf-8")
     (root / "favicon.svg").write_text("<svg/>", encoding="utf-8")
+    (root / ".env").write_text("SECRET=1", encoding="utf-8")
+    (root / "assets" / ".hidden.js").write_text("hidden()", encoding="utf-8")
     (tmp_path / "secret.txt").write_text("outside the dist", encoding="utf-8")
     return root
 
@@ -96,7 +98,7 @@ def test_api_routes_win_over_the_fallback(client: TestClient) -> None:
 )
 def test_paths_cannot_escape_the_static_dir(client: TestClient, path: str) -> None:
     response = client.get(path)
-    assert response.status_code in {200, 404}
+    assert response.status_code == 404
     assert "outside the dist" not in response.text
 
 
@@ -111,3 +113,69 @@ def test_nothing_is_served_without_a_build(tmp_path: Path) -> None:
 def test_the_fallback_is_not_in_the_contract(client: TestClient) -> None:
     paths = client.get("/api/v1/openapi.json").json()["paths"]
     assert set(paths) == {"/api/v1/health", "/api/v1/ready"}
+
+
+def _problem(response: object, status: int) -> None:
+    from httpx import Response
+
+    assert isinstance(response, Response)
+    assert response.status_code == status
+    assert response.headers["content-type"] == "application/problem+json"
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("POST", "/api/v1/nope"),
+        ("DELETE", "/api/v1/cases/1"),
+        ("PUT", "/api"),
+        ("PATCH", "/api/v1/nope/"),
+        ("POST", "/guardian"),
+        ("DELETE", "/"),
+    ],
+)
+def test_non_get_requests_with_a_build_are_404_problems(
+    client: TestClient, method: str, path: str
+) -> None:
+    """FR-DEP-04: unknown paths are 404 problem+json for every method, never 405 (#42)."""
+    _problem(client.request(method, path), 404)
+
+
+def test_head_serves_the_app_shell(client: TestClient) -> None:
+    response = client.head("/")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert response.content == b""
+
+
+@pytest.mark.parametrize("path", ["/.env", "/assets/.hidden.js", "/.git/config"])
+def test_dotfiles_are_never_served(client: TestClient, path: str) -> None:
+    response = client.get(path)
+    _problem(response, 404)
+    assert "SECRET" not in response.text
+    assert "hidden()" not in response.text
+
+
+@pytest.fixture(params=["with-build", "without-build"])
+def any_client(request: pytest.FixtureRequest, dist: Path, tmp_path: Path) -> Iterator[TestClient]:
+    static_dir = dist if request.param == "with-build" else tmp_path / "missing"
+    yield from _client(static_dir)
+
+
+def test_trailing_slash_redirects_the_same_with_or_without_a_build(
+    any_client: TestClient,
+) -> None:
+    response = any_client.get("/api/v1/health/", follow_redirects=False)
+    assert response.status_code == 307
+    assert response.headers["location"].endswith("/api/v1/health")
+
+
+def test_wrong_method_on_an_api_route_is_405_with_or_without_a_build(
+    any_client: TestClient,
+) -> None:
+    _problem(any_client.post("/api/v1/health"), 405)
+
+
+def test_unknown_api_paths_are_404_with_or_without_a_build(any_client: TestClient) -> None:
+    for method in ("GET", "POST", "DELETE"):
+        _problem(any_client.request(method, "/api/v1/nope"), 404)

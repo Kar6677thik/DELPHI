@@ -91,7 +91,7 @@ def run_collect_refund_sessions(
             plan = plan_next(
                 profile,
                 belief,
-                amount_paise=amount_inr * 100,
+                amount_paise=round(amount_inr * 100),
                 vulnerable=False,
                 phase=Phase.GUARDIAN_ACTIVE,
                 observed=frozenset(observed),
@@ -138,7 +138,9 @@ def _fixture_prior(_rng: np.random.Generator, _amount_inr: float) -> PriorInputs
     }, 0.95
 
 
-def test_harness_is_deterministic_with_a_fixture_prior(guardian: CompiledProfile) -> None:
+def test_harness_is_deterministic_with_a_fixture_prior(
+    kb: KnowledgeBase, guardian: CompiledProfile
+) -> None:
     """The harness runs today; only the prior waits for sensing."""
     models = load_response_models()
     first = run_collect_refund_sessions(guardian, models, _fixture_prior)
@@ -147,7 +149,7 @@ def test_harness_is_deterministic_with_a_fixture_prior(guardian: CompiledProfile
     assert all(0.0 <= p <= 1.0 for p in first)
     # Believing money is coming in is the collect-refund signature: no known typology explains
     # it, so some sessions must already lean UNEXPLAINED with a plain prior.
-    assert max(first) > 0.35
+    assert max(first) > kb.config.engine.unexplained_routing_threshold
 
 
 def test_passive_outcomes_follow_first_match_rules() -> None:

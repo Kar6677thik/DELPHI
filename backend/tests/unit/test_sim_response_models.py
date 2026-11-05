@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -22,6 +23,7 @@ from delphi.sim.response_models import (
     load_config,
     load_response_models,
     row_rng,
+    validate_config,
 )
 from delphi.sim.scenarios import SCENARIO_HYPOTHESIS, ScenarioType, ground_truth_key
 
@@ -144,7 +146,13 @@ def test_each_row_has_its_own_name_derived_stream(
     alone = row_rng(config.freeze_seed, DA, "COOLING_OFF").dirichlet(alpha)
     assert frozen.answers[DA]["COOLING_OFF"] == tuple(float(p) for p in alone)
     # Without the outreach evidence (one source fewer), every other row is unchanged.
-    fewer = freeze(kb, config.model_copy(update={"perturbed_evidence": ()}))
+    explicit = {
+        scenario: {k: v for k, v in rows.items() if k != "CUSTOMER_OUTREACH_CALL"}
+        for scenario, rows in config.explicit_answers.items()
+    }
+    fewer = freeze(
+        kb, config.model_copy(update={"perturbed_evidence": (), "explicit_answers": explicit})
+    )
     for scenario in ScenarioType:
         for key in ACTIVE_PROBES:
             assert fewer.answers[scenario][key] == frozen.answers[scenario][key]
@@ -281,3 +289,95 @@ def test_cli_checks_and_writes_the_freeze(tmp_path: Path) -> None:
 
 def test_cli_refuses_an_invalid_kb(tmp_path: Path) -> None:
     assert main(["sim", "freeze-response-models", "--kb", str(tmp_path)]) == 1
+
+
+def _broken(config: ResponseModelConfig, **update: object) -> ResponseModelConfig:
+    return config.model_copy(update=update)
+
+
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [
+        (
+            lambda c: {
+                "explicit_answers": {
+                    REFUND: {**c.explicit_answers[REFUND], "COOLING_OFF": (0.5, 0.5)}
+                }
+            },
+            "explicit_answers.UPI_COLLECT_REFUND.COOLING_OFF: 2 values for 3 outcomes",
+        ),
+        (
+            lambda c: {
+                "explicit_answers": {
+                    REFUND: {**c.explicit_answers[REFUND], "COOLING_OFF": (0.5, 0.25, 0.20)}
+                }
+            },
+            "explicit_answers.UPI_COLLECT_REFUND.COOLING_OFF: not a distribution",
+        ),
+        (
+            lambda c: {
+                "explicit_answers": {
+                    REFUND: {**c.explicit_answers[REFUND], "PURPOSE_QUESTON": (0.5, 0.5)}
+                }
+            },
+            "explicit_answers.UPI_COLLECT_REFUND.PURPOSE_QUESTON: not an answered source",
+        ),
+        (
+            lambda c: {
+                "pinned_outcomes": {UNUSUAL: {"PURPOSE_QUESTION": {"TIMING_ANOMALUS": 0.1}}}
+            },
+            "pinned_outcomes.GENUINE_UNUSUAL.PURPOSE_QUESTION: unknown outcome(s) TIMING_ANOMALUS",
+        ),
+        (
+            lambda c: {
+                "pinned_outcomes": {UNUSUAL: {"PURPOSE_QUESTON": {"TIMING_ANOMALOUS": 0.1}}}
+            },
+            "pinned_outcomes.GENUINE_UNUSUAL.PURPOSE_QUESTON: not an answered source",
+        ),
+        (
+            lambda c: {
+                "pinned_outcomes": {UNUSUAL: {"PURPOSE_QUESTION": {"TIMING_ANOMALOUS": 1.0}}}
+            },
+            "pins must be ≥ 0 and sum below 1",
+        ),
+        (
+            lambda c: {
+                "pinned_outcomes": {REFUND: {"PURPOSE_QUESTION": {"TIMING_ANOMALOUS": 0.1}}}
+            },
+            "UPI_COLLECT_REFUND has explicit answers, nothing is drawn",
+        ),
+        (
+            lambda c: {
+                "coached_victims": c.coached_victims.model_copy(
+                    update={"probes": ("PURPOSE_QUESTION", "SPELL_BREAKER_DIGITAL_ARRST")}
+                )
+            },
+            "coached_victims.probes: SPELL_BREAKER_DIGITAL_ARRST is not an answered source",
+        ),
+    ],
+)
+def test_freeze_rejects_an_invalid_config_with_a_clear_message(
+    kb: KnowledgeBase, config: ResponseModelConfig, change: Any, message: str
+) -> None:
+    with pytest.raises(ValueError, match="invalid response-model config") as error:
+        freeze(kb, _broken(config, **change(config)))
+    assert message in str(error.value)
+
+
+def test_validation_lists_every_problem_at_once(
+    kb: KnowledgeBase, config: ResponseModelConfig
+) -> None:
+    broken = _broken(
+        config,
+        explicit_answers={},
+        pinned_outcomes={UNUSUAL: {"PURPOSE_QUESTION": {"NOPE": 0.1}}},
+    )
+    with pytest.raises(ValueError) as error:
+        validate_config(kb, broken)
+    text = str(error.value)
+    assert "APP_COLLECT_REFUND has no KB row" in text
+    assert "unknown outcome(s) NOPE" in text
+
+
+def test_the_committed_config_is_valid(kb: KnowledgeBase, config: ResponseModelConfig) -> None:
+    validate_config(kb, config)

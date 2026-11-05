@@ -6,7 +6,9 @@ Research §12 ("Data"). Module `delphi.sim`. The simulator is a first-class deli
 ## 1. Principles
 
 1. **Deterministic.** Everything is driven by `numpy.random.Generator(PCG64(seed))`, with
-   independent sub-streams per component (`SeedSequence(seed).spawn`). The same profile and
+   independent sub-streams per component (`SeedSequence(seed).spawn`). Streams whose draws must
+   not shift when other streams change are keyed by name instead (`delphi.sim.rng.keyed_rng`):
+   the response-model freeze (§5.2) and the label draws per payment (§7). The same profile and
    seed produce byte-identical datasets. A test checks the SHA-256 of a canonical export of the
    `test` profile.
 2. **Ground truth is quarantined** in the `sim_truth` schema (doc 17 §2). Product code never
@@ -168,9 +170,16 @@ How the model applies the table (`delphi.sim.labels`, numbers in `sim/config/lab
 
 - **Delays** are log-normal, `median · exp(σ·z)`, with `label_delay_sigma` σ = 0.8 (its own
   key, equal to the mule-dwell spread in §4).
-- **Who reports.** Scenarios with no report probability above are never reported by a victim.
-  `MULE_FORWARDING` payments leave a mule's own account, so they mature as GENUINE (noise) and
-  the account is labelled only through the registry.
+- **Who reports.** `labels.yaml` lists a report probability for every fraud scenario; loading
+  fails if one is missing. `MULE_FORWARDING` is listed at 0.0: its payments leave a mule's own
+  account, so they mature as GENUINE (noise) and the account is labelled only through the
+  registry.
+- **Random draws.** Each payment draws its report and delay numbers from its own stream,
+  `keyed_rng(profile seed, "label", payment_id)`, and draws both whatever happens to it, so a
+  payment's labels never depend on other payments or on the policy (doc 22 §1). A
+  registry-listed account uses `keyed_rng(profile seed, "registry", account_id)`.
+- **Resolutions.** DELPHI outreach resolves a held or declined payment; an investigator
+  disposition resolves a held one only, as in the table. Any other resolution is an error.
 - **Late complaints.** A complaint that falls after `no_complaint_maturity_days` arrives after
   the GENUINE label; label precedence (doc 05 §6) then lets the complaint win.
 - **ACTIVE KB.** The schedule stores the ground-truth key; `LABEL_DELIVERY` maps a complaint to

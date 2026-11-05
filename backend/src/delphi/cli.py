@@ -60,7 +60,7 @@ def _openapi(args: argparse.Namespace) -> int:
             return 1
         print(f"{out} is up to date")
         return 0
-    out.write_text(document, encoding="utf-8")
+    out.write_text(document, encoding="utf-8", newline="\n")
     print(f"wrote {out}")
     return 0
 
@@ -82,7 +82,7 @@ def _freeze_response_models(args: argparse.Namespace) -> int:
             return 1
         print(f"{out} is up to date")
         return 0
-    out.write_text(text, encoding="utf-8")
+    out.write_text(text, encoding="utf-8", newline="\n")
     print(f"wrote {out}")
     return 0
 
