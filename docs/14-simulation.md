@@ -163,7 +163,34 @@ review pending):
   never paid and saved within the 30-day baseline window (`legacy_policy.new_payee_hours` and
   `payee_baseline_days`, the one place the simulator reads them from). It sees a device as new if
   first seen within the KB's `new_device_days`. So it holds most unusual payments, and those
-  never get a label.
+  never get a label. It declines a payment to a payee the sim registry lists by then.
+
+`delphi.sim.mules` builds the mule networks, also from `generator.yaml`:
+
+- **Rings.** There is one ring per 400 customers, at least 2 (2 on `test`, 5 on `demo`, 50 on
+  `eval`), each from its own stream, `keyed_rng(seed, "mule_ring", r)`. A ring's size (5–30)
+  and layer count (1–4) are uniform. Its accounts are split over the layers as evenly as
+  possible, with the extra accounts in layer 1. `sim_truth.account_truth` has a row for every
+  account; only mules have `is_mule`, a `ring_id` and a `layer`.
+- **Banks.** A mule banks at `DLPH` with probability 0.4, else at an external bank (evenly). A
+  ring always spans at least two banks.
+- **Home-bank mules** are customers, numbered like the rest, so names, phones and VPAs give
+  nothing away:
+  - aged 19–35 (uniform), `LOW` income, no disability
+  - language, city and consent drawn as in §3
+  - one device each
+- **External mules** are accounts only, like the other external counterparties.
+- **Every mule account:**
+  - has `MINIMAL` KYC with probability 0.5, else `FULL`
+  - was opened 5–400 days before the history (docs/13 §6 uses both as features)
+  - has a log-normal opening balance, median ₹2,000, σ 0.8
+- **Shared devices.** With probability 0.5 a ring shares one device fingerprint across 3 to
+  all of its home-bank mules. Such a ring gets at least 3 home-bank mules.
+- **False listings.** Each genuine non-merchant account is listed with probability 0.001, from
+  its own stream `keyed_rng(seed, "false_listing", account_id)`, at a uniform instant in the
+  history. It gets a MULE `REGISTRY_LISTING` label at that instant. `bank.sim_registry_listings`
+  holds only listings made before the history ends; later ones are known only to
+  `sim_truth.label_schedule` (§8).
 
 ## 5. Response models (the simulator's truth)
 

@@ -159,6 +159,31 @@ class LegacyPolicyConfig(_Frozen):
     payee_baseline_days: int = Field(gt=0)
 
 
+class MuleRingConfig(_Frozen):
+    """Mule networks (docs/14 §4)."""
+
+    customers_per_ring: int = Field(gt=0)
+    min_rings: int = Field(ge=1)
+    size: Range
+    layers: Range
+    home_bank_share: Probability
+    shared_device_probability: Probability
+    shared_device_min_accounts: int = Field(ge=2)
+    age: Range
+    minimal_kyc_share: Probability
+    opened_days_before_history: Range
+    opening_balance_inr: LogNormal
+    false_listing_share: Probability
+
+    @model_validator(mode="after")
+    def _ring_fits(self) -> MuleRingConfig:
+        if not 1 <= self.layers.min <= self.layers.max <= self.size.min <= self.size.max:
+            raise ValueError("mule_rings needs 1 ≤ layers ≤ size, so every layer has an account")
+        if self.shared_device_min_accounts > self.size.min:
+            raise ValueError("mule_rings.shared_device_min_accounts exceeds the smallest ring")
+        return self
+
+
 class GeneratorConfig(_Frozen):
     profiles: dict[str, ProfileConfig]
     fixed_history_end: datetime
@@ -168,6 +193,7 @@ class GeneratorConfig(_Frozen):
     telemetry: TelemetryShape
     legacy_policy: LegacyPolicyConfig
     genuine_unusual: GenuineUnusualConfig
+    mule_rings: MuleRingConfig
     new_device_mean_days: float = Field(gt=0)
     login_lead_s: Range
     cities: dict[str, City]
