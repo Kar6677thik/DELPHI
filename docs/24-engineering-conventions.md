@@ -84,8 +84,10 @@ description explaining why (make vs reuse, EFG §1).
   `Co-Authored-By` trailers, no AI attribution lines in commits or PRs, no `--author`
   overrides. CI never commits. A `commit-msg` hook in `.githooks/` (enabled with
   `git config core.hooksPath .githooks`) rejects messages containing `Co-Authored-By` or
-  "Generated with Claude", and the CI job `commit-policy` checks every commit of a PR the same
-  way. Cloud agents may skip local hooks, and squash merges copy commit messages onto `main`.
+  "Generated with/by Claude", and the CI job `commit-policy` (`.github/workflows/policy.yml`)
+  checks every commit of a PR and its description the same way. The checked-in
+  `.claude/settings.json` turns Claude Code's attribution off for every session, including
+  Claude Code on the web. Cloud agents may skip local hooks, and squash merges copy commit messages onto `main`.
 - **Planning lives in GitHub.** Every piece of work is an issue (templates in
   `.github/ISSUE_TEMPLATE/`), assigned to a milestone `M0`…`M9` that mirrors doc 25, and labelled
   `type:*`, `area:*` and, when useful, `P1`/`P2` or `status:*`. Each milestone has one

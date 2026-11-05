@@ -1,0 +1,46 @@
+# Contribution policy (docs/24 §5): every commit is authored by its human contributor, and no
+# commit message or PR description carries AI attribution. The commit-msg hook enforces this
+# locally, but cloud agents may not run it, and squash merges copy the PR's commit messages
+# onto main. Runs on description edits too, so fixing the description clears the check.
+name: policy
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: policy-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  commit-policy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: No AI attribution in commit messages or the PR description
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          # Passed through the environment, never interpolated into the script.
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          pattern='^co-authored-by:|generated (with|by) \[?claude'
+          fail=0
+          for c in $(git rev-list "$BASE..$HEAD"); do
+            if git log -1 --format=%B "$c" | grep -qiE "$pattern"; then
+              echo "::error::$(git log -1 --format='%h %s' "$c"): AI attribution is not allowed (AGENTS.md §2)"
+              fail=1
+            fi
+          done
+          if printf '%s\n' "$PR_BODY" | grep -qiE "$pattern"; then
+            echo "::error::The PR description carries AI attribution (AGENTS.md §6). Remove the line and save."
+            fail=1
+          fi
+          [ "$fail" -eq 0 ] && echo "No attribution in $(git rev-list --count "$BASE..$HEAD") commit(s) or the description."
+          exit "$fail"
