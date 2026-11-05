@@ -12,20 +12,14 @@ from __future__ import annotations
 import bisect
 import math
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
-from pathlib import Path
-from typing import Annotated
+from datetime import datetime, timedelta
 from uuid import UUID
 
 import numpy as np
-import yaml
-from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from delphi.sim.generator_config import GeneratorConfig
 from delphi.sim.ids import IdStream
-from delphi.sim.response_models import CONFIG_DIR
 from delphi.sim.rng import keyed_rng
-
-GENERATOR_CONFIG_FILE = CONFIG_DIR / "generator.yaml"
 
 HOME_BANK = "DLPH"
 HOSPITAL = "HOSPITAL"
@@ -37,106 +31,6 @@ _SECONDS_PER_DAY = 86_400
 # Known devices were first seen at least this long before the history starts.
 _KNOWN_DEVICE_MIN_AGE_DAYS = 30
 _FINGERPRINT_BYTES = 16
-
-Probability = Annotated[float, Field(ge=0, le=1)]
-
-
-# --------------------------------------------------------------------------- configuration
-
-
-class _Frozen(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-
-def _distribution(weights: dict[str, float], where: str) -> dict[str, float]:
-    if not weights or min(weights.values()) < 0 or not math.isclose(sum(weights.values()), 1):
-        raise ValueError(f"{where} must be a probability distribution")
-    return weights
-
-
-class ProfileConfig(_Frozen):
-    customers: int = Field(ge=1)
-    history_days: int = Field(ge=1)
-    maturity_days: int = Field(ge=1)
-    window_days: int | None = Field(default=None, ge=1)
-    seed: int = Field(ge=0)
-
-
-class Range(_Frozen):
-    min: float
-    max: float
-
-
-class LogNormal(_Frozen):
-    median: float = Field(gt=0)
-    sigma: float = Field(gt=0)
-
-
-class PopulationConfig(_Frozen):
-    age_bands: tuple[tuple[int, int, Probability], ...]
-    language: dict[str, float]
-    disability_probability: Probability
-    income_band: dict[str, float]
-    income_amount_scale: dict[str, float]
-    consent_call_status_probability: Probability
-    device_count: dict[int, float]
-    payee_count: Range
-    counterparty_home_bank_share: Probability
-    external_banks: tuple[str, ...]
-    segment: str
-    device_os: dict[str, float]
-    payee_type: dict[str, float]
-    account_tenure_years: Range
-    opening_balance_inr: LogNormal
-    home_city: dict[str, dict[str, float]]
-
-    @model_validator(mode="after")
-    def _distributions(self) -> PopulationConfig:
-        _distribution({str(b): p for b, (_, _, p) in enumerate(self.age_bands)}, "age_bands")
-        for name in ("language", "income_band", "device_os", "payee_type"):
-            _distribution(getattr(self, name), name)
-        _distribution({str(k): v for k, v in self.device_count.items()}, "device_count")
-        for language, cities in self.home_city.items():
-            _distribution(cities, f"home_city.{language}")
-        if set(self.home_city) != set(self.language):
-            raise ValueError("home_city must cover every language")
-        if set(self.income_amount_scale) != set(self.income_band):
-            raise ValueError("income_amount_scale must cover every income band")
-        return self
-
-
-class MerchantConfig(_Frozen):
-    per_customer: float = Field(gt=0)
-    hospital_share: Probability
-    categories: dict[str, float]
-
-    @model_validator(mode="after")
-    def _categories(self) -> MerchantConfig:
-        _distribution(self.categories, "merchants.categories")
-        return self
-
-
-class GeneratorConfig(_Frozen):
-    profiles: dict[str, ProfileConfig]
-    fixed_history_end: datetime
-    population: PopulationConfig
-    merchants: MerchantConfig
-
-
-def load_generator_config(path: Path = GENERATOR_CONFIG_FILE) -> GeneratorConfig:
-    return GeneratorConfig.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
-
-
-def history_end(
-    config: GeneratorConfig, profile: str, *, created_at: datetime | None = None
-) -> datetime:
-    """docs/14 §2: demo ends its history when the dataset is created; eval and test at a fixed
-    virtual epoch, so their datasets are byte-identical on every run."""
-    if profile == "demo":
-        if created_at is None:
-            raise ValueError("the demo profile's history ends at its creation time")
-        return created_at.astimezone(UTC)
-    return config.fixed_history_end.astimezone(UTC)
 
 
 # --------------------------------------------------------------------------- the entities

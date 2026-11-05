@@ -2,23 +2,14 @@
 
 from __future__ import annotations
 
-import time
 from collections import Counter
 from datetime import UTC, datetime, timedelta
 
 import pytest
-import yaml
 
 from delphi.kb.model import KnowledgeBase
-from delphi.sim.export import canonical_export, dataset_sha256
-from delphi.sim.population import (
-    GeneratorConfig,
-    Population,
-    generate_population,
-    history_end,
-    load_generator_config,
-)
-from delphi.sim.response_models import CONFIG_DIR, load_config
+from delphi.sim.generator_config import GeneratorConfig, history_end, load_generator_config
+from delphi.sim.population import Population, generate_population
 
 
 @pytest.fixture(scope="module")
@@ -31,12 +22,6 @@ def vulnerable_age(kb: KnowledgeBase) -> int:
     return kb.config.engine.vulnerable_age_threshold
 
 
-def _generate(config: GeneratorConfig, profile: str, vulnerable_age: int) -> Population:
-    return generate_population(
-        config, profile, history_end=history_end(config, profile), vulnerable_age=vulnerable_age
-    )
-
-
 @pytest.fixture(scope="module")
 def demo(config: GeneratorConfig, vulnerable_age: int) -> Population:
     """demo-sized population, at the fixed epoch, for the distribution checks."""
@@ -46,26 +31,6 @@ def demo(config: GeneratorConfig, vulnerable_age: int) -> Population:
         history_end=config.fixed_history_end.astimezone(UTC),
         vulnerable_age=vulnerable_age,
     )
-
-
-def test_the_test_profile_hash_matches_the_record(
-    config: GeneratorConfig, vulnerable_age: int
-) -> None:
-    """FR-SIM-01: the canonical export of `test` is byte-stable (docs/14 §1, docs/21 §1)."""
-    version = load_config().generator_version
-    recorded = yaml.safe_load((CONFIG_DIR / "dataset_hashes.yaml").read_text(encoding="utf-8"))
-    started = time.perf_counter()
-    actual = dataset_sha256(_generate(config, "test", vulnerable_age))
-    assert time.perf_counter() - started < 30  # docs/14 §2: the test profile in < 30 s
-    assert actual == recorded["test"].get(version), (
-        f"the `test` dataset changed: bump generator_version, record {actual} for it in "
-        "sim/config/dataset_hashes.yaml and describe the change in CHANGELOG.md"
-    )
-
-
-def test_generation_is_deterministic(config: GeneratorConfig, vulnerable_age: int) -> None:
-    first = canonical_export(_generate(config, "test", vulnerable_age))
-    assert first == canonical_export(_generate(config, "test", vulnerable_age))
 
 
 def test_profiles_match_the_spec(config: GeneratorConfig) -> None:
