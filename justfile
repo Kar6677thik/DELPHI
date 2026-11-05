@@ -30,6 +30,30 @@ test:
     uv run coverage report --include="src/delphi/engine/*" --fail-under=95
     uv run coverage report --fail-under=80
 
+# Install frontend dependencies from the lockfile
+[working-directory: 'frontend']
+fe-sync:
+    pnpm install --frozen-lockfile
+
+# Frontend lint, types, format, API types drift (stops at the first failure)
+[working-directory: 'frontend']
+fe-check:
+    pnpm lint
+    pnpm typecheck
+    pnpm format:check
+    pnpm check:api
+
+# Frontend tests with coverage, then the production build
+[working-directory: 'frontend']
+fe-test:
+    pnpm test
+    pnpm build
+
+# Vite dev server with a mocked API (no backend needed)
+[working-directory: 'frontend']
+fe-dev-mock:
+    pnpm dev:mock
+
 # Enable the repository's git hooks (commit authorship rule)
 hooks:
     git config core.hooksPath .githooks
