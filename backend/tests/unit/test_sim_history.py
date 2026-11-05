@@ -143,7 +143,8 @@ def test_salaries_arrive_monthly(config: GeneratorConfig, kb: KnowledgeBase) -> 
         }
     )
     history = generate_dataset(longer, "test", kb=kb).history
-    salaries = [p for p in history.payments if p.device_id is None]
+    payroll = {a.id for a in history.payroll_accounts}
+    salaries = [p for p in history.payments if p.payer_account_id in payroll]
     assert salaries
     assert {p.initiated_at.astimezone(IST).day for p in salaries} == {1}
     assert all(p.channel == "NEFT" and p.status == "EXECUTED" for p in salaries)
@@ -253,7 +254,8 @@ def test_b1_holds_large_payments_to_new_payees_and_from_new_phones(
     assert all(p.amount_paise >= 1_000_000 for p in held)
     labelled = {label.subject_id for label in history.labels}
     assert not any(str(p.id) in labelled for p in held)
-    seen = {d.id: d.first_seen_at for d in (*long_test.population.devices, *history.devices)}
+    devices = (*long_test.population.devices, *long_test.network.devices, *history.devices)
+    seen = {d.id: d.first_seen_at for d in devices}
     assert all(seen[p.device_id] <= p.initiated_at for p in history.payments if p.device_id)
     assert all(p.added_at >= long_test.population.history_start for p in history.payees)
     # New phones: once per 400 days in the background, plus the unusual ones.
@@ -264,7 +266,7 @@ def test_every_customer_session_starts_with_a_login(long_test: Dataset) -> None:
     pop, history = long_test.population, long_test.history
     sessions = [p for p in history.payments if p.device_id is not None]
     assert len(history.logins) == len(sessions)
-    home = {c.id: c.home_city for c in pop.customers}
+    home = {c.id: c.home_city for c in (*pop.customers, *long_test.network.customers)}
     attackers = {p.device_id for p in _by_scenario(long_test)["ATO"]}
     prefixes: dict[UUID, str] = {}
     for login in history.logins:

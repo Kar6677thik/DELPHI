@@ -18,6 +18,7 @@ payment is never investigated, so it never gets a label.
 from __future__ import annotations
 
 import bisect
+import heapq
 import math
 from collections import defaultdict
 from collections.abc import Mapping
@@ -28,6 +29,7 @@ from uuid import UUID
 import numpy as np
 
 from delphi.kb.model import ClassifierThresholds
+from delphi.sim.forwarding import Forwarder, Hop
 from delphi.sim.fraud import FraudPlan, plan_fraud
 from delphi.sim.generator_config import GeneratorConfig
 from delphi.sim.ids import IdStream
@@ -38,11 +40,21 @@ from delphi.sim.labels import (
     PaymentOutcome,
     ScheduledLabel,
     schedule_payment_labels,
+    schedule_registry_label,
 )
 from delphi.sim.legacy_policy import decide_b1, payee_is_new
 from delphi.sim.logins import LoginEvent, login_before
-from delphi.sim.mules import MuleNetwork
-from delphi.sim.population import ACTIVE, FULL_KYC, Account, Device, Payee, Population, _choice
+from delphi.sim.mules import MuleNetwork, RegistryListing
+from delphi.sim.population import (
+    ACTIVE,
+    FULL_KYC,
+    Account,
+    Customer,
+    Device,
+    Payee,
+    Population,
+    _choice,
+)
 from delphi.sim.records import Complaint, CrmEvent, ScenarioInstance
 from delphi.sim.response_models import TelemetryTargets, draw_signals
 from delphi.sim.rng import keyed_rng
@@ -110,6 +122,9 @@ class History:
     logins: tuple[LoginEvent, ...] = ()
     crm_events: tuple[CrmEvent, ...] = ()
     complaints: tuple[Complaint, ...] = ()  # those reported before the history ends
+    cash_out_accounts: tuple[Account, ...] = ()  # one per bank, where cash-outs go
+    registry_listings: tuple[RegistryListing, ...] = ()  # true listings of mule accounts
+    account_labels: tuple[ScheduledLabel, ...] = ()  # their REGISTRY_LISTING labels
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,6 +148,7 @@ class _Intent:
     balance_share: float | None = None  # the amount is this share of the payer's balance
     max_balance_share: float | None = None  # the amount is at most this share of the balance
     fee_share: float | None = None  # a fee of this share of the instance's deposits made
+    flow: int | None = None  # the mule-ring flow a forwarding payment belongs to
 
     def settle(self, balance: int, deposited: int = 0) -> int:
         """The amount actually sent, given the payer's balance at the time and, for a fee,
@@ -191,6 +207,9 @@ class _Planner:
         # Merchants each customer saves during the history (a payee is saved only once).
         self.saved_during: defaultdict[UUID, list[UUID]] = defaultdict(list)
         self.phones: dict[UUID, list[Device]] = {}  # each customer's genuine new phones
+        self.mule_customer: dict[UUID, Customer] = {}  # home-bank mule account → customer
+        self.mule_device: dict[UUID, Device] = {}
+        self.flow_streams: dict[int, np.random.Generator] = {}
         self.unusual_merchants = [
             a.id
             for a in population.accounts
@@ -252,7 +271,7 @@ class _Planner:
         rng: np.random.Generator,
         scenario: ScenarioType,
         *,
-        customer_index: int,
+        customer: Customer,
         payer: UUID,
         payee: UUID,
         amount_paise: int,
@@ -262,7 +281,6 @@ class _Planner:
         instance: UUID,
         city: str | None = None,
     ) -> _Intent:
-        customer = self.pop.customers[customer_index]
         payment_id = self.payment_ids.next()
         signals = draw_signals(rng, self.targets[scenario])
         telemetry = render_telemetry(rng, payment_id, signals, self.cfg.telemetry, self.thresholds)
@@ -358,7 +376,7 @@ class _Planner:
             self._session(
                 rng,
                 ScenarioType.GENUINE_UNUSUAL,
-                customer_index=index,
+                customer=customer,
                 payer=account.id,
                 payee=payee,
                 amount_paise=_lognormal_paise(
@@ -370,6 +388,49 @@ class _Planner:
                 instance=instance.id,
             )
         )
+
+    def forward(self, hop: Hop, network: MuleNetwork, instance: UUID) -> _Intent:
+        """A forwarding payment: a home-bank mule's app session (MULE_FORWARDING, decided by
+        B1, from the flow's own stream), else a payment B1 never sees."""
+        if not hop.session:
+            return _Intent(
+                id=self.payment_ids.next(),
+                payer=hop.payer,
+                payee=hop.payee,
+                amount_paise=hop.amount_paise,
+                channel=hop.channel,
+                at=hop.at,
+                device=None,
+                instance=instance,
+                decided=False,
+                telemetry=None,
+                scenario=ScenarioType.MULE_FORWARDING,
+                is_fraud=True,
+                flow=hop.flow,
+            )
+        if not self.mule_customer:
+            customers = {c.id: c for c in network.customers}
+            self.mule_customer = {
+                a.id: customers[a.customer_id] for a in network.accounts if a.customer_id
+            }
+            self.mule_device = {d.customer_id: d for d in network.devices}
+        customer = self.mule_customer[hop.payer]
+        if hop.flow not in self.flow_streams:
+            self.flow_streams[hop.flow] = keyed_rng(self.seed, "flow_session", str(hop.flow))
+        rng = self.flow_streams[hop.flow]
+        intent = self._session(
+            rng,
+            ScenarioType.MULE_FORWARDING,
+            customer=customer,
+            payer=hop.payer,
+            payee=hop.payee,
+            amount_paise=hop.amount_paise,
+            channel=hop.channel,
+            at=hop.at,
+            device=self.mule_device[customer.id],
+            instance=instance,
+        )
+        return replace(intent, is_fraud=True, flow=hop.flow)
 
     def fraud(self, plan: FraudPlan) -> list[_Intent]:
         """The victims' payments as customer sessions, each instance from its own stream."""
@@ -386,7 +447,7 @@ class _Planner:
             intent = self._session(
                 rng,
                 session.scenario,
-                customer_index=session.customer_index,
+                customer=customer,
                 payer=self.home_account[customer.id].id,
                 payee=session.payee,
                 amount_paise=session.amount_paise,
@@ -478,7 +539,7 @@ class _Planner:
                     self._session(
                         rng,
                         ScenarioType.GENUINE_ROUTINE,
-                        customer_index=index,
+                        customer=customer,
                         payer=account.id,
                         payee=payee,
                         amount_paise=_lognormal_paise(rng, amount.median * scale, amount.sigma),
@@ -537,8 +598,27 @@ def generate_history(
     planner.new_devices.extend(plan.devices)
     planner.new_payees.extend(plan.payees)
     fraud = [i for i in planner.fraud(plan) if inside[0] <= i.at < inside[1]]
-    intents = sorted((*genuine, *fraud), key=lambda i: (i.at, str(i.id)))
-    return _run(planner, intents, context=_RunContext(network, instances, plan, label_config))
+    # One MULE_FORWARDING instance per ring holds the ring's onward payments.
+    rings = {}
+    for ring in network.rings:
+        instance = ScenarioInstance(
+            id=planner.instance_ids.next(),
+            scenario_type=ScenarioType.MULE_FORWARDING.value,
+            hypothesis_key=ground_truth_key(ScenarioType.MULE_FORWARDING),
+            params={"ring_id": str(ring.id)},
+            started_at=population.history_start,
+        )
+        instances.append(instance)
+        rings[ring.id] = instance.id
+    context = _RunContext(
+        network,
+        instances,
+        plan,
+        label_config,
+        Forwarder(config, network, seed=planner.seed, start=population.history_start),
+        rings,
+    )
+    return _run(planner, [*genuine, *fraud], context=context)
 
 
 @dataclass(frozen=True, slots=True)
@@ -547,17 +627,22 @@ class _RunContext:
     instances: list[ScenarioInstance]
     plan: FraudPlan
     label_config: LabelConfig
+    forwarder: Forwarder
+    ring_instances: Mapping[UUID, UUID]
 
 
 class _Bank:
     """The bank's state through the pass: balances, B1's view of payees and devices."""
 
-    def __init__(self, planner: _Planner, network: MuleNetwork) -> None:
+    def __init__(
+        self, planner: _Planner, network: MuleNetwork, extra: tuple[Account, ...] = ()
+    ) -> None:
         pop = planner.pop
         self.policy = planner.cfg.legacy_policy
         self.history_start = pop.history_start
         self.balances = {
-            a.id: a.balance_paise for a in (*pop.accounts, *network.accounts, *planner.payroll)
+            a.id: a.balance_paise
+            for a in (*pop.accounts, *network.accounts, *planner.payroll, *extra)
         }
         self.listed_at = {listing.account_id: listing.listed_at for listing in network.listings}
         home = planner.home_account
@@ -565,7 +650,9 @@ class _Bank:
             (home[p.customer_id].id, p.account_id): p.added_at
             for p in (*pop.payees, *planner.new_payees)
         }
-        self.first_seen = {d.id: d.first_seen_at for d in (*pop.devices, *planner.new_devices)}
+        self.first_seen = {
+            d.id: d.first_seen_at for d in (*pop.devices, *network.devices, *planner.new_devices)
+        }
         self.new_device = timedelta(days=planner.thresholds.new_device_days)
         self.paid: set[tuple[UUID, UUID]] = set()
         self.deposited: dict[UUID, int] = {}  # each investment scam's deposits made so far
@@ -630,11 +717,50 @@ def _complaint(
     )
 
 
+def _labels(
+    planner: _Planner, intent: _Intent, decision: PaymentDecision, config: LabelConfig
+) -> list[ScheduledLabel]:
+    spec = planner.cfg.profiles[planner.pop.profile]
+    outcome = PaymentOutcome(str(intent.id), intent.scenario, decision, intent.at)
+    return schedule_payment_labels(
+        outcome, config, seed=spec.seed, maturity_days=spec.maturity_days
+    )
+
+
+class _Registry:
+    """The sim registry's true listings: 40% of mule accounts, after their first fraud credit
+    (docs/14 §4, §7). Whether an account is listed comes from its own stream."""
+
+    def __init__(self, planner: _Planner, context: _RunContext, bank: _Bank) -> None:
+        self.share = planner.cfg.forwarding.registry_listing_share
+        self.seed = planner.seed
+        self.label_config = context.label_config
+        self.bank = bank
+        self.credited: set[UUID] = set()
+        self.listings: list[RegistryListing] = []
+        self.labels: list[ScheduledLabel] = []
+
+    def credit(self, account: UUID, at: datetime) -> None:
+        if account in self.credited:
+            return
+        self.credited.add(account)
+        if keyed_rng(self.seed, "mule_listing", str(account)).random() >= self.share:
+            return
+        label = schedule_registry_label(str(account), at, self.label_config, seed=self.seed)
+        self.labels.append(label)
+        self.listings.append(RegistryListing(account, label.due_at))
+        self.bank.listed_at[account] = label.due_at
+
+
 def _run(planner: _Planner, intents: list[_Intent], *, context: _RunContext) -> History:
-    """One chronological pass: B1, the funds check, the ledger, truth, labels, complaints."""
+    """One chronological pass: B1, the funds check, the ledger, truth, labels, complaints, and
+    the onward transfers through the mule rings as their credits arrive."""
     population = planner.pop
-    spec = planner.cfg.profiles[population.profile]
-    bank = _Bank(planner, context.network)
+    forwarder = context.forwarder
+    cash_accounts = tuple(forwarder.cash_accounts.values())
+    bank = _Bank(planner, context.network, cash_accounts)
+    registry = _Registry(planner, context, bank)
+    ring_of = {a: ring.id for a, (ring, _) in forwarder.layer_of.items()}
     complaint_ids = IdStream(planner.seed, "complaint")
     victim_of = {
         a.id: a.customer_id
@@ -648,12 +774,32 @@ def _run(planner: _Planner, intents: list[_Intent], *, context: _RunContext) -> 
     labels: list[ScheduledLabel] = []
     logins: list[LoginEvent] = []
     complaints: list[Complaint] = []
-    for planned in intents:
+    queue = [(i.at, str(i.id), i) for i in intents]
+    heapq.heapify(queue)
+
+    def schedule(hops: list[Hop]) -> None:
+        for hop in hops:
+            if hop.at >= population.history_end:
+                continue  # the window carries it on
+            intent = planner.forward(
+                hop, context.network, context.ring_instances[ring_of[hop.payer]]
+            )
+            heapq.heappush(queue, (intent.at, str(intent.id), intent))
+
+    while queue:
+        _, _, planned = heapq.heappop(queue)
         made = bank.process(planned)
+        executed = made is not None and made[1] is PaymentDecision.RELEASED
+        if planned.flow is not None:
+            amount = made[0].amount_paise if made is not None and executed else 0
+            schedule(forwarder.resolve(planned.flow, amount, planned.at))
         if made is None:
             continue
         intent, decision = made
-        executed = decision is PaymentDecision.RELEASED
+        if executed and intent.is_fraud and forwarder.is_mule(intent.payee):
+            registry.credit(intent.payee, intent.at)
+            if intent.flow is None:  # a victim's payment starts a flow
+                schedule(forwarder.arrive(intent.payee, intent.amount_paise, intent.at))
         payments.append(
             Payment(
                 id=intent.id,
@@ -671,13 +817,13 @@ def _run(planner: _Planner, intents: list[_Intent], *, context: _RunContext) -> 
         if intent.login is not None:
             logins.append(intent.login)
         if executed:
-            for account, delta in (
-                (intent.payer, -intent.amount_paise),
-                (intent.payee, intent.amount_paise),
-            ):
-                ledger.append(
-                    LedgerEntry(account, intent.id, delta, bank.balances[account], intent.at)
+            ledger.extend(
+                LedgerEntry(account, intent.id, delta, bank.balances[account], intent.at)
+                for account, delta in (
+                    (intent.payer, -intent.amount_paise),
+                    (intent.payee, intent.amount_paise),
                 )
+            )
         if intent.telemetry is not None:
             telemetry.append(intent.telemetry)
         truth.append(
@@ -690,10 +836,7 @@ def _run(planner: _Planner, intents: list[_Intent], *, context: _RunContext) -> 
             )
         )
         if intent.decided:
-            outcome = PaymentOutcome(str(intent.id), intent.scenario, decision, intent.at)
-            scheduled = schedule_payment_labels(
-                outcome, context.label_config, seed=spec.seed, maturity_days=spec.maturity_days
-            )
+            scheduled = _labels(planner, intent, decision, context.label_config)
             labels.extend(scheduled)
             complaints.extend(
                 _complaint(planner, label, intent, victim_of[intent.payer], complaint_ids)
@@ -715,4 +858,7 @@ def _run(planner: _Planner, intents: list[_Intent], *, context: _RunContext) -> 
         logins=tuple(logins),
         crm_events=context.plan.crm_events,
         complaints=tuple(complaints),
+        cash_out_accounts=cash_accounts,
+        registry_listings=tuple(registry.listings),
+        account_labels=tuple(registry.labels),
     )

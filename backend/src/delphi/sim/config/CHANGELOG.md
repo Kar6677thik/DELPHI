@@ -8,6 +8,17 @@ upgrade changes them, `test_committed_freeze_matches_kb_v1_and_config` fails eve
 input changed. Then either keep the previous numpy, or regenerate with
 `uv run delphi sim freeze-response-models`, bump `generator_version` and record the upgrade here.
 
+## 8
+
+- Mule forwarding (docs/14 §4): after a log-normal dwell (12 min at layer 1, 25 min deeper,
+  σ 0.8) each credit moves to one next-layer account in 1–3 payments; 40% of final-layer
+  credits are cashed out to a per-bank cash-out account. Home-bank mules forward in app
+  sessions (MULE_FORWARDING, decided by B1).
+- 40% of credited mule accounts are listed in the sim registry after the §7 delay; B1 then
+  declines payments to them.
+- The mule home-bank share drops from 0.4 to 0.21, so MULE_FORWARDING sessions come out at 30
+  per 10,000 payments.
+
 ## 7
 
 - The fraud victims' scenarios in the history (docs/14 §4) at their rates per 10,000

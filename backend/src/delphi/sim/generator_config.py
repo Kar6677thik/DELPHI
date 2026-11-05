@@ -267,6 +267,25 @@ class CrmConfig(_Frozen):
         return self
 
 
+class ForwardingConfig(_Frozen):
+    """Money moving down a mule ring (docs/14 §4)."""
+
+    first_layer_dwell_minutes: LogNormal
+    deeper_dwell_minutes: LogNormal
+    splits: Range
+    cash_out_share: Probability
+    registry_listing_share: Probability
+    split_gap_minutes: Range
+    channel: dict[str, float]
+
+    @model_validator(mode="after")
+    def _weights(self) -> ForwardingConfig:
+        _distribution(self.channel, "forwarding.channel")
+        if self.splits.min < 1:
+            raise ValueError("forwarding.splits must be at least 1")
+        return self
+
+
 class GeneratorConfig(_Frozen):
     profiles: dict[str, ProfileConfig]
     fixed_history_end: datetime
@@ -278,6 +297,7 @@ class GeneratorConfig(_Frozen):
     genuine_unusual: GenuineUnusualConfig
     mule_rings: MuleRingConfig
     fraud: FraudConfig
+    forwarding: ForwardingConfig
     crm: CrmConfig
     new_device_mean_days: float = Field(gt=0)
     login_lead_s: Range

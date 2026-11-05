@@ -63,9 +63,9 @@ def test_fraud_truth(long_test: Dataset) -> None:
     history = long_test.history
     kinds = {i.id: i.scenario_type for i in history.scenario_instances}
     for t in history.payment_truth:
-        fraud = kinds[t.scenario_instance_id] in {"ATO", "APP_DIGITAL_ARREST", "APP_INVESTMENT"}
+        fraud = kinds[t.scenario_instance_id] not in {"GENUINE_ROUTINE", "GENUINE_UNUSUAL"}
         assert t.is_fraud == fraud
-        assert t.hypothesis_key == kinds[t.scenario_instance_id] or not fraud
+        assert t.hypothesis_key in {kinds[t.scenario_instance_id], "MULE"} or not fraud
         if kinds[t.scenario_instance_id] == "ATO":
             assert not t.coached
 

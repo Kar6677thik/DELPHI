@@ -42,5 +42,10 @@ def generate_dataset(
         network=network,
         coached_share=response_config.coached_victims.share,
     )
-    accounts = (*population.accounts, *network.accounts, *history.payroll_accounts)
+    accounts = (
+        *population.accounts,
+        *network.accounts,
+        *history.payroll_accounts,
+        *history.cash_out_accounts,
+    )
     return Dataset(population, network, history, account_truth(network, accounts))

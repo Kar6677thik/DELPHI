@@ -211,8 +211,9 @@ review pending):
   and layer count (1–4) are uniform. Its accounts are split over the layers as evenly as
   possible, with the extra accounts in layer 1. `sim_truth.account_truth` has a row for every
   account; only mules have `is_mule`, a `ring_id` and a `layer`.
-- **Banks.** A mule banks at `DLPH` with probability 0.4, else at an external bank (evenly). A
-  ring always spans at least two banks.
+- **Banks.** A mule banks at `DLPH` with probability 0.21, else at an external bank (evenly). A
+  ring always spans at least two banks. The 0.21 is calibrated: home-bank mules' forwarding
+  sessions then come out at MULE_FORWARDING's 30 per 10,000 payments (measured over 50 rings).
 - **Home-bank mules** are customers, numbered like the rest, so names, phones and VPAs give
   nothing away:
   - aged 19–35 (uniform), `LOW` income, no disability
@@ -231,6 +232,27 @@ review pending):
   history. It gets a MULE `REGISTRY_LISTING` label at that instant. `bank.sim_registry_listings`
   holds only listings made before the history ends; later ones are known only to
   `sim_truth.label_schedule` (§8).
+
+`delphi.sim.forwarding` moves the money down the rings during the history's pass:
+
+- **Flows.** A victim's executed payment to a mule starts a flow there. After the §4 dwell,
+  the mule forwards it as one onward transfer: 1–3 payments (uniform count, uniform whole-rupee
+  shares), 1–5 minutes apart, IMPS 0.5 / UPI 0.5, all to one uniformly chosen account of the
+  next layer.
+- **Next layer.** Once every payment of a transfer is resolved, what was executed starts a flow
+  at that account. A held or declined payment stops its share there.
+- **Final layer.** A final-layer account cashes the credit out with probability 0.4: one
+  `CASH_OUT` payment to its bank's cash-out account (one per bank, no customer). Otherwise the
+  money stays.
+- **Streams.** Each flow draws from `keyed_rng(seed, "flow", n)`, numbered in the order the
+  pass starts them. A home-bank mule's payments are app sessions from its device, with the
+  MULE_FORWARDING §5.1 telemetry, decided by B1. External mules' payments and cash-outs are not
+  sessions. All of them belong to one MULE_FORWARDING scenario instance per ring.
+- **Registry.** A mule account is listed with probability 0.4, from
+  `keyed_rng(seed, "mule_listing", account_id)`, at its first fraud credit plus the §7 registry
+  delay. B1 declines payments to it from then on.
+- **Not yet.** Flows due after the history ends are not generated yet; the live/eval window
+  carries them on.
 
 ## 5. Response models (the simulator's truth)
 
