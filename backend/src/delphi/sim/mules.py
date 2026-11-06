@@ -29,6 +29,7 @@ from delphi.sim.population import (
     ACTIVE,
     FULL_KYC,
     HOME_BANK,
+    MINIMAL_KYC,
     Account,
     Customer,
     Device,
@@ -38,7 +39,6 @@ from delphi.sim.population import (
 )
 from delphi.sim.rng import keyed_rng
 
-MINIMAL_KYC = "MINIMAL"
 MULE_INCOME_BAND = "LOW"
 _PAISE_PER_INR = 100
 _FINGERPRINT_BYTES = 16
@@ -119,11 +119,11 @@ class _RingBuilder:
             else external[int(rng.integers(len(external)))]
             for _ in range(size)
         ]
-        if shared:  # a shared device needs enough home-bank mules to share it
-            for j in range(size):
+        if shared:  # a shared device needs enough home-bank mules: turn random ones home
+            for j in rng.permutation(size):
                 if banks.count(HOME_BANK) >= self.cfg.shared_device_min_accounts:
                     break
-                banks[j] = HOME_BANK
+                banks[int(j)] = HOME_BANK
         if len(set(banks)) == 1:  # docs/14: rings span banks
             others = [b for b in (HOME_BANK, *external) if b != banks[0]]
             banks[-1] = others[int(rng.integers(len(others)))]
@@ -135,7 +135,10 @@ class _RingBuilder:
         days = self.cfg.opened_days_before_history
         opened_days = days.min + (days.max - days.min) * rng.random()
         balance = self.cfg.opening_balance_inr
-        rupees = balance.median * float(np.exp(balance.sigma * rng.standard_normal()))
+        # In paise, like a genuine customer's: whole-rupee balances would mark mules out.
+        paise = (
+            balance.median * _PAISE_PER_INR * float(np.exp(balance.sigma * rng.standard_normal()))
+        )
         home = customer_id is not None
         return Account(
             id=self.ids["mule_account"].next(),
@@ -146,7 +149,7 @@ class _RingBuilder:
             opened_at=self.pop.history_start - timedelta(seconds=int(opened_days * 86_400)),
             kyc_level=MINIMAL_KYC if rng.random() < self.cfg.minimal_kyc_share else FULL_KYC,
             status=ACTIVE,
-            balance_paise=max(1, round(rupees)) * _PAISE_PER_INR,
+            balance_paise=max(1, round(paise)),
             phone_number=f"+919{index:09d}" if home else f"+917{index:09d}",
             vpa=f"customer{index:06d}@dlph" if home else f"person{index:06d}@{bank.lower()}",
         )

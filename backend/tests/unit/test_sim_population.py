@@ -138,3 +138,12 @@ def test_config_rejects_a_bad_distribution(config: GeneratorConfig) -> None:
     data["population"]["language"]["hi"] = 0.5
     with pytest.raises(ValueError, match="language must be a probability distribution"):
         GeneratorConfig.model_validate(data)
+
+
+def test_some_genuine_accounts_have_minimal_kyc(demo: Population) -> None:
+    """Owner decision on #49: 5% of genuine non-merchant accounts have MINIMAL KYC, so it is
+    a signal for the mule scorer, not a tell (docs/14 §3)."""
+    genuine = [a for a in demo.accounts if not a.is_merchant]
+    share = sum(a.kyc_level == "MINIMAL" for a in genuine) / len(genuine)
+    assert share == pytest.approx(0.05, rel=0.10)
+    assert all(a.kyc_level == "FULL" for a in demo.accounts if a.is_merchant)

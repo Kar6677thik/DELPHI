@@ -63,6 +63,7 @@ class PopulationConfig(_Frozen):
     opening_balance_inr: LogNormal
     home_city: dict[str, dict[str, float]]
     known_device_min_age_days: int = Field(ge=0)
+    genuine_kyc_minimal_share: Probability
     external_counterparty_income_band: str
 
     @model_validator(mode="after")
@@ -179,7 +180,7 @@ class MuleRingConfig(_Frozen):
     def _ring_fits(self) -> MuleRingConfig:
         if not 1 <= self.layers.min <= self.layers.max <= self.size.min <= self.size.max:
             raise ValueError("mule_rings needs 1 ≤ layers ≤ size, so every layer has an account")
-        if self.shared_device_min_accounts > self.size.min:
+        if self.shared_device_min_accounts >= self.size.min:
             raise ValueError("mule_rings.shared_device_min_accounts exceeds the smallest ring")
         return self
 

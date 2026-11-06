@@ -16,6 +16,8 @@ input changed. Then either keep the previous numpy, or regenerate with
 - `sim_truth.account_truth` for every account.
 - False registry listings on 0.1% of genuine non-merchant accounts, with a MULE
   `REGISTRY_LISTING` label when listed; B1 declines payments to a listed payee.
+- 5% of genuine non-merchant accounts have MINIMAL KYC (owner decision), so minimal KYC is
+  a signal, not a tell; mule opening balances are in paise like everyone else's.
 
 ## 5
 

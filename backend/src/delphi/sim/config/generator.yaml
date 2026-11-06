@@ -24,6 +24,9 @@ population:
   consent_call_status_probability: 0.70   # docs/14
   device_count: {1: 0.8, 2: 0.2}          # docs/14
   known_device_min_age_days: 30           # gap: a known device is ≥ 30 days old at the start
+  # Owner decision (#49): 5% of genuine non-merchant accounts have MINIMAL KYC, so minimal KYC
+  # is a strong mule signal but not a tell (docs/14 §3).
+  genuine_kyc_minimal_share: 0.05
   payee_count: {min: 3, max: 15}          # docs/14; uniform count (gap)
   # docs/14: 70% of counterparties at DLPH, the rest spread over XBK1–XBK5 (evenly: gap).
   counterparty_home_bank_share: 0.70

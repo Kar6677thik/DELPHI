@@ -59,9 +59,13 @@ from its own stream, `keyed_rng(seed, "customer", i)`, and the merchants from
 (owner review pending):
 
 - **Within the age bands**, ages are uniform (60–69 and 70–85 as well as 18–59).
-- **Every customer** is a `RETAIL` customer with one `FULL`-KYC, `ACTIVE` account at `DLPH`,
+- **Every customer** is a `RETAIL` customer with one `ACTIVE` account at `DLPH`,
   opened 1–10 years (uniform) before the history starts. The opening balance is log-normal,
   median ₹40,000 × the income band's amount scale, σ = 1.0.
+- **KYC.** Genuine non-merchant accounts (customers' and external counterparties') have
+  `MINIMAL` KYC with probability 0.05, from `keyed_rng(seed, "kyc", account_id)`, else `FULL`;
+  merchants are `FULL`. Minimal KYC is then a strong mule signal but not a tell (owner
+  decision on #49).
 - **Home city** follows language: te → Hyderabad; ta → Chennai; hi → Delhi 0.4, Lucknow 0.3,
   Jaipur 0.3; en → Bengaluru 0.4, Mumbai 0.4, Kolkata 0.2.
 - **Devices** are ANDROID 0.85 / IOS 0.15. Every device is first seen at least 30 days before the
@@ -183,9 +187,10 @@ review pending):
 - **Every mule account:**
   - has `MINIMAL` KYC with probability 0.5, else `FULL`
   - was opened 5–400 days before the history (docs/13 §6 uses both as features)
-  - has a log-normal opening balance, median ₹2,000, σ 0.8
+  - has a log-normal opening balance in paise, median ₹2,000, σ 0.8
 - **Shared devices.** With probability 0.5 a ring shares one device fingerprint across 3 to
-  all of its home-bank mules. Such a ring gets at least 3 home-bank mules.
+  all of its home-bank mules. Such a ring gets at least 3 home-bank mules, turning randomly
+  chosen accounts to `DLPH` if needed.
 - **False listings.** Each genuine non-merchant account is listed with probability 0.001, from
   its own stream `keyed_rng(seed, "false_listing", account_id)`, at a uniform instant in the
   history. It gets a MULE `REGISTRY_LISTING` label at that instant. `bank.sim_registry_listings`

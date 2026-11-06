@@ -170,3 +170,19 @@ def test_dataset_exports_mules_and_truth(listed_dataset: Dataset) -> None:
         row for row in tables["label_schedule"] if row["label_source"] == "REGISTRY_LISTING"
     ]
     assert len(registry_labels) == len(listed_dataset.network.listings)
+
+
+def test_mules_do_not_stand_out_in_the_bank_tables(
+    many_rings: MuleNetwork, listed_dataset: Dataset
+) -> None:
+    """No column picks mules out exactly: their balances are in paise like everyone's, and
+    minimal KYC is common among genuine accounts too (owner review of #49)."""
+    whole = sum(a.balance_paise % 100 == 0 for a in many_rings.accounts) / len(many_rings.accounts)
+    assert whole < 0.05
+    mules = {a.id for a in listed_dataset.network.accounts}
+    minimal = [
+        a.id
+        for a in (*listed_dataset.population.accounts, *listed_dataset.network.accounts)
+        if a.kyc_level == "MINIMAL"
+    ]
+    assert any(a not in mules for a in minimal) and any(a in mules for a in minimal)

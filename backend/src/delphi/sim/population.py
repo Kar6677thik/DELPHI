@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import bisect
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from uuid import UUID
 
@@ -25,6 +25,7 @@ HOME_BANK = "DLPH"
 HOSPITAL = "HOSPITAL"
 ACTIVE = "ACTIVE"
 FULL_KYC = "FULL"
+MINIMAL_KYC = "MINIMAL"
 _PAISE_PER_INR = 100
 _DAYS_PER_YEAR = 365
 _SECONDS_PER_DAY = 86_400
@@ -282,6 +283,18 @@ class _Builder:
         return customer
 
 
+def _with_minimal_kyc(config: GeneratorConfig, seed: int, accounts: list[Account]) -> list[Account]:
+    """A share of genuine non-merchant accounts have MINIMAL KYC (owner decision on #49), each
+    drawn from the account's own stream ``keyed_rng(seed, "kyc", account_id)``."""
+    share = config.population.genuine_kyc_minimal_share
+    return [
+        replace(a, kyc_level=MINIMAL_KYC)
+        if not a.is_merchant and keyed_rng(seed, "kyc", str(a.id)).random() < share
+        else a
+        for a in accounts
+    ]
+
+
 def generate_population(
     config: GeneratorConfig, profile: str, *, history_end: datetime, vulnerable_age: int
 ) -> Population:
@@ -302,7 +315,7 @@ def generate_population(
         history_start=builder.start,
         history_end=history_end,
         customers=tuple(customers),
-        accounts=tuple(builder.accounts),
+        accounts=tuple(_with_minimal_kyc(config, builder.spec.seed, builder.accounts)),
         devices=tuple(devices),
         payees=tuple(payees),
     )
