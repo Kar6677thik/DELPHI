@@ -176,7 +176,8 @@ review pending):
   made, for want of funds). Each scenario draws from `keyed_rng(seed, "fraud", scenario)`, and
   the sessions of an instance from `keyed_rng(seed, "fraud_session", instance_id)`. A victim
   pays layer-1 mules of a uniformly chosen ring, saved as a payee 2–30 minutes before the
-  first payment to it.
+  first payment to it and labelled like any family payee ("Family N"), so the label gives
+  nothing away.
 - **ATO.**
   - Half are SIM swaps, which the CRM records (`SIM_SWAP_REPORTED`) 1–48 h before the login;
     half are phishing.
@@ -189,8 +190,8 @@ review pending):
 - **APP_INVESTMENT.**
   - Deposits go to one "platform" mule, the first log-normal (median ₹5,000 × the income scale,
     σ 0.5), each 1.5 × the last.
-  - 1–2 withdrawal fees of 10% of the deposits follow, in the last 20% of the span (UPI 0.7 /
-    IMPS 0.3).
+  - 1–2 withdrawal fees of 10% of the deposits actually made follow, in the last 20% of the
+    span (UPI 0.7 / IMPS 0.3).
   - A victim never sends more than 90% of the balance at the time.
 - **Coached victims:** 30% of DA and INV instances (the §5.2 share), in
   `payment_truth.coached`.

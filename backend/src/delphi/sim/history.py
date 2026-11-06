@@ -132,15 +132,20 @@ class _Intent:
     coached: bool = False
     balance_share: float | None = None  # the amount is this share of the payer's balance
     max_balance_share: float | None = None  # the amount is at most this share of the balance
+    fee_share: float | None = None  # a fee of this share of the instance's deposits made
 
-    def settle(self, balance: int) -> int:
-        """The amount actually sent, given the payer's balance at the time."""
+    def settle(self, balance: int, deposited: int = 0) -> int:
+        """The amount actually sent, given the payer's balance at the time and, for a fee,
+        what the instance has deposited so far."""
         if self.balance_share is not None:
             return int(balance * self.balance_share) // _PAISE_PER_INR * _PAISE_PER_INR
+        amount = self.amount_paise
+        if self.fee_share is not None:
+            amount = round(deposited * self.fee_share / _PAISE_PER_INR) * _PAISE_PER_INR
         if self.max_balance_share is not None:
             cap = int(balance * self.max_balance_share) // _PAISE_PER_INR * _PAISE_PER_INR
-            return min(self.amount_paise, cap)
-        return self.amount_paise
+            return min(amount, cap)
+        return amount
 
 
 def _lognormal_paise(rng: np.random.Generator, median_inr: float, sigma: float) -> int:
@@ -398,6 +403,7 @@ class _Planner:
                     coached=session.coached,
                     balance_share=session.balance_share,
                     max_balance_share=session.max_balance_share,
+                    fee_share=session.fee_share,
                 )
             )
         return intents
@@ -562,6 +568,7 @@ class _Bank:
         self.first_seen = {d.id: d.first_seen_at for d in (*pop.devices, *planner.new_devices)}
         self.new_device = timedelta(days=planner.thresholds.new_device_days)
         self.paid: set[tuple[UUID, UUID]] = set()
+        self.deposited: dict[UUID, int] = {}  # each investment scam's deposits made so far
 
     def _decide(self, intent: _Intent) -> PaymentDecision:
         if not intent.decided:
@@ -587,7 +594,9 @@ class _Bank:
     def process(self, planned: _Intent) -> tuple[_Intent, PaymentDecision] | None:
         """B1's decision on the payment as made, or None if it is never made. A released
         payment is executed at once."""
-        amount = planned.settle(self.balances[planned.payer])
+        amount = planned.settle(
+            self.balances[planned.payer], self.deposited.get(planned.instance, 0)
+        )
         if amount <= 0:
             return None  # nothing left to take
         intent = (
@@ -598,6 +607,8 @@ class _Bank:
             if self.balances[intent.payer] < amount:
                 return None  # the payer cannot fund it, so the payment is never made
             self.paid.add((intent.payer, intent.payee))
+            if intent.scenario is ScenarioType.APP_INVESTMENT and intent.fee_share is None:
+                self.deposited[intent.instance] = self.deposited.get(intent.instance, 0) + amount
             self.balances[intent.payer] -= amount
             self.balances[intent.payee] += amount
         return intent, decision
@@ -625,7 +636,11 @@ def _run(planner: _Planner, intents: list[_Intent], *, context: _RunContext) -> 
     spec = planner.cfg.profiles[population.profile]
     bank = _Bank(planner, context.network)
     complaint_ids = IdStream(planner.seed, "complaint")
-    victim_of = {a.id: a.customer_id for a in population.accounts if a.customer_id}
+    victim_of = {
+        a.id: a.customer_id
+        for a in (*population.accounts, *context.network.accounts)
+        if a.customer_id
+    }
     payments: list[Payment] = []
     ledger: list[LedgerEntry] = []
     telemetry: list[SessionTelemetry] = []

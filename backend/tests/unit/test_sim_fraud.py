@@ -192,3 +192,38 @@ def test_crm_events(long_test: Dataset) -> None:
             and timedelta(hours=1) <= instance.started_at - e.at <= timedelta(hours=48)
             for e in reports[customer]
         )
+
+
+def test_mule_payees_look_like_any_other_payee(long_test: Dataset) -> None:
+    """Owner review of #50: no payee label marks a fraud payee out."""
+    labels = {p.label for p in long_test.history.payees}
+    assert "Payee" not in labels
+    mules = {a.id for a in long_test.network.accounts}
+    assert all(
+        p.label.startswith("Family ") for p in long_test.history.payees if p.account_id in mules
+    )
+
+
+def test_investment_fees_follow_the_deposits_made(long_test: Dataset) -> None:
+    history = long_test.history
+    params = {i.id: i.params for i in history.scenario_instances}
+    before = {
+        e.payment_id: e.balance_after_paise - e.delta_paise
+        for e in history.ledger
+        if e.delta_paise < 0
+    }
+    checked = 0
+    for instance, payments in _instances(long_test, "APP_INVESTMENT").items():
+        deposits = params[instance]["deposits"]
+        made = sum(p.amount_paise for p in payments[:deposits] if p.status == "EXECUTED")
+        for fee in payments[deposits:]:
+            expected = round(made * 0.10 / 100) * 100
+            cap = int(before.get(fee.id, 10**15) * 0.9) // 100 * 100
+            assert fee.amount_paise == min(expected, cap)
+            checked += 1
+    assert checked
+
+
+def test_crm_events_fall_inside_the_history(long_test: Dataset) -> None:
+    start = long_test.population.history_start
+    assert all(e.at >= start for e in long_test.history.crm_events)

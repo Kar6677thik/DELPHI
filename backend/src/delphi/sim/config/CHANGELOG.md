@@ -18,6 +18,8 @@ input changed. Then either keep the previous numpy, or regenerate with
   coached.
 - Complaints for reported fraud that the bank receives before the history ends; background
   CRM events (SIM swap / lost phone) once per 500 days per customer.
+- Mule payees are labelled like any family payee; investment fees are 10% of the deposits
+  actually made; CRM events and saved times never fall before the history.
 
 ## 6
 

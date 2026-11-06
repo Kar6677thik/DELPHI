@@ -13,6 +13,7 @@ The module also draws genuine customers' background CRM events, from
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from uuid import UUID
@@ -52,6 +53,7 @@ class FraudSession:
     amount_paise: int = 0  # planned, capped at max_balance_share of the balance at the time
     balance_share: float | None = None  # else: this share of the balance at the time
     max_balance_share: float | None = None
+    fee_share: float | None = None  # a fee: this share of the instance's deposits made so far
     device: Device | None = None  # None: the customer's current device
     city: str | None = None  # None: the home city
 
@@ -90,6 +92,7 @@ class _Planner:
         self.payees: list[Payee] = []
         self.crm: list[CrmEvent] = []
         self.saved: dict[tuple[UUID, UUID], int] = {}  # index into payees
+        self.payee_count = Counter(p.customer_id for p in population.payees)
         older = config.fraud.digital_arrest.older_age
         customers = list(enumerate(population.customers))
         self.older = [i for i, c in customers if c.age >= older]
@@ -102,11 +105,16 @@ class _Planner:
         return ring.id, layer[int(rng.integers(len(layer)))]
 
     def _save(self, customer: Customer, account: UUID, at: datetime) -> None:
-        """A victim saves each mule payee once, at the earliest instance that pays it."""
+        """A victim saves each mule payee once, at the earliest instance that pays it. The
+        label follows the genuine scheme for a person ("Family N", N its place among the
+        customer's payees), so nothing in `bank.payees` marks a mule out."""
+        at = max(at, self.pop.history_start)
         index = self.saved.get((customer.id, account))
         if index is None:
             self.saved[customer.id, account] = len(self.payees)
-            payee = Payee(self.ids["fraud_payee"].next(), customer.id, account, "Payee", at)
+            self.payee_count[customer.id] += 1
+            label = f"Family {self.payee_count[customer.id]}"
+            payee = Payee(self.ids["fraud_payee"].next(), customer.id, account, label, at)
             self.payees.append(payee)
         elif at < self.payees[index].added_at:
             self.payees[index] = replace(self.payees[index], added_at=at)
@@ -141,7 +149,10 @@ class _Planner:
             lead = timedelta(hours=_uniform(rng, cfg.sim_swap_lead_hours))
             self.crm.append(
                 CrmEvent(
-                    self.ids["crm_event"].next(), customer.id, SIM_SWAP_REPORTED, login_at - lead
+                    self.ids["crm_event"].next(),
+                    customer.id,
+                    SIM_SWAP_REPORTED,
+                    max(login_at - lead, self.pop.history_start),
                 )
             )
         device = Device(
@@ -241,12 +252,12 @@ class _Planner:
             * float(np.exp(cfg.first_amount_inr.sigma * rng.standard_normal()))
         )
         amounts = [round(first * cfg.escalation**j) * _PAISE_PER_INR for j in range(deposits)]
-        fee = round(sum(amounts) * cfg.fee_share / _PAISE_PER_INR) * _PAISE_PER_INR
         offsets += sorted(
             deposit_span + rng.random() * (span.total_seconds() - deposit_span) for _ in range(fees)
         )
-        amounts += [fee] * fees
-        for offset, amount in zip(offsets, amounts, strict=True):
+        # A fee is fee_share of the deposits actually made, which the history settles.
+        amounts += [0] * fees
+        for j, (offset, amount) in enumerate(zip(offsets, amounts, strict=True)):
             self.sessions.append(
                 FraudSession(
                     ScenarioType.APP_INVESTMENT,
@@ -258,6 +269,7 @@ class _Planner:
                     coached=coached,
                     amount_paise=max(amount, _PAISE_PER_INR),
                     max_balance_share=cfg.max_balance_share,
+                    fee_share=cfg.fee_share if j >= deposits else None,
                 )
             )
         return deposits + fees
