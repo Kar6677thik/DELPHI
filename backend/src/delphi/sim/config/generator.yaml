@@ -1,0 +1,50 @@
+# The synthetic bank's profiles and population (docs/14 §2–3). Numbers marked "docs/14" are
+# the spec's; the rest fill a gap the spec leaves open and are listed in docs/14 §3. A change
+# here is a new generator_version (response_models.yaml) and a CHANGELOG.md entry.
+
+profiles:   # docs/14 §2
+  test: {customers: 200, history_days: 21, maturity_days: 7, window_days: 3, seed: 1}
+  demo: {customers: 2000, history_days: 150, maturity_days: 60, window_days: null, seed: 20261031}
+  eval: {customers: 20000, history_days: 150, maturity_days: 60, window_days: 30, seed: 7}
+# docs/14 §2: eval and test end their history here; demo ends it at the dataset's creation time.
+fixed_history_end: "2026-07-01T00:00:00+05:30"
+
+population:
+  # docs/14 §3: 18–85; P(≥ 70) = 0.12; P(60–69) = 0.15; the rest uniform over 18–59.
+  # Within the two older bands the age is uniform too (gap).
+  age_bands:   # [lowest, highest, probability]
+    - [18, 59, 0.73]
+    - [60, 69, 0.15]
+    - [70, 85, 0.12]
+  # docs/14 §3: hi 0.40, en 0.25, te 0.12, ta 0.12, other → en 0.11.
+  language: {hi: 0.40, en: 0.36, te: 0.12, ta: 0.12}
+  disability_probability: 0.02            # docs/14
+  income_band: {LOW: 0.45, MID: 0.40, HIGH: 0.15}   # docs/14
+  income_amount_scale: {LOW: 0.5, MID: 1.0, HIGH: 3.0}   # docs/14
+  consent_call_status_probability: 0.70   # docs/14
+  device_count: {1: 0.8, 2: 0.2}          # docs/14
+  payee_count: {min: 3, max: 15}          # docs/14; uniform count (gap)
+  # docs/14: 70% of counterparties at DLPH, the rest spread over XBK1–XBK5 (evenly: gap).
+  counterparty_home_bank_share: 0.70
+  external_banks: [XBK1, XBK2, XBK3, XBK4, XBK5]
+  # Gaps:
+  segment: RETAIL                         # every generated customer is a retail customer
+  device_os: {ANDROID: 0.85, IOS: 0.15}
+  payee_type: {FAMILY: 0.40, UTILITY: 0.20, MERCHANT: 0.40}
+  account_tenure_years: {min: 1, max: 10}  # uniform, before history start
+  # Log-normal opening balance, median × the income band's amount scale.
+  opening_balance_inr: {median: 40000, sigma: 1.0}
+  home_city:
+    hi: {Delhi: 0.40, Lucknow: 0.30, Jaipur: 0.30}
+    en: {Bengaluru: 0.40, Mumbai: 0.40, Kolkata: 0.20}
+    te: {Hyderabad: 1.0}
+    ta: {Chennai: 1.0}
+
+merchants:
+  # docs/14 §3: 300 (demo) / 3,000 (eval), 20 of them hospitals on demo: 0.15 per customer,
+  # 1 in 15 a hospital, on every profile.
+  per_customer: 0.15
+  hospital_share: 0.0666667
+  # The other categories (gap); docs/14 §4 names wedding vendors and property tokens.
+  categories: {GROCERY: 0.25, UTILITY: 0.20, RETAIL: 0.20, FUEL: 0.10, TELECOM: 0.10,
+               EDUCATION: 0.07, WEDDING_VENDOR: 0.04, PROPERTY: 0.04}

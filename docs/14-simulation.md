@@ -53,6 +53,35 @@ epoch `2026-07-01T00:00:00+05:30` (eval/test).
 Merchant accounts: 300 (`demo`) / 3,000 (`eval`), including 20 hospitals (`demo`), all marked as
 registered merchants.
 
+`delphi.sim.population` generates this from `sim/config/generator.yaml`. Each customer draws
+from its own stream, `keyed_rng(seed, "customer", i)`, and the merchants from
+`keyed_rng(seed, "merchants")`. Where the table above is silent, the generator uses these values
+(owner review pending):
+
+- **Within the age bands**, ages are uniform (60–69 and 70–85 as well as 18–59).
+- **Every customer** is a `RETAIL` customer with one `FULL`-KYC, `ACTIVE` account at `DLPH`,
+  opened 1–10 years (uniform) before the history starts. The opening balance is log-normal,
+  median ₹40,000 × the income band's amount scale, σ = 1.0.
+- **Home city** follows language: te → Hyderabad; ta → Chennai; hi → Delhi 0.4, Lucknow 0.3,
+  Jaipur 0.3; en → Bengaluru 0.4, Mumbai 0.4, Kolkata 0.2.
+- **Devices** are ANDROID 0.85 / IOS 0.15. Every device is first seen at least 30 days before the
+  history starts, so none looks new; new-device events come with the payments.
+- **Payees:** 3–15 (uniform count) of type family 0.4, utility 0.2, merchant 0.4, all saved
+  before the history starts. A family payee is another customer's `DLPH` account with
+  probability 0.7, else a new personal account at an external bank. Utility and merchant payees
+  are merchant accounts; hospitals are never established payees (paying one is
+  `GENUINE_UNUSUAL`). Zipf weights apply when payments pick a payee.
+- **Merchants** are 0.15 per customer on every profile (300 on `demo`, 3,000 on `eval`, 30 on
+  `test`), 1 in 15 a hospital. The rest are GROCERY 0.25, UTILITY 0.20, RETAIL 0.20, FUEL 0.10,
+  TELECOM 0.10, EDUCATION 0.07, WEDDING_VENDOR 0.04, PROPERTY 0.04. Like every counterparty,
+  70% bank at `DLPH`; merchants have no customer row.
+- **Names, phones and VPAs** are synthetic and unique: `Customer 00042`, `+919000000042`,
+  `customer000042@dlph`. No real-looking personal data.
+
+The `test` profile's canonical export (`delphi.sim.export`: rows sorted by id, canonical JSON,
+no database-assigned columns) has its SHA-256 recorded per `generator_version` in
+`sim/config/dataset_hashes.yaml`. A unit test regenerates it on every push.
+
 ## 4. Scenarios
 
 Each scenario generates payments, ledger movements, session telemetry, logins, CRM events and
