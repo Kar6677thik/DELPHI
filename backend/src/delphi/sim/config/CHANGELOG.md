@@ -18,6 +18,9 @@ input changed. Then either keep the previous numpy, or regenerate with
   declines payments to them.
 - The mule home-bank share drops from 0.4 to 0.21, so MULE_FORWARDING sessions come out at 30
   per 10,000 payments.
+- Home-bank mules save their next-layer payees before first paying them; dwell and split
+  times are whole seconds; the cash-out accounts' age is in `generator.yaml`. Re-measured
+  after these changes: MULE_FORWARDING 29.5 per 10,000 over 50 rings at the 0.21 share.
 
 ## 7
 

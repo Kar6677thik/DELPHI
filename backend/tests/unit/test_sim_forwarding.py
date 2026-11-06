@@ -158,3 +158,21 @@ def test_registry_lists_forty_percent_of_credited_mules(long_test: Dataset) -> N
     for p in history.payments:
         if p.payee_account_id in listed and p.device_id is not None:
             assert (p.status == "DECLINED") == (p.initiated_at >= listed[p.payee_account_id])
+
+
+def test_home_bank_mules_save_their_payees_first(long_test: Dataset) -> None:
+    """Owner review of #51: a forwarding payee is saved before the first payment to it, so
+    B1's new-payee input follows docs/13 §3 rather than staying new forever."""
+    network, history = long_test.network, long_test.history
+    customer_of = {a.id: a.customer_id for a in network.accounts if a.customer_id}
+    saved = {(p.customer_id, p.account_id): p for p in history.payees}
+    sessions = [
+        p
+        for p in sorted(history.payments, key=lambda p: p.initiated_at)
+        if p.payer_account_id in customer_of and p.device_id is not None
+    ]
+    assert sessions
+    for p in sessions:
+        payee = saved[customer_of[p.payer_account_id], p.payee_account_id]
+        assert payee.added_at <= p.initiated_at
+        assert payee.label.startswith("Family ")

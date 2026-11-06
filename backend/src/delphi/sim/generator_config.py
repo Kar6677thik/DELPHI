@@ -277,6 +277,8 @@ class ForwardingConfig(_Frozen):
     registry_listing_share: Probability
     split_gap_minutes: Range
     channel: dict[str, float]
+    cash_account_age_days: int = Field(ge=0)
+    payee_lead_minutes: Range
 
     @model_validator(mode="after")
     def _weights(self) -> ForwardingConfig:

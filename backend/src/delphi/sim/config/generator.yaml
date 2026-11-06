@@ -193,6 +193,10 @@ forwarding:
   registry_listing_share: 0.4               # docs/14
   split_gap_minutes: {min: 1, max: 5}       # gap: between the payments of one transfer
   channel: {IMPS: 0.5, UPI_PUSH: 0.5}       # gap
+  cash_account_age_days: 3650               # gap: the banks' cash-out accounts are old
+  # Gap: a home-bank mule saves its next-layer payee 2–30 min before first paying it, like
+  # any customer, so B1 sees it as new only while docs/13 §3 says so.
+  payee_lead_minutes: {min: 2, max: 30}
 
 # Gap: genuine customers report a SIM swap or a lost phone once per 500 days on average
 # (docs/05 §1 CRM event types), so about 3% of genuine payments have one in the last 14 days.

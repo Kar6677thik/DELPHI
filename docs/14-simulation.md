@@ -248,7 +248,12 @@ review pending):
   pass starts them. A home-bank mule's payments are app sessions from its device, with the
   MULE_FORWARDING §5.1 telemetry, decided by B1. External mules' payments and cash-outs are not
   sessions. All of them belong to one MULE_FORWARDING scenario instance per ring.
-- **Registry.** A mule account is listed with probability 0.4, from
+- **Payees.** A home-bank mule saves its next-layer account as a payee ("Family N") 2–30
+  minutes before it first pays it (not before the history), from
+  `keyed_rng(seed, "mule_payee", payer/payee)`, so B1 sees the payee as new only while doc 13
+  §3 says it is. Dwell and split times are whole seconds.
+- **Registry.** 40% of *credited* mule accounts are listed: when a mule first receives fraud
+  money it is listed with probability 0.4, from
   `keyed_rng(seed, "mule_listing", account_id)`, at its first fraud credit plus the §7 registry
   delay. B1 declines payments to it from then on.
 - **Not yet.** Flows due after the history ends are not generated yet; the live/eval window

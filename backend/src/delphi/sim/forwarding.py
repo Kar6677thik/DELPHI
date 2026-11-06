@@ -30,7 +30,7 @@ from delphi.sim.rng import keyed_rng
 
 CASH_OUT = "CASH_OUT"
 _PAISE_PER_INR = 100
-_CASH_ACCOUNT_AGE_DAYS = 3650
+_SECONDS_PER_MINUTE = 60
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,7 +85,7 @@ class Forwarder:
                 bank_code=bank,
                 is_merchant=False,
                 merchant_category=None,
-                opened_at=start - timedelta(days=_CASH_ACCOUNT_AGE_DAYS),
+                opened_at=start - timedelta(days=self.cfg.cash_account_age_days),
                 kyc_level=FULL_KYC,
                 status=ACTIVE,
                 balance_paise=0,
@@ -105,7 +105,9 @@ class Forwarder:
         rng = keyed_rng(self.seed, "flow", str(flow))
         ring, layer = self.layer_of[account]
         dwell = self.cfg.first_layer_dwell_minutes if layer == 0 else self.cfg.deeper_dwell_minutes
-        at += timedelta(minutes=dwell.median * math.exp(dwell.sigma * rng.standard_normal()))
+        # Whole seconds: an exp-derived fraction could differ in its last bit across platforms.
+        minutes = dwell.median * math.exp(dwell.sigma * rng.standard_normal())
+        at += timedelta(seconds=int(minutes * _SECONDS_PER_MINUTE))
         if layer == len(ring.layers) - 1:
             if rng.random() >= self.cfg.cash_out_share:
                 self.flows.append(None)  # the money stays
@@ -122,7 +124,8 @@ class Forwarder:
             channel = _choice(rng, self.cfg.channel)
             hops.append(Hop(flow, account, target, amount, at, channel, session))
             gap = self.cfg.split_gap_minutes
-            at += timedelta(minutes=gap.min + (gap.max - gap.min) * rng.random())
+            gap_minutes = gap.min + (gap.max - gap.min) * rng.random()
+            at += timedelta(seconds=int(gap_minutes * _SECONDS_PER_MINUTE))
         self.flows.append(_Flow(target, len(hops)))
         return hops
 

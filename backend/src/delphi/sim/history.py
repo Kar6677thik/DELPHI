@@ -20,7 +20,7 @@ from __future__ import annotations
 import bisect
 import heapq
 import math
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
@@ -72,6 +72,7 @@ _STATUS = {
 _PAISE_PER_INR = 100
 _HOURS_PER_DAY = 24
 _SECONDS_PER_HOUR = 3600
+_SECONDS_PER_MINUTE = 60
 
 
 @dataclass(frozen=True, slots=True)
@@ -210,6 +211,8 @@ class _Planner:
         self.mule_customer: dict[UUID, Customer] = {}  # home-bank mule account → customer
         self.mule_device: dict[UUID, Device] = {}
         self.flow_streams: dict[int, np.random.Generator] = {}
+        self.mule_payee_ids = IdStream(self.seed, "mule_payee")
+        self.mule_payee_count: Counter[UUID] = Counter()
         self.unusual_merchants = [
             a.id
             for a in population.accounts
@@ -409,11 +412,7 @@ class _Planner:
                 flow=hop.flow,
             )
         if not self.mule_customer:
-            customers = {c.id: c for c in network.customers}
-            self.mule_customer = {
-                a.id: customers[a.customer_id] for a in network.accounts if a.customer_id
-            }
-            self.mule_device = {d.customer_id: d for d in network.devices}
+            self.forward_customers(network)
         customer = self.mule_customer[hop.payer]
         if hop.flow not in self.flow_streams:
             self.flow_streams[hop.flow] = keyed_rng(self.seed, "flow_session", str(hop.flow))
@@ -431,6 +430,36 @@ class _Planner:
             instance=instance,
         )
         return replace(intent, is_fraud=True, flow=hop.flow)
+
+    def mule_payee(self, hop: Hop, network: MuleNetwork) -> Payee:
+        """A home-bank mule saves its next-layer account as a payee before first paying it,
+        labelled like any family payee, from ``keyed_rng(seed, "mule_payee", payer/payee)``."""
+        if not self.mule_customer:
+            self.forward_customers(network)
+        customer = self.mule_customer[hop.payer]
+        rng = keyed_rng(self.seed, "mule_payee", f"{hop.payer}/{hop.payee}")
+        lead = self.cfg.forwarding.payee_lead_minutes
+        minutes = lead.min + (lead.max - lead.min) * rng.random()
+        added = max(
+            hop.at - timedelta(seconds=int(minutes * _SECONDS_PER_MINUTE)), self.pop.history_start
+        )
+        self.mule_payee_count[customer.id] += 1
+        payee = Payee(
+            id=self.mule_payee_ids.next(),
+            customer_id=customer.id,
+            account_id=hop.payee,
+            label=f"Family {self.mule_payee_count[customer.id]}",
+            added_at=added,
+        )
+        self.new_payees.append(payee)
+        return payee
+
+    def forward_customers(self, network: MuleNetwork) -> None:
+        customers = {c.id: c for c in network.customers}
+        self.mule_customer = {
+            a.id: customers[a.customer_id] for a in network.accounts if a.customer_id
+        }
+        self.mule_device = {d.customer_id: d for d in network.devices}
 
     def fraud(self, plan: FraudPlan) -> list[_Intent]:
         """The victims' payments as customer sessions, each instance from its own stream."""
@@ -752,6 +781,13 @@ class _Registry:
         self.bank.listed_at[account] = label.due_at
 
 
+def _save_mule_payee(planner: _Planner, bank: _Bank, hop: Hop, network: MuleNetwork) -> None:
+    """A home-bank mule saves its next-layer account before it first pays it."""
+    if hop.session and (hop.payer, hop.payee) not in bank.saved_at:
+        payee = planner.mule_payee(hop, network)
+        bank.saved_at[hop.payer, hop.payee] = payee.added_at
+
+
 def _run(planner: _Planner, intents: list[_Intent], *, context: _RunContext) -> History:
     """One chronological pass: B1, the funds check, the ledger, truth, labels, complaints, and
     the onward transfers through the mule rings as their credits arrive."""
@@ -781,6 +817,7 @@ def _run(planner: _Planner, intents: list[_Intent], *, context: _RunContext) -> 
         for hop in hops:
             if hop.at >= population.history_end:
                 continue  # the window carries it on
+            _save_mule_payee(planner, bank, hop, context.network)
             intent = planner.forward(
                 hop, context.network, context.ring_instances[ring_of[hop.payer]]
             )
