@@ -11,7 +11,7 @@ import yaml
 
 from delphi.kb.model import ClassifierThresholds, KnowledgeBase
 from delphi.sim.dataset import Dataset, generate_dataset
-from delphi.sim.export import canonical_export, dataset_sha256
+from delphi.sim.export import canonical_export, canonical_tables, dataset_sha256
 from delphi.sim.generator_config import GeneratorConfig, LegacyPolicyConfig, load_generator_config
 from delphi.sim.history import IST
 from delphi.sim.labels import LabelSource, PaymentDecision
@@ -148,11 +148,11 @@ def test_salaries_arrive_monthly(config: GeneratorConfig, kb: KnowledgeBase) -> 
     [
         ({"payee_listed": True}, PaymentDecision.DECLINED),
         ({"payee_is_new": True, "amount_paise": 5_000_000}, PaymentDecision.HELD),
-        ({"payee_is_new": True, "amount_paise": 4_999_900}, PaymentDecision.RELEASED),
+        ({"payee_is_new": True, "amount_paise": 4_999_999}, PaymentDecision.RELEASED),
         ({"device_is_new": True, "amount_paise": 1_000_000}, PaymentDecision.HELD),
-        ({"device_is_new": True, "amount_paise": 999_900}, PaymentDecision.RELEASED),
+        ({"device_is_new": True, "amount_paise": 999_999}, PaymentDecision.RELEASED),
         ({"channel": "UPI_COLLECT_APPROVAL", "amount_paise": 2_500_000}, PaymentDecision.HELD),
-        ({"channel": "UPI_COLLECT_APPROVAL", "amount_paise": 2_499_900}, PaymentDecision.RELEASED),
+        ({"channel": "UPI_COLLECT_APPROVAL", "amount_paise": 2_499_999}, PaymentDecision.RELEASED),
         ({"amount_paise": 50_000_000}, PaymentDecision.RELEASED),
     ],
 )
@@ -180,3 +180,21 @@ def test_b1_config_matches_the_spec(config: GeneratorConfig) -> None:
         b1.hold_new_device_min_inr,
         b1.hold_collect_approval_min_inr,
     ) == (50_000, 10_000, 25_000)
+
+
+def test_exported_floats_are_platform_independent(test_dataset: Dataset) -> None:
+    """FR-SIM-01: floats keep 6 decimals, so C-library last-bit differences never reach the
+    export (docs/14 §3)."""
+    floats = [
+        value
+        for rows in canonical_tables(test_dataset).values()
+        for row in rows
+        for value in row.values()
+        if isinstance(value, float)
+    ]
+    assert floats
+    assert all(value == round(value, 6) for value in floats)
+    assert all(
+        t.session_duration_s == round(t.session_duration_s, 6)
+        for t in test_dataset.history.telemetry
+    )

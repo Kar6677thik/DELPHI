@@ -62,6 +62,8 @@ class PopulationConfig(_Frozen):
     account_tenure_years: Range
     opening_balance_inr: LogNormal
     home_city: dict[str, dict[str, float]]
+    known_device_min_age_days: int = Field(ge=0)
+    external_counterparty_income_band: str
 
     @model_validator(mode="after")
     def _distributions(self) -> PopulationConfig:
@@ -75,12 +77,14 @@ class PopulationConfig(_Frozen):
             raise ValueError("home_city must cover every language")
         if set(self.income_amount_scale) != set(self.income_band):
             raise ValueError("income_amount_scale must cover every income band")
+        if self.external_counterparty_income_band not in self.income_band:
+            raise ValueError("external_counterparty_income_band must be an income band")
         return self
 
 
 class MerchantConfig(_Frozen):
     per_customer: float = Field(gt=0)
-    hospital_share: Probability
+    hospital_one_in: int = Field(ge=1)
     categories: dict[str, float]
 
     @model_validator(mode="after")
@@ -99,6 +103,7 @@ class GenuineRoutineConfig(_Frozen):
     salary_inr: LogNormal
     salary_hour: Range
     payroll_opening_balance_inr: int = Field(gt=0)
+    payroll_account_age_days: int = Field(ge=0)
 
     @model_validator(mode="after")
     def _shapes(self) -> GenuineRoutineConfig:

@@ -28,8 +28,6 @@ FULL_KYC = "FULL"
 _PAISE_PER_INR = 100
 _DAYS_PER_YEAR = 365
 _SECONDS_PER_DAY = 86_400
-# Known devices were first seen at least this long before the history starts.
-_KNOWN_DEVICE_MIN_AGE_DAYS = 30
 _FINGERPRINT_BYTES = 16
 
 
@@ -157,7 +155,7 @@ class _Builder:
     def merchants(self) -> None:
         rng = keyed_rng(self.spec.seed, "merchants")
         count = round(self.spec.customers * self.merchant_cfg.per_customer)
-        hospitals = round(count * self.merchant_cfg.hospital_share)
+        hospitals = round(count / self.merchant_cfg.hospital_one_in)
         for i in range(count):
             category = HOSPITAL if i < hospitals else _choice(rng, self.merchant_cfg.categories)
             bank_code = self._bank(rng)
@@ -205,7 +203,7 @@ class _Builder:
             opened_at=self._opened_at(rng),
             kyc_level=FULL_KYC,
             status=ACTIVE,
-            balance_paise=self._balance(rng, "MID"),
+            balance_paise=self._balance(rng, self.cfg.external_counterparty_income_band),
             phone_number=f"+917{index:09d}",
             vpa=f"person{index:06d}@{bank_code.lower()}",
         )
@@ -249,7 +247,7 @@ class _Builder:
                 vpa=f"customer{i:06d}@dlph",
             )
         )
-        known_until = self.start - timedelta(days=_KNOWN_DEVICE_MIN_AGE_DAYS)
+        known_until = self.start - timedelta(days=cfg.known_device_min_age_days)
         device_counts = {str(k): v for k, v in cfg.device_count.items()}
         for _ in range(int(_choice(rng, device_counts))):
             devices.append(
@@ -263,14 +261,14 @@ class _Builder:
             )
         chosen: set[UUID] = set()
         count = int(rng.integers(int(cfg.payee_count.min), int(cfg.payee_count.max) + 1))
-        for k in range(count):
+        while len(chosen) < count:
             payee_type = _choice(rng, cfg.payee_type)
             if payee_type == "FAMILY":
-                account_id, label = self._family_payee(rng, i, k)
+                account_id, label = self._family_payee(rng, i, len(chosen))
             else:
                 account_id, label = self._merchant_payee(rng, payee_type)
             if account_id in chosen:
-                continue  # a customer saves each beneficiary once (unique per customer)
+                continue  # a customer saves each beneficiary once: draw again
             chosen.add(account_id)
             payees.append(
                 Payee(

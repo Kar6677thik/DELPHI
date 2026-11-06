@@ -18,6 +18,7 @@ import numpy as np
 from delphi.kb.model import ClassifierThresholds
 from delphi.sim.generator_config import TelemetryShape
 from delphi.sim.response_models import SignalDraw
+from delphi.sim.rng import quantise
 
 # A normal session's cadence z stays strictly below the mismatch threshold by this margin.
 _BELOW_THRESHOLD = 1e-6
@@ -64,16 +65,16 @@ def render_telemetry(
     screen_share = remote and u_screen < shape.screen_share_share
     return SessionTelemetry(
         payment_id=payment_id,
-        typing_cadence_z=float(
+        typing_cadence_z=quantise(
             z_threshold + excess_z
             if signals.cadence_mismatch
             else min(normal_z, z_threshold - _BELOW_THRESHOLD)
         ),
         paste_on_account_field=bool(paste),
-        max_field_dwell_s=float(dwell_threshold + extra_dwell if long_dwell else normal_dwell),
+        max_field_dwell_s=quantise(dwell_threshold + extra_dwell if long_dwell else normal_dwell),
         remote_access_active=bool(remote and not screen_share),
         screen_share_active=bool(screen_share),
         on_call=signals.on_call_unknown_number,
         call_counterparty_known=False if signals.on_call_unknown_number else None,
-        session_duration_s=float(duration),
+        session_duration_s=quantise(duration),
     )

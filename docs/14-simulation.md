@@ -67,7 +67,8 @@ from its own stream, `keyed_rng(seed, "customer", i)`, and the merchants from
 - **Devices** are ANDROID 0.85 / IOS 0.15. Every device is first seen at least 30 days before the
   history starts, so none looks new; new-device events come with the payments.
 - **Payees:** 3–15 (uniform count) of type family 0.4, utility 0.2, merchant 0.4, all saved
-  before the history starts. A family payee is another customer's `DLPH` account with
+  before the history starts. A beneficiary drawn twice is drawn again, so every customer has
+  exactly its drawn count. A family payee is another customer's `DLPH` account with
   probability 0.7, else a new personal account at an external bank. Utility and merchant payees
   are merchant accounts; hospitals are never established payees (paying one is
   `GENUINE_UNUSUAL`). Zipf weights apply when payments pick a payee.
@@ -79,8 +80,10 @@ from its own stream, `keyed_rng(seed, "customer", i)`, and the merchants from
   `customer000042@dlph`. No real-looking personal data.
 
 The `test` profile's canonical export (`delphi.sim.export`: rows sorted by id, canonical JSON,
-no database-assigned columns) has its SHA-256 recorded per `generator_version` in
-`sim/config/dataset_hashes.yaml`. A unit test regenerates it on every push.
+no database-assigned columns, floats to 6 decimals) has its SHA-256 recorded per
+`generator_version` in `sim/config/dataset_hashes.yaml`. Generated floats are rounded to 6
+decimals at the source as well, because `exp` and `log` can differ in the last bit between
+C libraries. A unit test regenerates it on every push.
 
 ## 4. Scenarios
 

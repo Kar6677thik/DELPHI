@@ -97,7 +97,7 @@ def test_devices_and_payees(demo: Population) -> None:
     assert max(d.first_seen_at for d in demo.devices) < demo.history_start - timedelta(days=7)
 
     per_customer = Counter(p.customer_id for p in demo.payees)
-    assert min(per_customer.values()) >= 1 and max(per_customer.values()) <= 15
+    assert min(per_customer.values()) >= 3 and max(per_customer.values()) <= 15  # docs/14 §3
     pairs = [(p.customer_id, p.account_id) for p in demo.payees]
     assert len(pairs) == len(set(pairs))  # unique(customer_id, account_id)
     accounts = {a.id: a for a in demo.accounts}

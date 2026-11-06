@@ -26,11 +26,13 @@ def decide_b1(
 ) -> PaymentDecision:
     if payee_listed:
         return PaymentDecision.DECLINED
-    amount_inr = amount_paise / _PAISE_PER_INR
     if (
-        (payee_is_new and amount_inr >= config.hold_new_payee_min_inr)
-        or (device_is_new and amount_inr >= config.hold_new_device_min_inr)
-        or (channel == COLLECT_APPROVAL and amount_inr >= config.hold_collect_approval_min_inr)
+        (payee_is_new and amount_paise >= config.hold_new_payee_min_inr * _PAISE_PER_INR)
+        or (device_is_new and amount_paise >= config.hold_new_device_min_inr * _PAISE_PER_INR)
+        or (
+            channel == COLLECT_APPROVAL
+            and amount_paise >= config.hold_collect_approval_min_inr * _PAISE_PER_INR
+        )
     ):
         return PaymentDecision.HELD
     return PaymentDecision.RELEASED

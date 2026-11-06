@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from delphi.sim.dataset import Dataset
+from delphi.sim.rng import quantise
 
 if TYPE_CHECKING:
     from _typeshed import DataclassInstance
@@ -35,6 +36,8 @@ def _value(value: object) -> object:
         return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
     if isinstance(value, dict):
         return {k: _value(v) for k, v in value.items()}
+    if isinstance(value, float):
+        return quantise(value)
     return value
 
 

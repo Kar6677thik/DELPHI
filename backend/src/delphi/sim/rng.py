@@ -13,6 +13,15 @@ import numpy as np
 
 _KEY_WORDS = 4  # 128 bits of the name hash, as four 32-bit spawn-key words
 _WORD_BYTES = 4
+# Generated floats keep 6 decimals (docs/14 §3, canonical export): math.exp and friends can
+# differ in the last bit between C libraries, and the dataset must be identical on every
+# platform (FR-SIM-01).
+FLOAT_DECIMALS = 6
+
+
+def quantise(value: float) -> float:
+    """``value`` to the generator's float precision, the same on every platform."""
+    return round(value, FLOAT_DECIMALS)
 
 
 def keyed_rng(seed: int, *names: str) -> np.random.Generator:

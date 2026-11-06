@@ -165,7 +165,8 @@ class _Planner:
                 bank_code=bank,
                 is_merchant=False,
                 merchant_category=None,
-                opened_at=population.history_start - timedelta(days=3650),
+                opened_at=population.history_start
+                - timedelta(days=self.routine.payroll_account_age_days),
                 kyc_level=FULL_KYC,
                 status=ACTIVE,
                 balance_paise=self.routine.payroll_opening_balance_inr * _PAISE_PER_INR,

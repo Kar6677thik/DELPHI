@@ -23,6 +23,7 @@ population:
   income_amount_scale: {LOW: 0.5, MID: 1.0, HIGH: 3.0}   # docs/14
   consent_call_status_probability: 0.70   # docs/14
   device_count: {1: 0.8, 2: 0.2}          # docs/14
+  known_device_min_age_days: 30           # gap: a known device is ≥ 30 days old at the start
   payee_count: {min: 3, max: 15}          # docs/14; uniform count (gap)
   # docs/14: 70% of counterparties at DLPH, the rest spread over XBK1–XBK5 (evenly: gap).
   counterparty_home_bank_share: 0.70
@@ -32,6 +33,7 @@ population:
   device_os: {ANDROID: 0.85, IOS: 0.15}
   payee_type: {FAMILY: 0.40, UTILITY: 0.20, MERCHANT: 0.40}
   account_tenure_years: {min: 1, max: 10}  # uniform, before history start
+  external_counterparty_income_band: MID  # external family payees' balances scale like MID
   # Log-normal opening balance, median × the income band's amount scale.
   opening_balance_inr: {median: 40000, sigma: 1.0}
   home_city:
@@ -44,7 +46,7 @@ merchants:
   # docs/14 §3: 300 (demo) / 3,000 (eval), 20 of them hospitals on demo: 0.15 per customer,
   # 1 in 15 a hospital, on every profile.
   per_customer: 0.15
-  hospital_share: 0.0666667
+  hospital_one_in: 15
   # The other categories (gap); docs/14 §4 names wedding vendors and property tokens.
   categories: {GROCERY: 0.25, UTILITY: 0.20, RETAIL: 0.20, FUEL: 0.10, TELECOM: 0.10,
                EDUCATION: 0.07, WEDDING_VENDOR: 0.04, PROPERTY: 0.04}
@@ -72,6 +74,7 @@ genuine_routine:
   salary_inr: {median: 30000, sigma: 0.4}
   salary_hour: {min: 10, max: 12}
   payroll_opening_balance_inr: 10000000000
+  payroll_account_age_days: 3650           # payroll accounts are ten years old
 
 # How a session's §5.1 signals become session_telemetry values (gaps). The values are placed
 # on the right side of the KB's classifier thresholds (kb/engine.yaml `classifiers`), so the
