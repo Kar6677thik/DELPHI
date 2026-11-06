@@ -8,6 +8,15 @@ upgrade changes them, `test_committed_freeze_matches_kb_v1_and_config` fails eve
 input changed. Then either keep the previous numpy, or regenerate with
 `uv run delphi sim freeze-response-models`, bump `generator_version` and record the upgrade here.
 
+## 11
+
+- The demo personas (docs/14 §6, #19), from `sim/config/personas.yaml`: Kamala, Arjun, Ravi
+  and the 15 S-4 victims after the generated customers; Kamala's fresh XBK2 payee and Ring-7
+  after the generated rings; Sunrise Multispeciality Hospital standing in for the first
+  hospital; FRI LOW where the stories need it; the story scripts. On `demo` by default; `test`
+  and `eval` are unchanged without them (the `test` hash is the same as version 10's).
+- No history fraud reaches a persona or a scripted ring.
+
 ## 10
 
 - The simulated external systems (docs/14 §9, #19): every phone number gets an FRI category in

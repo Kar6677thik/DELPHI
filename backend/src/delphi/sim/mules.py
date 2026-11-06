@@ -25,6 +25,7 @@ import numpy as np
 from delphi.sim.generator_config import GeneratorConfig
 from delphi.sim.ids import IdStream
 from delphi.sim.labels import MULE, LabelSource, ScheduledLabel, SubjectType
+from delphi.sim.persona_config import PersonaConfig, PersonaRing
 from delphi.sim.population import (
     ACTIVE,
     FULL_KYC,
@@ -49,6 +50,7 @@ class MuleRing:
     id: UUID
     layers: tuple[tuple[UUID, ...], ...]  # account ids per layer, layer 1 first
     shared_fingerprint: str | None  # the device shared by ≥ 3 home-bank mules, if any
+    persona_key: str | None = None  # a scripted demo ring (docs/14 §6), kept out of the history
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,7 +132,12 @@ class _RingBuilder:
         return banks
 
     def _account(
-        self, rng: np.random.Generator, bank: str, customer_id: UUID | None, index: int
+        self,
+        rng: np.random.Generator,
+        bank: str,
+        customer_id: UUID | None,
+        index: int,
+        script: PersonaRing | None = None,
     ) -> Account:
         days = self.cfg.opened_days_before_history
         opened_days = days.min + (days.max - days.min) * rng.random()
@@ -140,14 +147,20 @@ class _RingBuilder:
             balance.median * _PAISE_PER_INR * float(np.exp(balance.sigma * rng.standard_normal()))
         )
         home = customer_id is not None
+        opened_at = self.pop.history_start - timedelta(seconds=int(opened_days * 86_400))
+        kyc_level = MINIMAL_KYC if rng.random() < self.cfg.minimal_kyc_share else FULL_KYC
+        if script is not None and script.opened_days_before_end is not None:
+            opened_at = self.pop.history_end - timedelta(days=script.opened_days_before_end)
+        if script is not None and script.kyc_level is not None:
+            kyc_level = script.kyc_level
         return Account(
             id=self.ids["mule_account"].next(),
             customer_id=customer_id,
             bank_code=bank,
             is_merchant=False,
             merchant_category=None,
-            opened_at=self.pop.history_start - timedelta(seconds=int(opened_days * 86_400)),
-            kyc_level=MINIMAL_KYC if rng.random() < self.cfg.minimal_kyc_share else FULL_KYC,
+            opened_at=opened_at,
+            kyc_level=kyc_level,
             status=ACTIVE,
             balance_paise=max(1, round(paise)),
             phone_number=f"+919{index:09d}" if home else f"+917{index:09d}",
@@ -183,14 +196,43 @@ class _RingBuilder:
             home = banks.count(HOME_BANK)
             sharers = int(rng.integers(cfg.shared_device_min_accounts, home + 1))
             fingerprint = rng.bytes(_FINGERPRINT_BYTES).hex()
-        layers: list[tuple[UUID, ...]] = []
+        by_layer = []
         position = 0
-        for layer, layer_size in enumerate(_layer_sizes(size, n_layers), start=1):
+        for layer_size in _layer_sizes(size, n_layers):
+            by_layer.append(banks[position : position + layer_size])
+            position += layer_size
+        layers = self._build(rng, ring_id, by_layer, shared=(sharers, fingerprint))
+        return MuleRing(ring_id, layers, fingerprint)
+
+    def persona_ring(self, script: PersonaRing) -> MuleRing:
+        """A scripted demo ring (docs/14 §6): its banks layer by layer are fixed; its accounts
+        are drawn like any mule's, from ``keyed_rng(seed, "persona_ring", key)``."""
+        rng = keyed_rng(self.seed, "persona_ring", script.key)
+        ring_id = self.ids["mule_ring"].next()
+        banks = [list(layer) for layer in script.layers]
+        home = sum(layer.count(HOME_BANK) for layer in banks)
+        fingerprint = rng.bytes(_FINGERPRINT_BYTES).hex() if script.shared_device else None
+        sharing = (home if fingerprint else 0, fingerprint)
+        layers = self._build(rng, ring_id, banks, shared=sharing, script=script)
+        return MuleRing(ring_id, layers, fingerprint, persona_key=script.key)
+
+    def _build(
+        self,
+        rng: np.random.Generator,
+        ring_id: UUID,
+        banks_by_layer: list[list[str]],
+        *,
+        shared: tuple[int, str | None],  # how many home-bank mules share which fingerprint
+        script: PersonaRing | None = None,
+    ) -> tuple[tuple[UUID, ...], ...]:
+        sharers, fingerprint = shared
+        layers: list[tuple[UUID, ...]] = []
+        for layer, banks in enumerate(banks_by_layer, start=1):
             ids = []
-            for bank in banks[position : position + layer_size]:
+            for bank in banks:
                 if bank == HOME_BANK:
                     customer = self._customer(rng, self.next_customer)
-                    account = self._account(rng, bank, customer.id, self.next_customer)
+                    account = self._account(rng, bank, customer.id, self.next_customer, script)
                     self.next_customer += 1
                     self.customers.append(customer)
                     shares = sharers > 0
@@ -209,14 +251,13 @@ class _RingBuilder:
                         )
                     )
                 else:
-                    account = self._account(rng, bank, None, self.next_external)
+                    account = self._account(rng, bank, None, self.next_external, script)
                     self.next_external += 1
                 self.accounts.append(account)
                 self.truth.append(AccountTruth(account.id, True, ring_id, layer))
                 ids.append(account.id)
-            position += layer_size
             layers.append(tuple(ids))
-        return MuleRing(ring_id, tuple(layers), fingerprint)
+        return tuple(layers)
 
 
 def _false_listings(
@@ -243,10 +284,16 @@ def _false_listings(
     return listings, labels
 
 
-def generate_mule_network(config: GeneratorConfig, population: Population) -> MuleNetwork:
-    """The profile's mule rings, and the registry's false listings of genuine accounts."""
+def generate_mule_network(
+    config: GeneratorConfig, population: Population, personas: PersonaConfig | None = None
+) -> MuleNetwork:
+    """The profile's mule rings, then the personas' scripted rings (docs/14 §6), and the
+    registry's false listings of genuine accounts."""
     builder = _RingBuilder(config, population)
-    rings = tuple(builder.ring(r) for r in range(ring_count(config, len(population.customers))))
+    generated = sum(c.persona_key is None for c in population.customers)
+    rings = tuple(builder.ring(r) for r in range(ring_count(config, generated)))
+    if personas is not None:
+        rings += tuple(builder.persona_ring(script) for script in personas.rings)
     listings, labels = _false_listings(config, population)
     return MuleNetwork(
         rings=rings,

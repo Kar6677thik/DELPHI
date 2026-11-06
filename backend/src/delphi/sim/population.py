@@ -19,6 +19,7 @@ import numpy as np
 
 from delphi.sim.generator_config import GeneratorConfig
 from delphi.sim.ids import IdStream
+from delphi.sim.persona_config import PersonaConfig, PersonaCustomer
 from delphi.sim.rng import keyed_rng
 
 HOME_BANK = "DLPH"
@@ -119,7 +120,12 @@ def _between(rng: np.random.Generator, start: datetime, end: datetime) -> dateti
 
 class _Builder:
     def __init__(
-        self, config: GeneratorConfig, profile: str, end: datetime, vulnerable_age: int
+        self,
+        config: GeneratorConfig,
+        profile: str,
+        end: datetime,
+        vulnerable_age: int,
+        persona_count: int = 0,
     ) -> None:
         self.cfg = config.population
         self.merchant_cfg = config.merchants
@@ -133,7 +139,10 @@ class _Builder:
             kind: IdStream(seed, kind)
             for kind in ("customer", "merchant_account", "external_account", "device", "payee")
         }
-        self.customer_account_ids = IdStream(seed, "customer_account").take(self.spec.customers)
+        # Persona customers come after the generated ones, so their ids never shift those.
+        self.customer_account_ids = IdStream(seed, "customer_account").take(
+            self.spec.customers + persona_count
+        )
         self.accounts: list[Account] = []
         self.merchants_by_category: dict[str, list[UUID]] = {}
         self.external_count = 0
@@ -211,8 +220,17 @@ class _Builder:
         self.accounts.append(account)
         return account.id, label
 
-    def customer(self, i: int, devices: list[Device], payees: list[Payee]) -> Customer:
+    def customer(
+        self,
+        i: int,
+        devices: list[Device],
+        payees: list[Payee],
+        persona: PersonaCustomer | str | None = None,
+    ) -> Customer:
+        """Customer ``i``. A persona (docs/14 §6) makes the same draws, then takes its scripted
+        values where each one is used; a bare key only names the customer (S-4 victims)."""
         cfg = self.cfg
+        script = persona if isinstance(persona, PersonaCustomer) else None
         rng = keyed_rng(self.spec.seed, "customer", str(i))
         band = int(_choice(rng, {str(b): p for b, (_, _, p) in enumerate(cfg.age_bands)}))
         low, high, _ = cfg.age_bands[band]
@@ -232,7 +250,13 @@ class _Builder:
             consent_call_status=bool(rng.random() < cfg.consent_call_status_probability),
             home_city=_choice(rng, cfg.home_city[language]),
         )
+        if persona is not None:
+            customer = _scripted(customer, persona, self.vulnerable_age)
         opened_at = self._opened_at(rng)
+        balance = self._balance(rng, income_band)  # drawn for everyone, so draws stay aligned
+        if script is not None:
+            opened_at = self.end - timedelta(days=script.tenure_years * _DAYS_PER_YEAR)
+            balance = script.opening_balance_inr * _PAISE_PER_INR
         self.accounts.append(
             Account(
                 id=self.customer_account_ids[i],
@@ -243,14 +267,15 @@ class _Builder:
                 opened_at=opened_at,
                 kyc_level=FULL_KYC,
                 status=ACTIVE,
-                balance_paise=self._balance(rng, income_band),
+                balance_paise=balance,
                 phone_number=f"+919{i:09d}",
                 vpa=f"customer{i:06d}@dlph",
             )
         )
         known_until = self.start - timedelta(days=cfg.known_device_min_age_days)
         device_counts = {str(k): v for k, v in cfg.device_count.items()}
-        for _ in range(int(_choice(rng, device_counts))):
+        device_count = int(_choice(rng, device_counts))
+        for _ in range(script.devices if script is not None else device_count):
             devices.append(
                 Device(
                     id=self.ids["device"].next(),
@@ -283,6 +308,23 @@ class _Builder:
         return customer
 
 
+def _scripted(customer: Customer, persona: PersonaCustomer | str, vulnerable_age: int) -> Customer:
+    if isinstance(persona, str):
+        return replace(customer, persona_key=persona)
+    return replace(
+        customer,
+        display_name=persona.display_name,
+        age=persona.age,
+        language=persona.language,
+        home_city=persona.home_city,
+        income_band=persona.income_band,
+        consent_call_status=persona.consent_call_status,
+        disability_flag=False,
+        is_vulnerable=persona.age >= vulnerable_age,
+        persona_key=persona.key,
+    )
+
+
 def _with_minimal_kyc(config: GeneratorConfig, seed: int, accounts: list[Account]) -> list[Account]:
     """A share of genuine non-merchant accounts have MINIMAL KYC (owner decision on #49), each
     drawn from the account's own stream ``keyed_rng(seed, "kyc", account_id)``."""
@@ -296,20 +338,33 @@ def _with_minimal_kyc(config: GeneratorConfig, seed: int, accounts: list[Account
 
 
 def generate_population(
-    config: GeneratorConfig, profile: str, *, history_end: datetime, vulnerable_age: int
+    config: GeneratorConfig,
+    profile: str,
+    *,
+    history_end: datetime,
+    vulnerable_age: int,
+    personas: PersonaConfig | None = None,
 ) -> Population:
     """The profile's customers with their accounts, devices and established payees, plus the
     merchants and external counterparties they pay. ``vulnerable_age`` is the KB's
-    ``engine.vulnerable_age_threshold`` (docs/05 §1: vulnerable = age ≥ 70 or disability)."""
+    ``engine.vulnerable_age_threshold`` (docs/05 §1: vulnerable = age ≥ 70 or disability).
+
+    With ``personas``, the demo personas (docs/14 §6) follow the generated customers, so the
+    generated customers are the same with or without them."""
     if profile not in config.profiles:
         raise ValueError(f"unknown profile {profile!r}")
-    builder = _Builder(config, profile, history_end, vulnerable_age)
+    scripted: list[PersonaCustomer | str] = []
+    if personas is not None:
+        scripted = [*personas.customers, *personas.keys[len(personas.customers) :]]
+    builder = _Builder(config, profile, history_end, vulnerable_age, len(scripted))
     builder.merchants()
     customers: list[Customer] = []
     devices: list[Device] = []
     payees: list[Payee] = []
     for i in range(builder.spec.customers):
         customers.append(builder.customer(i, devices, payees))
+    for k, persona in enumerate(scripted):
+        customers.append(builder.customer(builder.spec.customers + k, devices, payees, persona))
     return Population(
         profile=profile,
         history_start=builder.start,

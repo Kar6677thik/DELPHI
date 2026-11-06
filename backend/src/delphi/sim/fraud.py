@@ -106,13 +106,17 @@ class _Planner:
         self.saved: dict[tuple[UUID, UUID], int] = {}  # index into payees
         self.payee_count = Counter(p.customer_id for p in population.payees)
         older = config.fraud.digital_arrest.older_age
-        customers = list(enumerate(population.customers))
+        # Personas are scripted (docs/14 §6): no fraud happens to them or through their rings
+        # before their story, so the S-4 victims have "no history of the scam" (§8).
+        customers = [(i, c) for i, c in enumerate(population.customers) if c.persona_key is None]
+        self.victims = [i for i, _ in customers]
         self.older = [i for i, c in customers if c.age >= older]
         self.younger = [i for i, c in customers if c.age < older]
+        self.rings = [r for r in network.rings if r.persona_key is None]
 
     def _mule(self, rng: np.random.Generator) -> tuple[UUID, UUID]:
         """A ring, and one of its layer-1 accounts."""
-        ring = self.network.rings[int(rng.integers(len(self.network.rings)))]
+        ring = self.rings[int(rng.integers(len(self.rings)))]
         layer = ring.layers[0]
         return ring.id, layer[int(rng.integers(len(layer)))]
 
@@ -151,7 +155,7 @@ class _Planner:
 
     def ato(self, rng: np.random.Generator) -> int:
         cfg = self.cfg.ato
-        index = int(rng.integers(len(self.pop.customers)))
+        index = self.victims[int(rng.integers(len(self.victims)))]
         customer = self.pop.customers[index]
         login_at = self._start(rng, timedelta(minutes=cfg.window_minutes))
         kind = _choice(rng, cfg.kind)
@@ -237,7 +241,7 @@ class _Planner:
 
     def investment(self, rng: np.random.Generator, coached_share: float) -> int:
         cfg = self.cfg.investment
-        index = int(rng.integers(len(self.pop.customers)))
+        index = self.victims[int(rng.integers(len(self.victims)))]
         customer = self.pop.customers[index]
         span = min(timedelta(days=_uniform(rng, cfg.span_days)), self.end - self.start)
         start = self._start(rng, span)
@@ -287,7 +291,7 @@ class _Planner:
         """The hidden UPI_COLLECT_REFUND scenario (docs/14 §4): the victim approves a collect
         request from a layer-1 mule, believing it is a refund; ₹2k–₹50k, log-uniform."""
         cfg = self.config.collect_refund
-        index = int(rng.integers(len(self.pop.customers)))
+        index = self.victims[int(rng.integers(len(self.victims)))]
         customer = self.pop.customers[index]
         at = _between(rng, self.start, self.end)
         ring, mule = self._mule(rng)
