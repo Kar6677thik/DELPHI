@@ -77,10 +77,18 @@ Choices the list above leaves open:
 
 - Enums are CHECKed where doc 05 fixes the values: `language`, `income_band`, `bank_code`,
   `kyc_level`, payment `channel`, `status` and `origin`, complaint `channel`, `sim_phone_risk`
-  `category` (`VERY_HIGH|HIGH|MEDIUM|LOW`) and `sim_schedule.kind`. Value sets the spec does not
-  fix yet (account `status`, customer `segment`, complaint `category`, `merchant_category`,
-  device `os`, CRM `type`) are plain `text` until the generator (#17) fixes them and adds
-  their CHECKs.
+  `category` (`VERY_HIGH|HIGH|MEDIUM|LOW`) and `sim_schedule.kind`. Migration 0003 adds CHECKs
+  for the value sets the generator fixes (#17, `sim/config/generator.yaml`):
+  - customer `segment`: `RETAIL`
+  - `merchant_category`: the nine categories of doc 14 §3
+  - device `os`: `ANDROID|IOS`
+  - CRM `type`: `SIM_SWAP_REPORTED|DEVICE_LOST_REPORTED`
+  - complaint `category`: `UNAUTHORISED_TRANSACTION|DIGITAL_ARREST_SCAM|INVESTMENT_SCAM`
+
+  Account `status` stays plain `text`: the freeze and lien states are Chase's to define (M6).
+  A new value widens its CHECK in a later migration.
+- `delphi.sim.writer` bulk-inserts a generated dataset through the Core tables in foreign-key
+  order, in one transaction, as `delphi_sim`.
 - `payments.scheduled_by → sim_schedule`; `ip_prefix24` is a `cidr` /24; `balance_paise`,
   `balance_after_paise ≥ 0`; `delta_paise ≠ 0`.
 - `login_events`, `crm_events` and `ledger_entries` are event logs: `at` is their creation time.

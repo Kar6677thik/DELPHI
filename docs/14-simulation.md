@@ -256,8 +256,36 @@ review pending):
   money it is listed with probability 0.4, from
   `keyed_rng(seed, "mule_listing", account_id)`, at its first fraud credit plus the §7 registry
   delay. B1 declines payments to it from then on.
-- **Not yet.** Flows due after the history ends are not generated yet; the live/eval window
-  carries them on.
+- **After the history.** A payment of a flow that falls due after the history ends is not
+  made here. It becomes a `bank.sim_schedule` TRANSFER row (payload: payer, payee, amount,
+  channel, `reason: MULE_FORWARDING`, the flow and whether it is a session), which `SIM_TICK`
+  (§8) or the evaluation replay makes when it falls due.
+
+**The live/eval window** (`window_days`: 3 on `test`, 30 on `eval`; `demo` has an open-ended
+live window and no generated one) is generated with the history, as one stream every policy
+replays (doc 22 §1). This design is proposed in the last #17 PR, for the owner's review.
+
+- **Planning.** Customers plan straight through the window, with the same rates, habits and
+  payees.
+- **Fraud scenarios.** The window has its own fraud scenarios at their rates against the
+  window's genuine sessions, from `keyed_rng(seed, "window", "fraud", scenario)` and their own
+  id streams. **UPI_COLLECT_REFUND** runs here only (10 per 10,000):
+  - one `UPI_COLLECT_APPROVAL` payment per victim, ₹2k–₹50k log-uniform
+  - requested by a layer-1 mule
+  - an unknown-number call in 60% of cases (its §5.1 target)
+- **Undecided.** Every window session is a `PENDING_GUARDIAN` payment with origin `SIM_LIVE`,
+  with telemetry, a login and ground truth. No policy has decided it, so there is no ledger
+  entry and no label. An amount that depends on a balance uses the balance at the end of the
+  history. Investment fees use the window's planned deposits.
+- **Not in the stream.** The window holds no MULE_FORWARDING sessions: they follow from what
+  each policy releases, so the replay generates them with `delphi.sim.forwarding`. The
+  window's salaries are TRANSFER rows (`reason: SALARY`).
+- **Stats.** `delphi.sim.stats` (`delphi sim stats --profile`) reports sessions per 10,000 per
+  scenario for the history and the window, against these rates. The #17 acceptance check (±10%
+  on `eval`, a `slow` test) uses:
+  - the history for every scenario except UPI_COLLECT_REFUND
+  - the window for every scenario except MULE_FORWARDING
+  - the history's share of credited mules listed (0.4)
 
 ## 5. Response models (the simulator's truth)
 
@@ -372,7 +400,9 @@ How the model applies the table (`delphi.sim.labels`, numbers in `sim/config/lab
 
 The worker runs a `SIM_TICK` job every 10 s (wall clock). It:
 
-1. Advances scheduled mule-network transfers whose due time has passed (time-scaled).
+1. Advances scheduled mule-network transfers whose due time has passed (time-scaled): the
+   `bank.sim_schedule` TRANSFER rows the generator leaves for flows still in flight when the
+   history ends (§4).
 2. Emits background live payments at `demo_background_rate` (default 1 every 20 s), through
    Guardian with `SimCustomerChannel` (runner `WORKER`), so the monitor always shows traffic and
    shadow mode accumulates sessions.

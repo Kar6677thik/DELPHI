@@ -13,6 +13,7 @@ The module also draws genuine customers' background CRM events, from
 
 from __future__ import annotations
 
+import math
 from collections import Counter
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
@@ -76,14 +77,25 @@ def _count(rng: np.random.Generator, r: Range) -> int:
 
 
 class _Planner:
-    def __init__(self, config: GeneratorConfig, population: Population, network: MuleNetwork):
+    def __init__(
+        self,
+        config: GeneratorConfig,
+        population: Population,
+        network: MuleNetwork,
+        span: tuple[datetime, datetime],
+        stream: str,
+    ):
+        self.start, self.end = span
+        self.stream = stream
+        self.saved_before: frozenset[tuple[UUID, UUID]] = frozenset()
         self.cfg = config.fraud
         self.config = config
         self.pop = population
         self.network = network
         self.seed = config.profiles[population.profile].seed
         self.ids = {
-            kind: IdStream(self.seed, kind)
+            # The window's ids come from their own streams, so they never meet the history's.
+            kind: IdStream(self.seed, kind if stream == "history" else f"{stream}_{kind}")
             for kind in ("fraud_instance", "fraud_device", "fraud_payee", "crm_event")
         }
         self.sessions: list[FraudSession] = []
@@ -108,7 +120,9 @@ class _Planner:
         """A victim saves each mule payee once, at the earliest instance that pays it. The
         label follows the genuine scheme for a person ("Family N", N its place among the
         customer's payees), so nothing in `bank.payees` marks a mule out."""
-        at = max(at, self.pop.history_start)
+        at = max(at, self.start)
+        if (customer.id, account) in self.saved_before:
+            return  # saved during the history already
         index = self.saved.get((customer.id, account))
         if index is None:
             self.saved[customer.id, account] = len(self.payees)
@@ -133,11 +147,7 @@ class _Planner:
         return instance.id
 
     def _start(self, rng: np.random.Generator, span: timedelta) -> datetime:
-        return _between(
-            rng,
-            self.pop.history_start,
-            max(self.pop.history_end - span, self.pop.history_start + timedelta(seconds=1)),
-        )
+        return _between(rng, self.start, max(self.end - span, self.start + timedelta(seconds=1)))
 
     def ato(self, rng: np.random.Generator) -> int:
         cfg = self.cfg.ato
@@ -152,7 +162,7 @@ class _Planner:
                     self.ids["crm_event"].next(),
                     customer.id,
                     SIM_SWAP_REPORTED,
-                    max(login_at - lead, self.pop.history_start),
+                    max(login_at - lead, self.start),
                 )
             )
         device = Device(
@@ -229,8 +239,7 @@ class _Planner:
         cfg = self.cfg.investment
         index = int(rng.integers(len(self.pop.customers)))
         customer = self.pop.customers[index]
-        history = self.pop.history_end - self.pop.history_start
-        span = min(timedelta(days=_uniform(rng, cfg.span_days)), history)
+        span = min(timedelta(days=_uniform(rng, cfg.span_days)), self.end - self.start)
         start = self._start(rng, span)
         ring, platform = self._mule(rng)
         coached = bool(rng.random() < coached_share)
@@ -274,6 +283,31 @@ class _Planner:
             )
         return deposits + fees
 
+    def collect_refund(self, rng: np.random.Generator) -> int:
+        """The hidden UPI_COLLECT_REFUND scenario (docs/14 §4): the victim approves a collect
+        request from a layer-1 mule, believing it is a refund; ₹2k–₹50k, log-uniform."""
+        cfg = self.config.collect_refund
+        index = int(rng.integers(len(self.pop.customers)))
+        customer = self.pop.customers[index]
+        at = _between(rng, self.start, self.end)
+        ring, mule = self._mule(rng)
+        instance = self._instance(ScenarioType.UPI_COLLECT_REFUND, customer, ring, at)
+        low, high = math.log(cfg.amount_inr.min), math.log(cfg.amount_inr.max)
+        rupees = math.exp(low + (high - low) * rng.random())
+        self.sessions.append(
+            FraudSession(
+                ScenarioType.UPI_COLLECT_REFUND,
+                index,
+                mule,
+                at,
+                cfg.channel,
+                instance,
+                coached=False,
+                amount_paise=round(rupees) * _PAISE_PER_INR,
+            )
+        )
+        return 1
+
     def background_crm(self) -> None:
         cfg = self.config.crm
         for i, customer in enumerate(self.pop.customers):
@@ -281,7 +315,7 @@ class _Planner:
             at = self.pop.history_start
             while True:
                 at += timedelta(days=float(rng.exponential(cfg.background_mean_days)))
-                if at >= self.pop.history_end:
+                if at >= self.end:
                     break
                 self.crm.append(
                     CrmEvent(self.ids["crm_event"].next(), customer.id, _choice(rng, cfg.types), at)
@@ -295,27 +329,44 @@ def plan_fraud(
     *,
     genuine_sessions: int,
     coached_share: float,
+    window: tuple[datetime, datetime] | None = None,
+    saved: frozenset[tuple[UUID, UUID]] = frozenset(),
 ) -> FraudPlan:
-    """The history's fraud victims, scaled to ``genuine_sessions`` (the planned genuine
-    customer sessions), and the customers' background CRM events. ``coached_share`` is the
-    response models' share of well-coached DA and INV victims (docs/14 §5.2)."""
-    planner = _Planner(config, population, network)
-    planner.background_crm()
-    for scenario in _VICTIM_SCENARIOS:
-        target = round(
-            genuine_sessions
-            * config.fraud.rate_per_10k[scenario.value]
-            / config.fraud.genuine_rate_per_10k
+    """The fraud victims, scaled to ``genuine_sessions`` (the genuine customer sessions made).
+    ``coached_share`` is the response models' share of well-coached DA and INV victims
+    (docs/14 §5.2).
+
+    Without ``window`` this plans the history, plus the customers' background CRM events. With
+    ``window`` (start, end) it plans the live/eval window instead, from ``"window"``-prefixed
+    streams, and adds the window-only UPI_COLLECT_REFUND scenario."""
+    span = window or (population.history_start, population.history_end)
+    stream = "window" if window else "history"
+    planner = _Planner(config, population, network, span, stream)
+    planner.saved_before = saved  # (customer, account) pairs already saved as payees
+    if window is None:
+        planner.background_crm()
+    scenarios = (
+        (*_VICTIM_SCENARIOS, ScenarioType.UPI_COLLECT_REFUND) if window else _VICTIM_SCENARIOS
+    )
+    for scenario in scenarios:
+        rate = (
+            config.collect_refund.rate_per_10k
+            if scenario is ScenarioType.UPI_COLLECT_REFUND
+            else config.fraud.rate_per_10k[scenario.value]
         )
-        rng = keyed_rng(planner.seed, "fraud", scenario.value)
+        target = round(genuine_sessions * rate / config.fraud.genuine_rate_per_10k)
+        names = ("fraud", scenario.value) if window is None else ("window", "fraud", scenario.value)
+        rng = keyed_rng(planner.seed, *names)
         planned = 0
         while planned < target:
             if scenario is ScenarioType.ATO:
                 planned += planner.ato(rng)
             elif scenario is ScenarioType.APP_DIGITAL_ARREST:
                 planned += planner.digital_arrest(rng, coached_share)
-            else:
+            elif scenario is ScenarioType.APP_INVESTMENT:
                 planned += planner.investment(rng, coached_share)
+            else:
+                planned += planner.collect_refund(rng)
     return FraudPlan(
         sessions=tuple(planner.sessions),
         instances=tuple(planner.instances),

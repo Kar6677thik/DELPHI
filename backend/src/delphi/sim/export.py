@@ -47,8 +47,12 @@ def _rows(items: Iterable[DataclassInstance], key: Callable[[Row], Any]) -> list
     return sorted(({k: _value(v) for k, v in asdict(item).items()} for item in items), key=key)
 
 
-def canonical_tables(dataset: Dataset) -> dict[str, list[Row]]:
+def dataset_records(dataset: Dataset) -> dict[str, list[DataclassInstance]]:
+    """Every generated row, per `bank` / `sim_truth` table, in no particular order. Accounts
+    carry their end-of-history balances; the live/eval window's undecided sessions join the
+    history's payments, telemetry, logins and truth."""
     pop, network, history = dataset.population, dataset.network, dataset.history
+    window = history.window
     accounts = [
         replace(a, balance_paise=history.balances[a.id])
         for a in (
@@ -58,34 +62,50 @@ def canonical_tables(dataset: Dataset) -> dict[str, list[Row]]:
             *history.cash_out_accounts,
         )
     ]
-    by_id: Callable[[Row], Any] = lambda row: row["id"]  # noqa: E731
-    by_account: Callable[[Row], Any] = lambda row: row["account_id"]  # noqa: E731
     # docs/14 §8: the bank sees a listing only once it is made; until then it lives only in
     # sim_truth.label_schedule.
     listed = [
         r for r in (*network.listings, *history.registry_listings) if r.listed_at < pop.history_end
     ]
     return {
-        "customers": _rows((*pop.customers, *network.customers), by_id),
-        "accounts": _rows(accounts, by_id),
-        "devices": _rows((*pop.devices, *network.devices, *history.devices), by_id),
-        "sim_registry_listings": _rows(listed, by_account),
-        "account_truth": _rows(dataset.account_truth, by_account),
-        "payees": _rows((*pop.payees, *history.payees), by_id),
-        "login_events": _rows(history.logins, by_id),
-        "crm_events": _rows(history.crm_events, by_id),
-        "complaints": _rows(history.complaints, by_id),
-        "payments": _rows(history.payments, by_id),
-        "ledger_entries": _rows(
-            history.ledger, lambda r: (r["at"], r["payment_id"], r["account_id"])
-        ),
-        "session_telemetry": _rows(history.telemetry, lambda r: r["payment_id"]),
-        "scenario_instances": _rows(history.scenario_instances, by_id),
-        "payment_truth": _rows(history.payment_truth, lambda r: r["payment_id"]),
-        "label_schedule": _rows(
-            (*history.labels, *network.labels, *history.account_labels),
-            lambda r: (r["subject_type"], r["subject_id"], r["label_source"]),
-        ),
+        "customers": [*pop.customers, *network.customers],
+        "accounts": list(accounts),
+        "devices": [*pop.devices, *network.devices, *history.devices],
+        "payees": [*pop.payees, *history.payees],
+        "sim_registry_listings": list(listed),
+        "sim_schedule": list(history.schedule),
+        "payments": [*history.payments, *(window.payments if window else ())],
+        "ledger_entries": list(history.ledger),
+        "session_telemetry": [*history.telemetry, *(window.telemetry if window else ())],
+        "login_events": [*history.logins, *(window.logins if window else ())],
+        "crm_events": list(history.crm_events),
+        "complaints": list(history.complaints),
+        "scenario_instances": list(history.scenario_instances),
+        "payment_truth": [*history.payment_truth, *(window.payment_truth if window else ())],
+        "account_truth": list(dataset.account_truth),
+        "label_schedule": [*history.labels, *network.labels, *history.account_labels],
+    }
+
+
+def _by(*columns: str) -> Callable[[Row], Any]:
+    return lambda row: tuple(row[c] for c in columns)
+
+
+# The canonical order of each table's rows.
+_ORDER: dict[str, Callable[[Row], Any]] = {
+    "sim_registry_listings": _by("account_id"),
+    "account_truth": _by("account_id"),
+    "ledger_entries": _by("at", "payment_id", "account_id"),
+    "session_telemetry": _by("payment_id"),
+    "payment_truth": _by("payment_id"),
+    "label_schedule": _by("subject_type", "subject_id", "label_source"),
+}
+
+
+def canonical_tables(dataset: Dataset) -> dict[str, list[Row]]:
+    return {
+        table: _rows(items, _ORDER.get(table, _by("id")))
+        for table, items in dataset_records(dataset).items()
     }
 
 

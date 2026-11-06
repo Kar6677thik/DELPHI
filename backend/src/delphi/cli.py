@@ -1,5 +1,5 @@
 """The ``delphi`` command (docs/04 §4): ``api``, ``worker``, ``migrate``, ``openapi``,
-``kb validate`` and ``sim freeze-response-models``.
+``kb validate``, ``sim freeze-response-models`` and ``sim stats``.
 
 This module is the process entrypoint and the only importer of ``delphi.api``. Configuration
 errors exit with status 2 and a message naming the variable (fail fast, docs/24 §1).
@@ -12,6 +12,7 @@ import logging
 import sys
 import threading
 from collections.abc import Callable, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 
 import uvicorn
@@ -28,7 +29,10 @@ from delphi.platform.settings import Settings, SettingsError, load_settings
 from delphi.platform.wiring import build_platform
 from delphi.platform.worker import install_stop_handlers, run_worker
 from delphi.probes.registry import CLASSIFIER_NAMES
+from delphi.sim.dataset import generate_dataset
+from delphi.sim.generator_config import load_generator_config
 from delphi.sim.response_models import GENERATED_FILE, dump_yaml, freeze, load_config
+from delphi.sim.stats import dataset_stats, format_report
 
 EXIT_CONFIG_ERROR = 2
 # src/delphi/cli.py → the repository's kb/ (KB v1)
@@ -84,6 +88,16 @@ def _freeze_response_models(args: argparse.Namespace) -> int:
         return 0
     out.write_text(text, encoding="utf-8", newline="\n")
     print(f"wrote {out}")
+    return 0
+
+
+def _sim_stats(args: argparse.Namespace) -> int:
+    """Generate a profile in memory and print its stats report (docs/25 M2)."""
+    kb = load_and_validate(Path(args.kb), CLASSIFIER_NAMES)
+    config = load_generator_config()
+    created_at = datetime.now(UTC) if args.profile == "demo" else None
+    dataset = generate_dataset(config, args.profile, kb=kb, created_at=created_at)
+    print(format_report(dataset_stats(dataset, config)))
     return 0
 
 
@@ -177,6 +191,10 @@ def build_parser() -> argparse.ArgumentParser:
     frz.add_argument("--out", default=str(GENERATED_FILE))
     frz.add_argument("--check", action="store_true", help="fail if the file differs")
     frz.set_defaults(func=_freeze_response_models)
+    stats = sim.add_parser("stats", help="generate a profile and print its stats (docs/25 M2)")
+    stats.add_argument("--profile", default="test", choices=("test", "demo", "eval"))
+    stats.add_argument("--kb", default=str(_REPO_KB_DIR), help="KB v1 directory (default: kb/)")
+    stats.set_defaults(func=_sim_stats)
     return parser
 
 
