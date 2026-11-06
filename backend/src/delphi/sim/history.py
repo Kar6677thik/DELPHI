@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import bisect
 import math
+from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -35,7 +36,7 @@ from delphi.sim.labels import (
     ScheduledLabel,
     schedule_payment_labels,
 )
-from delphi.sim.legacy_policy import decide_b1
+from delphi.sim.legacy_policy import decide_b1, payee_is_new
 from delphi.sim.logins import LoginEvent, login_before
 from delphi.sim.population import ACTIVE, FULL_KYC, Account, Device, Payee, Population, _choice
 from delphi.sim.response_models import TelemetryTargets, draw_signals
@@ -171,6 +172,8 @@ class _Planner:
         self.login_ids = IdStream(self.seed, "login")
         self.new_devices: list[Device] = []
         self.new_payees: list[Payee] = []
+        # Merchants each customer saves during the history (a payee is saved only once).
+        self.saved_during: defaultdict[UUID, list[UUID]] = defaultdict(list)
         self.unusual_merchants = [
             a.id
             for a in population.accounts
@@ -255,6 +258,7 @@ class _Planner:
             city=self.cfg.cities[customer.home_city],
             session_at=at,
             lead_s=self.cfg.login_lead_s,
+            not_before=self.pop.history_start,
         )
         return _Intent(
             id=payment_id,
@@ -297,24 +301,31 @@ class _Planner:
             + rng.random() * (cfg.lead_minutes.max - cfg.lead_minutes.min)
         )
         kind = _choice(rng, cfg.kind)
-        saved = set(self.payees.get(customer.id, []))
+        start, end = self.pop.history_start, self.pop.history_end
+        if not start <= at < end:
+            return  # outside the history: no payment, so no payee or phone either
+        saved = self.payees.get(customer.id, [])
+        taken = {*saved, *self.saved_during[customer.id]}
+        options = [m for m in self.unusual_merchants if m not in taken]
+        if kind == "NEW_MERCHANT" and not options:
+            kind = "NEW_PHONE"  # every unusual merchant is saved already
         if kind == "NEW_MERCHANT":
-            options = [m for m in self.unusual_merchants if m not in saved]
             payee = options[int(rng.integers(len(options)))]
+            self.saved_during[customer.id].append(payee)
             self.new_payees.append(
                 Payee(
                     id=self.new_payee_ids.next(),
                     customer_id=customer.id,
                     account_id=payee,
                     label=(self.accounts[payee].merchant_category or "").title().replace("_", " "),
-                    added_at=at - lead,
+                    added_at=max(at - lead, start),
                 )
             )
             device = self._device_at(rng, original, phones, at)
         else:  # NEW_PHONE: a large payment to family from a phone first seen minutes ago
-            family = [a for a in saved if not self.accounts[a].is_merchant] or sorted(saved)
+            family = [a for a in saved if not self.accounts[a].is_merchant] or saved
             payee = family[int(rng.integers(len(family)))]
-            device = self._new_device(rng, customer.id, at - lead)
+            device = self._new_device(rng, customer.id, max(at - lead, start))
             phones.append(device)
         instance = ScenarioInstance(
             id=self.instance_ids.next(),
@@ -471,12 +482,8 @@ def generate_history(
     paid: set[tuple[UUID, UUID]] = set()
     for intent in intents:
         pair = (intent.payer, intent.payee)
-        added = saved_at.get(pair)
-        # docs/13 §3: a payee is new if saved < 24 h ago or never paid before. Payees saved
-        # before the history are established.
-        payee_is_new = added is None or (
-            added >= population.history_start
-            and (intent.at - added < timedelta(hours=24) or pair not in paid)
+        payee_new = payee_is_new(
+            config.legacy_policy, added_at=saved_at.get(pair), at=intent.at, ever_paid=pair in paid
         )
         device_is_new = (
             intent.device is not None and intent.at - first_seen[intent.device] < new_device
@@ -487,7 +494,7 @@ def generate_history(
                 amount_paise=intent.amount_paise,
                 channel=intent.channel,
                 payee_listed=False,
-                payee_is_new=payee_is_new,
+                payee_is_new=payee_new,
                 device_is_new=device_is_new,
             )
             if intent.decided

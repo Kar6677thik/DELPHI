@@ -91,6 +91,10 @@ legacy_policy:   # docs/22 §2, baseline B1
   hold_new_payee_min_inr: 50000
   hold_new_device_min_inr: 10000
   hold_collect_approval_min_inr: 25000
+  # docs/13 §3 is_new_payee: added < 24 h ago, or never paid and added within the 30-day
+  # behavioural-baseline window (docs/13 §3 "10 min, 24 h, 30 days, lifetime").
+  new_payee_hours: 24
+  payee_baseline_days: 30
 
 # docs/14 §4: GENUINE_UNUSUAL is 150 per 10,000 payments against GENUINE_ROUTINE's 9,700, so
 # each customer's unusual events run at its routine rate × 150 / 9,700.

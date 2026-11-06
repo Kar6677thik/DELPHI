@@ -42,7 +42,7 @@ Behavioural baseline windows ("behavioural twin"): 10 min, 24 h, 30 days, lifeti
 | `amount_ratio_max_lifetime` | amount / max lifetime payment | ✔ | ✔ |
 | `hour_sin`, `hour_cos` | local-time hour of day encoding | ✔ | ✔ |
 | `hour_deviation` | circular distance from the customer's median payment hour (hours) | ✔ | ✔ |
-| `is_new_payee` | payee added < 24 h ago or no earlier payment to it | ✔ | ✔ |
+| `is_new_payee` | payee added < 24 h ago, **or** no earlier payment to it **and** added within the 30-day baseline window | ✔ | ✔ |
 | `payee_age_days` | days since the payee was added (capped at 365) | ✔ | ✔ |
 | `payee_account_age_days` | days since the payee *account* was opened (capped at 3650) | ✔ | ✔ |
 | `payee_p_mule` | mule-scorer output for the payee account (as of `as_of`) | ✘ (probe input) | ✔ |

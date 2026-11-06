@@ -150,13 +150,18 @@ review pending):
     payee.
 
   The amount is log-normal, median ₹80,000 × the income scale, σ 0.7, by IMPS. 30% fall at
-  night (22:00–05:00 IST), the rest at the habitual hour.
+  night (22:00–05:00 IST), the rest at the habitual hour. A customer saves each merchant once:
+  a new merchant is one not saved before or during the history (if none is left, the event is
+  a new phone). An event that falls outside the history saves no payee and adds no phone. One
+  the customer cannot fund keeps its payee or phone: the payment failed, the set-up did not.
 - **New phones** (§3, once per 400 days) arrive as a Poisson process; later payments use the
   newest device.
-- **Logins.** Every customer session starts with a login 30–300 s earlier, from the session's
-  device (a stable synthetic `10.x.y.0/24` per device) in the home city.
-- **B1 inputs.** B1 sees a payee as new if it was saved < 24 h ago or has never been paid
-  (doc 13 §3; payees saved before the history are established). It sees a device as new if
+- **Logins.** Every customer session starts with a login 30–300 s earlier (never before the
+  history starts), from the session's device (a stable synthetic `10.x.y.0/24` per device) in
+  the home city. Saved times and new phones are likewise never before the history starts.
+- **B1 inputs.** B1 sees a payee as new by doc 13 §3's `is_new_payee`: saved < 24 h ago, or
+  never paid and saved within the 30-day baseline window (`legacy_policy.new_payee_hours` and
+  `payee_baseline_days`, the one place the simulator reads them from). It sees a device as new if
   first seen within the KB's `new_device_days`. So it holds most unusual payments, and those
   never get a label.
 

@@ -155,6 +155,8 @@ class LegacyPolicyConfig(_Frozen):
     hold_new_payee_min_inr: int = Field(gt=0)
     hold_new_device_min_inr: int = Field(gt=0)
     hold_collect_approval_min_inr: int = Field(gt=0)
+    new_payee_hours: int = Field(gt=0)
+    payee_baseline_days: int = Field(gt=0)
 
 
 class GeneratorConfig(_Frozen):

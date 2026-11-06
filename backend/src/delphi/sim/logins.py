@@ -51,7 +51,10 @@ def login_before(
     city: City,
     session_at: datetime,
     lead_s: Range,
+    not_before: datetime,
 ) -> LoginEvent:
+    """The login ``lead_s`` before the session, but never before ``not_before`` (the start
+    of the history)."""
     lead = lead_s.min + (lead_s.max - lead_s.min) * rng.random()
     return LoginEvent(
         id=login_id,
@@ -61,5 +64,5 @@ def login_before(
         lat=city.lat,
         lon=city.lon,
         city=city_name,
-        at=session_at - timedelta(seconds=int(lead)),
+        at=max(session_at - timedelta(seconds=int(lead)), not_before),
     )

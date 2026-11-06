@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import time
 from collections import Counter
+from datetime import timedelta
 from uuid import UUID
 
 import pytest
@@ -16,7 +17,7 @@ from delphi.sim.export import canonical_export, canonical_tables, dataset_sha256
 from delphi.sim.generator_config import GeneratorConfig, LegacyPolicyConfig, load_generator_config
 from delphi.sim.history import IST, Payment
 from delphi.sim.labels import LabelSource, PaymentDecision
-from delphi.sim.legacy_policy import decide_b1
+from delphi.sim.legacy_policy import decide_b1, payee_is_new
 from delphi.sim.response_models import CONFIG_DIR, load_config
 from delphi.sim.scenarios import ScenarioType
 from delphi.sim.telemetry import SessionTelemetry
@@ -165,6 +166,8 @@ def test_b1_follows_docs_22_section_2(kwargs: dict[str, object], decision: Payme
         hold_new_payee_min_inr=50_000,
         hold_new_device_min_inr=10_000,
         hold_collect_approval_min_inr=25_000,
+        new_payee_hours=24,
+        payee_baseline_days=30,
     )
     args: dict[str, object] = {
         "amount_paise": 100_000,
@@ -184,6 +187,7 @@ def test_b1_config_matches_the_spec(config: GeneratorConfig) -> None:
         b1.hold_new_device_min_inr,
         b1.hold_collect_approval_min_inr,
     ) == (50_000, 10_000, 25_000)
+    assert (b1.new_payee_hours, b1.payee_baseline_days) == (24, 30)  # docs/13 §3
 
 
 def test_exported_floats_are_platform_independent(test_dataset: Dataset) -> None:
@@ -264,3 +268,37 @@ def test_every_customer_session_starts_with_a_login(long_test: Dataset) -> None:
         assert login.city == home[login.customer_id]
         assert login.ip_prefix24.startswith("10.") and login.ip_prefix24.endswith(".0/24")
         assert prefixes.setdefault(login.device_id, login.ip_prefix24) == login.ip_prefix24
+
+
+@pytest.mark.parametrize(
+    ("added_days_ago", "ever_paid", "new"),
+    [
+        (31, False, False),  # saved over 30 days ago: established even if never paid
+        (2, False, True),  # saved 2 days ago and never paid: new
+        (2, True, False),
+        (0.5, True, True),  # saved < 24 h ago: new even if paid
+        (None, False, True),  # never saved
+    ],
+)
+def test_payee_newness_follows_docs_13_section_3(
+    config: GeneratorConfig, added_days_ago: float | None, ever_paid: bool, new: bool
+) -> None:
+    at = config.fixed_history_end
+    added = None if added_days_ago is None else at - timedelta(days=added_days_ago)
+    assert payee_is_new(config.legacy_policy, added_at=added, at=at, ever_paid=ever_paid) is new
+
+
+def test_each_payee_is_saved_once(long_test: Dataset) -> None:
+    """bank.payees is unique on (customer_id, account_id) (docs/17 §3)."""
+    pairs = [
+        (p.customer_id, p.account_id)
+        for p in (*long_test.population.payees, *long_test.history.payees)
+    ]
+    assert len(pairs) == len(set(pairs))
+
+
+def test_nothing_starts_before_the_history(long_test: Dataset) -> None:
+    start, history = long_test.population.history_start, long_test.history
+    assert all(login.at >= start for login in history.logins)
+    assert all(p.added_at >= start for p in history.payees)
+    assert all(d.first_seen_at >= start for d in history.devices)

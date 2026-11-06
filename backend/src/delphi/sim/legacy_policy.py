@@ -8,11 +8,26 @@ declined payment never gets a label (selective labels, docs/14 §7).
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
 from delphi.sim.generator_config import LegacyPolicyConfig
 from delphi.sim.labels import PaymentDecision
 
 COLLECT_APPROVAL = "UPI_COLLECT_APPROVAL"
 _PAISE_PER_INR = 100
+
+
+def payee_is_new(
+    config: LegacyPolicyConfig, *, added_at: datetime | None, at: datetime, ever_paid: bool
+) -> bool:
+    """docs/13 §3 ``is_new_payee``: added < 24 h ago, or never paid and added within the
+    30-day behavioural-baseline window. A payee that was never saved is new."""
+    if added_at is None:
+        return True
+    age = at - added_at
+    return age < timedelta(hours=config.new_payee_hours) or (
+        not ever_paid and age < timedelta(days=config.payee_baseline_days)
+    )
 
 
 def decide_b1(
