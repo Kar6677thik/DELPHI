@@ -123,14 +123,15 @@ mule_rings:
   shared_device_probability: 0.5            # docs/14, per ring
   shared_device_min_accounts: 3             # docs/14
   false_listing_share: 0.001                # docs/14, of genuine non-merchant accounts
-  # Gaps: one ring per 400 customers (at least 2); a mule banks at DLPH with probability 0.21,
-  # else at an external bank (evenly). 0.21 is calibrated so that home-bank mules' forwarding
-  # sessions come out at MULE_FORWARDING's 30 per 10,000 payments (docs/14 §4), measured over
-  # 50 rings. A home-bank mule is a young, low-income customer (docs/13 §6 features: account
+  # Gaps: one ring per 400 customers (at least 2); a mule banks at DLPH with probability 0.31,
+  # else at an external bank (evenly). 0.31 is calibrated on `eval` (50 rings at one per 400
+  # customers) so that home-bank mules' forwarding sessions come out at MULE_FORWARDING's 30
+  # per 10,000 payments (docs/14 §4): 0.21 → 23.2, 0.29 → 27.4, 0.30 → 29.0, 0.31 → 30.9,
+  # 0.34 → 36.1. A home-bank mule is a young, low-income customer (docs/13 §6 features: account
   # age, minimal KYC) with a small balance.
   customers_per_ring: 400
   min_rings: 2
-  home_bank_share: 0.21
+  home_bank_share: 0.31
   age: {min: 19, max: 35}
   minimal_kyc_share: 0.5
   opened_days_before_history: {min: 5, max: 400}

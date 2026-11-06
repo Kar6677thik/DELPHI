@@ -211,9 +211,11 @@ review pending):
   and layer count (1–4) are uniform. Its accounts are split over the layers as evenly as
   possible, with the extra accounts in layer 1. `sim_truth.account_truth` has a row for every
   account; only mules have `is_mule`, a `ring_id` and a `layer`.
-- **Banks.** A mule banks at `DLPH` with probability 0.21, else at an external bank (evenly). A
-  ring always spans at least two banks. The 0.21 is calibrated: home-bank mules' forwarding
-  sessions then come out at MULE_FORWARDING's 30 per 10,000 payments (measured over 50 rings).
+- **Banks.** A mule banks at `DLPH` with probability 0.31, else at an external bank (evenly). A
+  ring always spans at least two banks. The 0.31 is calibrated on `eval`: home-bank mules'
+  forwarding sessions then come out at MULE_FORWARDING's 30 per 10,000 payments (30.9). The
+  rate also depends on the ring load (one ring per 400 customers), the fraud rates, B1 and the
+  registry, so a change to any of them needs a re-calibration.
 - **Home-bank mules** are customers, numbered like the rest, so names, phones and VPAs give
   nothing away:
   - aged 19–35 (uniform), `LOW` income, no disability

@@ -18,6 +18,8 @@ input changed. Then either keep the previous numpy, or regenerate with
 - Mule-ring payments still in flight when the history ends, and the window's salaries, are
   `bank.sim_schedule` TRANSFER rows (docs/14 §8) instead of being dropped.
 - The canonical export covers `sim_schedule` and the window's rows.
+- The mule home-bank share is re-calibrated on `eval` to 0.31 (MULE_FORWARDING 30.9 per
+  10,000); the earlier 0.21 was measured with ten times fewer victims per ring.
 
 ## 8
 
