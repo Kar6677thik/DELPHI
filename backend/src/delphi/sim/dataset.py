@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from delphi.kb.model import KnowledgeBase
+from delphi.sim.external import PhoneRisk, phone_risk
 from delphi.sim.generator_config import GeneratorConfig, history_end
 from delphi.sim.history import History, generate_history
 from delphi.sim.labels import load_label_config
@@ -20,6 +21,7 @@ class Dataset:
     network: MuleNetwork
     history: History
     account_truth: tuple[AccountTruth, ...]  # one row per account
+    phone_risk: tuple[PhoneRisk, ...] = ()  # the FRI category of every phone (docs/14 §9)
 
 
 def generate_dataset(
@@ -48,4 +50,12 @@ def generate_dataset(
         *history.payroll_accounts,
         *history.cash_out_accounts,
     )
-    return Dataset(population, network, history, account_truth(network, accounts))
+    seed = config.profiles[profile].seed
+    mules = {a.id for a in network.accounts}
+    return Dataset(
+        population,
+        network,
+        history,
+        account_truth(network, accounts),
+        phone_risk(config, seed, accounts, mules),
+    )

@@ -33,6 +33,7 @@ _ORDER: tuple[Table, ...] = (
     bank.devices,
     bank.payees,
     bank.sim_registry_listings,
+    bank.sim_phone_risk,
     bank.sim_schedule,
     bank.payments,
     bank.ledger_entries,

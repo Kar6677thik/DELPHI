@@ -218,6 +218,20 @@ crm:
   background_mean_days: 500
   types: {SIM_SWAP_REPORTED: 0.5, DEVICE_LOST_REPORTED: 0.5}
 
+# The simulated external systems (docs/14 §9).
+external_systems:
+  fri:
+    # docs/14: numbers used by fraud rings → VERY_HIGH 0.35 / HIGH-MEDIUM 0.35 / LOW 0.30;
+    # genuine numbers → VERY_HIGH 0.005 / MEDIUM-HIGH 0.03. Gap: HIGH and MEDIUM split evenly.
+    ring_numbers: {VERY_HIGH: 0.35, HIGH: 0.175, MEDIUM: 0.175, LOW: 0.30}
+    genuine_numbers: {VERY_HIGH: 0.005, HIGH: 0.015, MEDIUM: 0.015, LOW: 0.965}
+  cfcfrms:
+    # docs/14: ack latency log-normal, median 20 min; 10% never acknowledged within 2 h.
+    # Gap: σ 0.8 (the label-delay spread); a drawn latency past 2 h also counts as never.
+    ack_minutes: {median: 20, sigma: 0.8}
+    never_ack_share: 0.10
+    ack_deadline_minutes: 120
+
 # docs/14 §3: a genuine new-device event happens once per 400 days on average. Later payments
 # use the newest device.
 new_device_mean_days: 400

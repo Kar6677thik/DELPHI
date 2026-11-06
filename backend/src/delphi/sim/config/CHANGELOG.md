@@ -8,6 +8,13 @@ upgrade changes them, `test_committed_freeze_matches_kb_v1_and_config` fails eve
 input changed. Then either keep the previous numpy, or regenerate with
 `uv run delphi sim freeze-response-models`, bump `generator_version` and record the upgrade here.
 
+## 10
+
+- The simulated external systems (docs/14 §9, #19): every phone number gets an FRI category in
+  `bank.sim_phone_risk` (ring numbers VERY_HIGH 0.35 / HIGH-MEDIUM 0.35 / LOW 0.30; genuine
+  VERY_HIGH 0.005 / MEDIUM-HIGH 0.03), plus the CFCFRMS acknowledgement sampler (median
+  20 min, about 10% never within 2 h) and the customer-outreach-call sampler.
+
 ## 9
 
 - The live/eval window (`test` 3 days, `eval` 30): customers plan through it with the same
