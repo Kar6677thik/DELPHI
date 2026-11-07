@@ -1,0 +1,159 @@
+"""The generator's configuration, `sim/config/generator.yaml` (docs/14 §2–4, #17)."""
+
+from __future__ import annotations
+
+import math
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Annotated
+
+import yaml
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from delphi.sim.response_models import CONFIG_DIR
+
+GENERATOR_CONFIG_FILE = CONFIG_DIR / "generator.yaml"
+
+Probability = Annotated[float, Field(ge=0, le=1)]
+
+
+class _Frozen(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+
+def _distribution(weights: dict[str, float], where: str) -> dict[str, float]:
+    if not weights or min(weights.values()) < 0 or not math.isclose(sum(weights.values()), 1):
+        raise ValueError(f"{where} must be a probability distribution")
+    return weights
+
+
+class ProfileConfig(_Frozen):
+    customers: int = Field(ge=1)
+    history_days: int = Field(ge=1)
+    maturity_days: int = Field(ge=1)
+    window_days: int | None = Field(default=None, ge=1)
+    seed: int = Field(ge=0)
+
+
+class Range(_Frozen):
+    min: float
+    max: float
+
+
+class LogNormal(_Frozen):
+    median: float = Field(gt=0)
+    sigma: float = Field(gt=0)
+
+
+class PopulationConfig(_Frozen):
+    age_bands: tuple[tuple[int, int, Probability], ...]
+    language: dict[str, float]
+    disability_probability: Probability
+    income_band: dict[str, float]
+    income_amount_scale: dict[str, float]
+    consent_call_status_probability: Probability
+    device_count: dict[int, float]
+    payee_count: Range
+    counterparty_home_bank_share: Probability
+    external_banks: tuple[str, ...]
+    segment: str
+    device_os: dict[str, float]
+    payee_type: dict[str, float]
+    account_tenure_years: Range
+    opening_balance_inr: LogNormal
+    home_city: dict[str, dict[str, float]]
+    known_device_min_age_days: int = Field(ge=0)
+    external_counterparty_income_band: str
+
+    @model_validator(mode="after")
+    def _distributions(self) -> PopulationConfig:
+        _distribution({str(b): p for b, (_, _, p) in enumerate(self.age_bands)}, "age_bands")
+        for name in ("language", "income_band", "device_os", "payee_type"):
+            _distribution(getattr(self, name), name)
+        _distribution({str(k): v for k, v in self.device_count.items()}, "device_count")
+        for language, cities in self.home_city.items():
+            _distribution(cities, f"home_city.{language}")
+        if set(self.home_city) != set(self.language):
+            raise ValueError("home_city must cover every language")
+        if set(self.income_amount_scale) != set(self.income_band):
+            raise ValueError("income_amount_scale must cover every income band")
+        if self.external_counterparty_income_band not in self.income_band:
+            raise ValueError("external_counterparty_income_band must be an income band")
+        return self
+
+
+class MerchantConfig(_Frozen):
+    per_customer: float = Field(gt=0)
+    hospital_one_in: int = Field(ge=1)
+    categories: dict[str, float]
+
+    @model_validator(mode="after")
+    def _categories(self) -> MerchantConfig:
+        _distribution(self.categories, "merchants.categories")
+        return self
+
+
+class GenuineRoutineConfig(_Frozen):
+    daily_rate_gamma: dict[str, float]
+    zipf_exponent: float = Field(ge=0)
+    amount_inr: dict[str, LogNormal]
+    habitual_hour: Range
+    hour_sd: float = Field(gt=0)
+    channel: dict[str, dict[str, float]]
+    salary_inr: LogNormal
+    salary_hour: Range
+    payroll_opening_balance_inr: int = Field(gt=0)
+    payroll_account_age_days: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def _shapes(self) -> GenuineRoutineConfig:
+        if set(self.daily_rate_gamma) != {"shape", "scale"}:
+            raise ValueError("daily_rate_gamma needs shape and scale")
+        for payee_type, channels in self.channel.items():
+            _distribution(channels, f"genuine_routine.channel.{payee_type}")
+        if set(self.channel) != set(self.amount_inr):
+            raise ValueError("genuine_routine needs a channel mix and an amount per payee type")
+        return self
+
+
+class TelemetryShape(_Frozen):
+    paste_share: Probability
+    screen_share_share: Probability
+    normal_dwell_s: Range
+    long_dwell_extra_s: LogNormal
+    cadence_excess_z: float = Field(gt=0)
+    session_duration_s: LogNormal
+
+
+class LegacyPolicyConfig(_Frozen):
+    """Baseline B1 (docs/22 §2)."""
+
+    hold_new_payee_min_inr: int = Field(gt=0)
+    hold_new_device_min_inr: int = Field(gt=0)
+    hold_collect_approval_min_inr: int = Field(gt=0)
+
+
+class GeneratorConfig(_Frozen):
+    profiles: dict[str, ProfileConfig]
+    fixed_history_end: datetime
+    population: PopulationConfig
+    merchants: MerchantConfig
+    genuine_routine: GenuineRoutineConfig
+    telemetry: TelemetryShape
+    legacy_policy: LegacyPolicyConfig
+
+
+def load_generator_config(path: Path = GENERATOR_CONFIG_FILE) -> GeneratorConfig:
+    return GeneratorConfig.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
+
+
+def history_end(
+    config: GeneratorConfig, profile: str, *, created_at: datetime | None = None
+) -> datetime:
+    """docs/14 §2: demo ends its history when the dataset is created; eval and test at a fixed
+    virtual epoch, so their datasets are byte-identical on every run."""
+    if profile == "demo":
+        if created_at is None:
+            raise ValueError("the demo profile's history ends at its creation time")
+        return created_at.astimezone(UTC)
+    return config.fixed_history_end.astimezone(UTC)

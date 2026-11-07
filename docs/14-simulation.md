@@ -67,7 +67,8 @@ from its own stream, `keyed_rng(seed, "customer", i)`, and the merchants from
 - **Devices** are ANDROID 0.85 / IOS 0.15. Every device is first seen at least 30 days before the
   history starts, so none looks new; new-device events come with the payments.
 - **Payees:** 3–15 (uniform count) of type family 0.4, utility 0.2, merchant 0.4, all saved
-  before the history starts. A family payee is another customer's `DLPH` account with
+  before the history starts. A beneficiary drawn twice is drawn again, so every customer has
+  exactly its drawn count. A family payee is another customer's `DLPH` account with
   probability 0.7, else a new personal account at an external bank. Utility and merchant payees
   are merchant accounts; hospitals are never established payees (paying one is
   `GENUINE_UNUSUAL`). Zipf weights apply when payments pick a payee.
@@ -79,8 +80,10 @@ from its own stream, `keyed_rng(seed, "customer", i)`, and the merchants from
   `customer000042@dlph`. No real-looking personal data.
 
 The `test` profile's canonical export (`delphi.sim.export`: rows sorted by id, canonical JSON,
-no database-assigned columns) has its SHA-256 recorded per `generator_version` in
-`sim/config/dataset_hashes.yaml`. A unit test regenerates it on every push.
+no database-assigned columns, floats to 6 decimals) has its SHA-256 recorded per
+`generator_version` in `sim/config/dataset_hashes.yaml`. Generated floats are rounded to 6
+decimals at the source as well, because `exp` and `log` can differ in the last bit between
+C libraries. A unit test regenerates it on every push.
 
 ## 4. Scenarios
 
@@ -106,6 +109,39 @@ suspect registry after a lag (§7). False listings: 0.1% of genuine accounts.
 
 **History period:** the same scenarios at the same rates, decided by a simulated **legacy
 policy** (= baseline B1, doc 22 §2). This produces selective labels in the training data.
+
+`delphi.sim.history` generates the history's genuine payments; numbers are in
+`sim/config/generator.yaml`. Where the table above is silent, it uses these values (owner
+review pending):
+
+- **Planning.** Each customer plans from its own stream, `keyed_rng(seed, "routine", i)`: a daily
+  rate λ ~ Gamma(shape 2, scale 0.3), so 0.6 a day on average, and Poisson counts per local
+  (IST) day.
+- **Payee choice:** Zipf weights 1 / rank over the customer's payees.
+- **Amounts** are log-normal per payee type × the income band's scale: family median ₹2,000
+  (σ 0.9), utility ₹800 (σ 0.6), merchant ₹600 (σ 1.0).
+- **Timing and channel.** Each customer has a habitual hour, uniform over 08–21 IST; each
+  payment falls at that hour + N(0, 1.5 h). Channels by payee type: family UPI_PUSH 0.80 /
+  IMPS 0.15 / NEFT 0.05; utility UPI_PUSH 0.60 / NEFT 0.40; merchant UPI_PUSH.
+- **Salary.** Every customer gets a monthly salary on the 1st, 10:00–12:00 IST, by NEFT, from a
+  payroll account at one of the external banks. The amount is log-normal, median ₹30,000 ×
+  the income scale, σ 0.4. Salaries are not customer sessions: no telemetry, no B1, no labels.
+- **Session telemetry** comes from the scenario's §5.1 signals, placed on the intended side of
+  the KB's classifier thresholds:
+  - half the paste/long-dwell sessions paste; the rest dwell 20 s plus a log-normal extra
+    (median 15 s)
+  - normal dwell is uniform over 1–12 s
+  - cadence-mismatch z is 3.0 plus an exponential excess (mean 1); otherwise N(0, 1), kept below
+    3.0
+  - 30% of remote-access sessions are screen shares
+  - session duration is log-normal, median 45 s, σ 0.5
+- **Decisions.** Every customer payment goes through B1:
+  - **RELEASE:** executed at once (docs/05 §3), with a double-entry ledger. A payment the payer
+    cannot fund is not made.
+  - **HOLD:** stays `HELD`; nothing investigates it, so it never gets a label.
+  - **DECLINE:** ends `DECLINED`.
+
+  Labels are scheduled by `schedule_payment_labels` (§7).
 
 ## 5. Response models (the simulator's truth)
 

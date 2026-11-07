@@ -12,20 +12,14 @@ from __future__ import annotations
 import bisect
 import math
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
-from pathlib import Path
-from typing import Annotated
+from datetime import datetime, timedelta
 from uuid import UUID
 
 import numpy as np
-import yaml
-from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from delphi.sim.generator_config import GeneratorConfig
 from delphi.sim.ids import IdStream
-from delphi.sim.response_models import CONFIG_DIR
 from delphi.sim.rng import keyed_rng
-
-GENERATOR_CONFIG_FILE = CONFIG_DIR / "generator.yaml"
 
 HOME_BANK = "DLPH"
 HOSPITAL = "HOSPITAL"
@@ -34,109 +28,7 @@ FULL_KYC = "FULL"
 _PAISE_PER_INR = 100
 _DAYS_PER_YEAR = 365
 _SECONDS_PER_DAY = 86_400
-# Known devices were first seen at least this long before the history starts.
-_KNOWN_DEVICE_MIN_AGE_DAYS = 30
 _FINGERPRINT_BYTES = 16
-
-Probability = Annotated[float, Field(ge=0, le=1)]
-
-
-# --------------------------------------------------------------------------- configuration
-
-
-class _Frozen(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-
-def _distribution(weights: dict[str, float], where: str) -> dict[str, float]:
-    if not weights or min(weights.values()) < 0 or not math.isclose(sum(weights.values()), 1):
-        raise ValueError(f"{where} must be a probability distribution")
-    return weights
-
-
-class ProfileConfig(_Frozen):
-    customers: int = Field(ge=1)
-    history_days: int = Field(ge=1)
-    maturity_days: int = Field(ge=1)
-    window_days: int | None = Field(default=None, ge=1)
-    seed: int = Field(ge=0)
-
-
-class Range(_Frozen):
-    min: float
-    max: float
-
-
-class LogNormal(_Frozen):
-    median: float = Field(gt=0)
-    sigma: float = Field(gt=0)
-
-
-class PopulationConfig(_Frozen):
-    age_bands: tuple[tuple[int, int, Probability], ...]
-    language: dict[str, float]
-    disability_probability: Probability
-    income_band: dict[str, float]
-    income_amount_scale: dict[str, float]
-    consent_call_status_probability: Probability
-    device_count: dict[int, float]
-    payee_count: Range
-    counterparty_home_bank_share: Probability
-    external_banks: tuple[str, ...]
-    segment: str
-    device_os: dict[str, float]
-    payee_type: dict[str, float]
-    account_tenure_years: Range
-    opening_balance_inr: LogNormal
-    home_city: dict[str, dict[str, float]]
-
-    @model_validator(mode="after")
-    def _distributions(self) -> PopulationConfig:
-        _distribution({str(b): p for b, (_, _, p) in enumerate(self.age_bands)}, "age_bands")
-        for name in ("language", "income_band", "device_os", "payee_type"):
-            _distribution(getattr(self, name), name)
-        _distribution({str(k): v for k, v in self.device_count.items()}, "device_count")
-        for language, cities in self.home_city.items():
-            _distribution(cities, f"home_city.{language}")
-        if set(self.home_city) != set(self.language):
-            raise ValueError("home_city must cover every language")
-        if set(self.income_amount_scale) != set(self.income_band):
-            raise ValueError("income_amount_scale must cover every income band")
-        return self
-
-
-class MerchantConfig(_Frozen):
-    per_customer: float = Field(gt=0)
-    hospital_share: Probability
-    categories: dict[str, float]
-
-    @model_validator(mode="after")
-    def _categories(self) -> MerchantConfig:
-        _distribution(self.categories, "merchants.categories")
-        return self
-
-
-class GeneratorConfig(_Frozen):
-    profiles: dict[str, ProfileConfig]
-    fixed_history_end: datetime
-    population: PopulationConfig
-    merchants: MerchantConfig
-
-
-def load_generator_config(path: Path = GENERATOR_CONFIG_FILE) -> GeneratorConfig:
-    return GeneratorConfig.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
-
-
-def history_end(
-    config: GeneratorConfig, profile: str, *, created_at: datetime | None = None
-) -> datetime:
-    """docs/14 §2: demo ends its history when the dataset is created; eval and test at a fixed
-    virtual epoch, so their datasets are byte-identical on every run."""
-    if profile == "demo":
-        if created_at is None:
-            raise ValueError("the demo profile's history ends at its creation time")
-        return created_at.astimezone(UTC)
-    return config.fixed_history_end.astimezone(UTC)
 
 
 # --------------------------------------------------------------------------- the entities
@@ -263,7 +155,7 @@ class _Builder:
     def merchants(self) -> None:
         rng = keyed_rng(self.spec.seed, "merchants")
         count = round(self.spec.customers * self.merchant_cfg.per_customer)
-        hospitals = round(count * self.merchant_cfg.hospital_share)
+        hospitals = round(count / self.merchant_cfg.hospital_one_in)
         for i in range(count):
             category = HOSPITAL if i < hospitals else _choice(rng, self.merchant_cfg.categories)
             bank_code = self._bank(rng)
@@ -311,7 +203,7 @@ class _Builder:
             opened_at=self._opened_at(rng),
             kyc_level=FULL_KYC,
             status=ACTIVE,
-            balance_paise=self._balance(rng, "MID"),
+            balance_paise=self._balance(rng, self.cfg.external_counterparty_income_band),
             phone_number=f"+917{index:09d}",
             vpa=f"person{index:06d}@{bank_code.lower()}",
         )
@@ -355,7 +247,7 @@ class _Builder:
                 vpa=f"customer{i:06d}@dlph",
             )
         )
-        known_until = self.start - timedelta(days=_KNOWN_DEVICE_MIN_AGE_DAYS)
+        known_until = self.start - timedelta(days=cfg.known_device_min_age_days)
         device_counts = {str(k): v for k, v in cfg.device_count.items()}
         for _ in range(int(_choice(rng, device_counts))):
             devices.append(
@@ -369,14 +261,14 @@ class _Builder:
             )
         chosen: set[UUID] = set()
         count = int(rng.integers(int(cfg.payee_count.min), int(cfg.payee_count.max) + 1))
-        for k in range(count):
+        while len(chosen) < count:
             payee_type = _choice(rng, cfg.payee_type)
             if payee_type == "FAMILY":
-                account_id, label = self._family_payee(rng, i, k)
+                account_id, label = self._family_payee(rng, i, len(chosen))
             else:
                 account_id, label = self._merchant_payee(rng, payee_type)
             if account_id in chosen:
-                continue  # a customer saves each beneficiary once (unique per customer)
+                continue  # a customer saves each beneficiary once: draw again
             chosen.add(account_id)
             payees.append(
                 Payee(
