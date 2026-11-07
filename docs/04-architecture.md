@@ -154,6 +154,30 @@ the job's `idempotency_key` and upsert their results (EFG §19). The worker runs
 concurrently. `SIM_TICK` and `CHASE_RETRACE` have their own lane, so long jobs cannot starve
 them.
 
+**Runner rules** (`delphi.platform.jobs`, `delphi.platform.worker`):
+
+- **Claim:** one statement, `UPDATE … WHERE id = (SELECT … FOR UPDATE SKIP LOCKED LIMIT 1)`. It
+  takes the due job with the earliest `run_after` (then `created_at`) among the types this lane
+  has handlers for. Due means QUEUED with `run_after` ≤ now, or RUNNING with an expired lease
+  and attempts left (its worker died). Claiming increments `attempts`.
+- **Lease:** `locked_until = now + job_lease_s` (60 s). A background thread renews it every
+  third of the lease while the handler runs, and progress reports also renew it. Every write
+  after the claim is guarded by `locked_by = <worker slot> AND status = RUNNING`, so a worker
+  that lost its lease cannot overwrite the job.
+- **Failure:** an exception sends the job back to QUEUED with `run_after = now + 30 s · 2^(attempt−1)`
+  (`job_retry_backoff_s`) while attempts remain (`max_attempts`, default 3). After that it is
+  FAILED. A job whose worker dies on its last attempt is set to FAILED by the scheduler loop
+  once its lease expires.
+- **Types:** `JobType` lists every type below. A worker claims only the types it has a handler
+  for, so a type whose feature has not shipped stays QUEUED instead of failing.
+- **Slots:** `worker_default_concurrency` (2) default-lane slots and `worker_fast_concurrency`
+  (1) fast-lane slot (SIM_TICK, CHASE_RETRACE). Each polls every `worker_poll_interval_s` (1 s)
+  when idle.
+- **Shutdown:** on SIGTERM each slot finishes its current job and exits. A job cut off by
+  SIGKILL is claimed again after its lease expires.
+- **Health:** the worker's `GET :9000/health` returns 200 while every loop (the slots and the
+  scheduler) has beaten within `worker_heartbeat_max_age_s` (30 s), else 503 (doc 20 §3).
+
 **On-demand job types:**
 
 | Type | Enqueued by |
@@ -174,7 +198,10 @@ them.
 | `DEMO_RESET` | `POST /admin/demo/reset` |
 
 **Recurring jobs.** A scheduler loop in the worker enqueues these with idempotency key
-`<TYPE>:<slot start ISO>`, so a slot runs once even with restarts or two workers:
+`<TYPE>:<slot start ISO>`, so a slot runs once even with restarts or two workers. Interval
+slots are aligned to the Unix epoch; daily slots are IST wall-clock times. After an outage
+only the current slot is enqueued, because every recurring job works on whatever is due now.
+A type is scheduled only once its handler is registered:
 
 | Type | Interval | Does |
 |---|---|---|

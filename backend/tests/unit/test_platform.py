@@ -180,10 +180,12 @@ def test_worker_stops_on_request_and_releases_the_pool() -> None:
     from delphi.platform.wiring import build_platform
     from delphi.platform.worker import run_worker
 
-    settings = Settings(database_url="postgresql://nobody:x@127.0.0.1:1/none")
+    settings = Settings(
+        database_url="postgresql://nobody:x@127.0.0.1:1/none", worker_poll_interval_s=0.01
+    )
     platform = build_platform(settings, process="worker")
     stop = threading.Event()
     timer = threading.Timer(0.05, stop.set)
     timer.start()
-    run_worker(platform, stop, heartbeat_s=0.01)  # returns once stop is set
+    run_worker(platform, stop, serve_health=False)  # returns once stop is set
     assert stop.is_set()
