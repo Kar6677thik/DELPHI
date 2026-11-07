@@ -75,7 +75,8 @@ def _get(url: str) -> tuple[int, dict[str, object]]:
 
 
 def test_worker_health_reflects_loop_heartbeats() -> None:
-    beats = Heartbeats(max_age_s=0.2)
+    # Generous margins: a loaded CI machine must not turn a fresh beat stale mid-request.
+    beats = Heartbeats(max_age_s=1.0)
     server = _health_server(0, beats, "abc123")
     port = server.server_address[1]
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -85,7 +86,7 @@ def test_worker_health_reflects_loop_heartbeats() -> None:
         beats.beat("default-0")
         status, body = _get(url)
         assert status == 200 and body["version"] == "abc123"
-        time.sleep(0.3)
+        time.sleep(1.5)
         status, body = _get(url)
         assert status == 503 and body["stale"] == ["default-0"]
     finally:

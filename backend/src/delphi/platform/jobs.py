@@ -386,3 +386,56 @@ class JobRegistry:
 
     def types(self, lane: Lane) -> frozenset[JobType]:
         return frozenset(t for t in self.handlers if lane_of(t) is lane)
+
+
+@dataclass(frozen=True, slots=True)
+class JobRecord:
+    """A job as the api shows it (docs/16 §2, GET /jobs/{id})."""
+
+    id: UUID
+    type: str
+    status: str
+    progress: float
+    result: Mapping[str, Any] | None
+    error: str | None
+    attempts: int
+    created_at: datetime
+    finished_at: datetime | None
+
+
+_RECORD_COLUMNS = (
+    jobs.c.id,
+    jobs.c.type,
+    jobs.c.status,
+    jobs.c.progress,
+    jobs.c.result,
+    jobs.c.error,
+    jobs.c.attempts,
+    jobs.c.created_at,
+    jobs.c.finished_at,
+)
+
+
+def get_job(session: Session, job_id: UUID) -> JobRecord | None:
+    row = session.execute(select(*_RECORD_COLUMNS).where(jobs.c.id == job_id)).one_or_none()
+    return JobRecord(*row) if row is not None else None
+
+
+def list_jobs(
+    session: Session,
+    *,
+    limit: int,
+    before: UUID | None = None,
+    job_type: str | None = None,
+    status: str | None = None,
+) -> list[JobRecord]:
+    """Newest first. Job ids are UUIDv7, so id order is creation order and ``before`` (the last
+    id of the previous page) is a keyset cursor (docs/16 §1)."""
+    query = select(*_RECORD_COLUMNS).order_by(jobs.c.id.desc()).limit(limit)
+    if before is not None:
+        query = query.where(jobs.c.id < before)
+    if job_type is not None:
+        query = query.where(jobs.c.type == job_type)
+    if status is not None:
+        query = query.where(jobs.c.status == status)
+    return [JobRecord(*row) for row in session.execute(query)]
