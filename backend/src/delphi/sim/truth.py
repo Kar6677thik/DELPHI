@@ -1,4 +1,4 @@
-"""SQLAlchemy Core definitions of the ground-truth tables (docs/17 §3, migration 0002).
+"""SQLAlchemy Core definitions of the ground-truth tables (docs/17 §3, migrations 0002, 0004).
 
 Only ``delphi.sim`` and ``delphi.evaluation`` may import this module (docs/04 §4.1 rule 5, an
 import-linter contract); at the database, only the ``delphi_sim`` role can read the
@@ -9,7 +9,17 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, MetaData, SmallInteger, Table, Text, Uuid
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    Integer,
+    MetaData,
+    SmallInteger,
+    Table,
+    Text,
+    Uuid,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 
 metadata = MetaData(schema="sim_truth")
@@ -70,5 +80,16 @@ label_schedule = Table(
     Column("label_source", Text, primary_key=True),
     _ts("due_at"),
     Column("delivered", Boolean, nullable=False),
+    _ts("created_at"),
+)
+
+# Why each bank.sim_schedule TRANSFER row exists (migration 0004, #56).
+schedule_truth = Table(
+    "schedule_truth",
+    metadata,
+    Column("schedule_id", Uuid, primary_key=True),
+    Column("reason", Text, nullable=False),
+    Column("flow", Integer),
+    Column("session", Boolean, nullable=False),
     _ts("created_at"),
 )

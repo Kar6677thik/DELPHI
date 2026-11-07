@@ -87,16 +87,23 @@ def test_payments_due_after_the_history_are_scheduled(long_window: Dataset) -> N
     """docs/14 §8: in-flight mule transfers and the window's salaries are sim_schedule rows."""
     pop, history = long_window.population, long_window.history
     assert history.schedule
-    reasons = {row.payload["reason"] for row in history.schedule}
+    why = {t.schedule_id: t for t in history.schedule_truth}
+    assert set(why) == {row.id for row in history.schedule}  # every row has its truth
+    reasons = {t.reason for t in why.values()}
     assert "SALARY" in reasons and reasons <= {"SALARY", "MULE_FORWARDING"}
     for row in history.schedule:
         assert row.kind == "TRANSFER" and row.done_at is None
         assert row.due_at >= pop.history_end
         assert row.payload["amount_paise"] > 0
-        if row.payload["reason"] == "SALARY":
+        # #56: nothing in the app-visible payload says why the transfer exists
+        assert set(row.payload) == {
+            "payer_account_id",
+            "payee_account_id",
+            "amount_paise",
+            "channel",
+        }
+        if why[row.id].reason == "SALARY":
             assert row.due_at.astimezone(IST).day == 1
-        else:  # a mule-ring payment still in flight when the history ended
-            assert {"flow", "session"} <= set(row.payload)
     ids = [row.id for row in history.schedule]
     assert len(ids) == len(set(ids))
 
@@ -198,6 +205,7 @@ def test_no_window_payment_takes_more_than_the_balance(long_window: Dataset) -> 
     history = long_window.history
     assert history.window is not None
     running = dict(history.balances)
+    why = {t.schedule_id: t.reason for t in history.schedule_truth}
     salaries = [
         (
             row.due_at,
@@ -207,7 +215,7 @@ def test_no_window_payment_takes_more_than_the_balance(long_window: Dataset) -> 
             row.payload["amount_paise"],
         )
         for row in history.schedule
-        if row.payload.get("reason") == "SALARY"
+        if why[row.id] == "SALARY"
     ]
     payments = [
         (p.initiated_at, 1, p.payer_account_id, p.payee_account_id, p.amount_paise)

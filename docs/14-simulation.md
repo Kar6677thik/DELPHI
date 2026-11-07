@@ -62,6 +62,10 @@ from its own stream, `keyed_rng(seed, "customer", i)`, and the merchants from
 - **Every customer** is a `RETAIL` customer with one `ACTIVE` account at `DLPH`,
   opened 1–10 years (uniform) before the history starts. The opening balance is log-normal,
   median ₹40,000 × the income band's amount scale, σ = 1.0.
+- **Young accounts** (#56, owner decision). 10% of genuine non-merchant accounts (customers'
+  and external counterparties') were opened 30–365 days before the history instead, from
+  `keyed_rng(seed, "young_account", account_id)`. So a young payee account is a mule signal,
+  not a tell. Devices and payees still come after the opening.
 - **KYC.** Genuine non-merchant accounts (customers' and external counterparties') have
   `MINIMAL` KYC with probability 0.05, from `keyed_rng(seed, "kyc", account_id)`, else `FULL`;
   merchants are `FULL`. Minimal KYC is then a strong mule signal but not a tell (owner
@@ -162,6 +166,16 @@ review pending):
   a new merchant is one not saved before or during the history (if none is left, the event is
   a new phone). An event that falls outside the history saves no payee and adds no phone. One
   the customer cannot fund keeps its payee or phone: the payment failed, the set-up did not.
+- **New person payees** (#56, owner decision). About once a year (exponential gaps, mean 365
+  days), a genuine customer saves a new person as a payee: another customer's DLPH account
+  (0.7) or an external person account (0.3), never one already saved, from
+  `keyed_rng(seed, "person_payee", i)`.
+  - The payee is "Family N", saved 2–30 minutes before the first payment, as a victim saves a
+    mule.
+  - The first payment has the family amount and channel; 0–3 more follow over the next 60 days.
+  - The process runs through the window too.
+  - So a person payee saved during the history is no longer a mule tell: on `demo`, 791 of
+    1,639 are genuine.
 - **New phones** (§3, once per 400 days) arrive as a Poisson process; later payments use the
   newest device.
 - **Logins.** Every customer session starts with a login 30–300 s earlier (never before the
@@ -265,9 +279,12 @@ review pending):
   `keyed_rng(seed, "mule_listing", account_id)`, at its first fraud credit plus the §7 registry
   delay. B1 declines payments to it from then on.
 - **After the history.** A payment of a flow that falls due after the history ends is not
-  made here. It becomes a `bank.sim_schedule` TRANSFER row (payload: payer, payee, amount,
-  channel, `reason: MULE_FORWARDING`, the flow and whether it is a session), which `SIM_TICK`
-  (§8) or the evaluation replay makes when it falls due.
+  made here. It becomes a `bank.sim_schedule` TRANSFER row, which `SIM_TICK` (§8) or the
+  evaluation replay makes when it falls due.
+  - The payload carries only what making the payment needs: payer, payee, amount and channel.
+    `delphi_app` can read it (#56).
+  - Why the row exists (`reason` SALARY or MULE_FORWARDING, the flow, whether it is a session)
+    is in `sim_truth.schedule_truth`.
 
 **The live/eval window** (`window_days`: 3 on `test`, 30 on `eval`; `demo` has an open-ended
 live window and no generated one) is generated with the history, as one stream every policy
@@ -294,7 +311,7 @@ replays (doc 22 §1). This design is proposed in the last #17 PR, for the owner'
   genuine-only dry run against the same balances.
 - **Not in the stream.** The window holds no MULE_FORWARDING sessions: they follow from what
   each policy releases, so the replay generates them with `delphi.sim.forwarding`. The
-  window's salaries are TRANSFER rows (`reason: SALARY`).
+  window's salaries are TRANSFER rows (reason SALARY, in `sim_truth.schedule_truth`).
 - **Stats.** `delphi.sim.stats` (`delphi sim stats --profile`) reports sessions per 10,000 per
   scenario for the history and the window, against these rates. The #17 acceptance check (±10%
   on `eval`, a `slow` test) uses:

@@ -8,6 +8,16 @@ upgrade changes them, `test_committed_freeze_matches_kb_v1_and_config` fails eve
 input changed. Then either keep the previous numpy, or regenerate with
 `uv run delphi sim freeze-response-models`, bump `generator_version` and record the upgrade here.
 
+## 13
+
+Removes three ground-truth tells from the bank tables (#56):
+- Genuine customers save new person payees (about once a year), minutes before first paying
+  them, so person payees saved during the history are no longer all mules.
+- `bank.sim_schedule` payloads carry only payer, payee, amount and channel; the reason, flow
+  and session move to the new `sim_truth.schedule_truth` (migration 0004).
+- 10% of genuine non-merchant accounts were opened 30–365 days before the history, so young
+  accounts are no longer only mules.
+
 ## 12
 
 - The eval window keeps its SIM-swap CRM events, and the genuine background CRM events run on

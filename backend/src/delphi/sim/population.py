@@ -157,6 +157,15 @@ class _Builder:
         years = tenure.min + (tenure.max - tenure.min) * rng.random()
         return self.start - timedelta(seconds=int(years * _DAYS_PER_YEAR * _SECONDS_PER_DAY))
 
+    def _young(self, account_id: UUID, opened_at: datetime) -> datetime:
+        """A share of genuine accounts are young (#56), so a young account is a mule signal,
+        not a tell. Each account draws from ``keyed_rng(seed, "young_account", id)``."""
+        rng = keyed_rng(self.spec.seed, "young_account", str(account_id))
+        if rng.random() >= self.cfg.young_account_share:
+            return opened_at
+        days = self.cfg.young_account_days
+        return self.start - timedelta(days=days.min + (days.max - days.min) * rng.random())
+
     def _balance(self, rng: np.random.Generator, income_band: str) -> int:
         opening = self.cfg.opening_balance_inr
         median = opening.median * self.cfg.income_amount_scale[income_band] * _PAISE_PER_INR
@@ -204,13 +213,14 @@ class _Builder:
         bank_code = self.cfg.external_banks[int(rng.integers(len(self.cfg.external_banks)))]
         index = self.external_count
         self.external_count += 1
+        account_id = self.ids["external_account"].next()
         account = Account(
-            id=self.ids["external_account"].next(),
+            id=account_id,
             customer_id=None,
             bank_code=bank_code,
             is_merchant=False,
             merchant_category=None,
-            opened_at=self._opened_at(rng),
+            opened_at=self._young(account_id, self._opened_at(rng)),
             kyc_level=FULL_KYC,
             status=ACTIVE,
             balance_paise=self._balance(rng, self.cfg.external_counterparty_income_band),
@@ -254,6 +264,7 @@ class _Builder:
             customer = _scripted(customer, persona, self.vulnerable_age)
         opened_at = self._opened_at(rng)
         balance = self._balance(rng, income_band)  # drawn for everyone, so draws stay aligned
+        opened_at = self._young(self.customer_account_ids[i], opened_at)
         if script is not None:
             opened_at = self.end - timedelta(days=script.tenure_years * _DAYS_PER_YEAR)
             balance = script.opening_balance_inr * _PAISE_PER_INR
