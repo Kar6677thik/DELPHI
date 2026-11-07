@@ -24,6 +24,9 @@ population:
   consent_call_status_probability: 0.70   # docs/14
   device_count: {1: 0.8, 2: 0.2}          # docs/14
   known_device_min_age_days: 30           # gap: a known device is ≥ 30 days old at the start
+  # Owner decision (#49): 5% of genuine non-merchant accounts have MINIMAL KYC, so minimal KYC
+  # is a strong mule signal but not a tell (docs/14 §3).
+  genuine_kyc_minimal_share: 0.05
   payee_count: {min: 3, max: 15}          # docs/14; uniform count (gap)
   # docs/14: 70% of counterparties at DLPH, the rest spread over XBK1–XBK5 (evenly: gap).
   counterparty_home_bank_share: 0.70
@@ -110,6 +113,26 @@ genuine_unusual:
   amount_inr: {median: 80000, sigma: 0.7}  # × the income band's scale
   lead_minutes: {min: 2, max: 30}          # payee saved / phone first seen before paying
   channel: IMPS
+
+# docs/14 §4 "Mule networks": rings of 5–30 accounts across banks with 1–4 layers; with
+# probability 0.5 a device is shared by ≥ 3 of a ring's accounts; false registry listings on
+# 0.1% of genuine accounts.
+mule_rings:
+  size: {min: 5, max: 30}                    # docs/14; uniform (gap)
+  layers: {min: 1, max: 4}                   # docs/14; uniform (gap)
+  shared_device_probability: 0.5            # docs/14, per ring
+  shared_device_min_accounts: 3             # docs/14
+  false_listing_share: 0.001                # docs/14, of genuine non-merchant accounts
+  # Gaps: one ring per 400 customers (at least 2); a mule banks at DLPH with probability 0.4,
+  # else at an external bank (evenly). A home-bank mule is a young, low-income customer
+  # (docs/13 §6 features: account age, minimal KYC) with a small balance.
+  customers_per_ring: 400
+  min_rings: 2
+  home_bank_share: 0.4
+  age: {min: 19, max: 35}
+  minimal_kyc_share: 0.5
+  opened_days_before_history: {min: 5, max: 400}
+  opening_balance_inr: {median: 2000, sigma: 0.8}
 
 # docs/14 §3: a genuine new-device event happens once per 400 days on average. Later payments
 # use the newest device.

@@ -46,16 +46,22 @@ def _rows(items: Iterable[DataclassInstance], key: Callable[[Row], Any]) -> list
 
 
 def canonical_tables(dataset: Dataset) -> dict[str, list[Row]]:
-    pop, history = dataset.population, dataset.history
+    pop, network, history = dataset.population, dataset.network, dataset.history
     accounts = [
         replace(a, balance_paise=history.balances[a.id])
-        for a in (*pop.accounts, *history.payroll_accounts)
+        for a in (*pop.accounts, *network.accounts, *history.payroll_accounts)
     ]
     by_id: Callable[[Row], Any] = lambda row: row["id"]  # noqa: E731
+    by_account: Callable[[Row], Any] = lambda row: row["account_id"]  # noqa: E731
+    # docs/14 §8: the bank sees a listing only once it is made; until then it lives only in
+    # sim_truth.label_schedule.
+    listed = [r for r in network.listings if r.listed_at < pop.history_end]
     return {
-        "customers": _rows(pop.customers, by_id),
+        "customers": _rows((*pop.customers, *network.customers), by_id),
         "accounts": _rows(accounts, by_id),
-        "devices": _rows((*pop.devices, *history.devices), by_id),
+        "devices": _rows((*pop.devices, *network.devices, *history.devices), by_id),
+        "sim_registry_listings": _rows(listed, by_account),
+        "account_truth": _rows(dataset.account_truth, by_account),
         "payees": _rows((*pop.payees, *history.payees), by_id),
         "login_events": _rows(history.logins, by_id),
         "payments": _rows(history.payments, by_id),
@@ -66,7 +72,8 @@ def canonical_tables(dataset: Dataset) -> dict[str, list[Row]]:
         "scenario_instances": _rows(history.scenario_instances, by_id),
         "payment_truth": _rows(history.payment_truth, lambda r: r["payment_id"]),
         "label_schedule": _rows(
-            history.labels, lambda r: (r["subject_type"], r["subject_id"], r["label_source"])
+            (*history.labels, *network.labels),
+            lambda r: (r["subject_type"], r["subject_id"], r["label_source"]),
         ),
     }
 

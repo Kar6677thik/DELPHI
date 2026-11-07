@@ -7,7 +7,8 @@ and every customer session starts with a login.
 Each customer plans its GENUINE_ROUTINE payments from its own stream,
 ``keyed_rng(seed, "routine", i)``: a daily rate λ ~ Gamma(2, 0.3), Poisson counts per day,
 Zipf-weighted payees, log-normal amounts per payee type at a habitual local hour, plus a monthly
-salary credit. One chronological pass then applies B1, keeps balances non-negative (a payment
+salary credit. One chronological pass then applies B1 (which declines payments to a payee the
+sim registry lists by then), keeps balances non-negative (a payment
 the payer cannot fund is not made), writes the double-entry ledger (docs/05 §1) and schedules
 each customer payment's labels (docs/14 §7): a held or declined history payment is never
 investigated, so it never gets a label.
@@ -38,6 +39,7 @@ from delphi.sim.labels import (
 )
 from delphi.sim.legacy_policy import decide_b1, payee_is_new
 from delphi.sim.logins import LoginEvent, login_before
+from delphi.sim.mules import MuleNetwork
 from delphi.sim.population import ACTIVE, FULL_KYC, Account, Device, Payee, Population, _choice
 from delphi.sim.response_models import TelemetryTargets, draw_signals
 from delphi.sim.rng import keyed_rng
@@ -451,11 +453,13 @@ def generate_history(
     targets: Mapping[ScenarioType, TelemetryTargets],
     thresholds: ClassifierThresholds,
     label_config: LabelConfig,
+    network: MuleNetwork,
 ) -> History:
     """Genuine payments and salaries over the history, decided by B1.
 
     ``targets`` are the scenarios' telemetry targets (docs/14 §5.1) and ``thresholds`` the KB's
-    classifier thresholds (docs/08 §5)."""
+    classifier thresholds (docs/08 §5). ``network`` holds the mule accounts, whose balances the
+    history carries, and the registry listings B1 declines payments to."""
     planner = _Planner(config, population, targets, thresholds)
     intents: list[_Intent] = []
     instances: list[ScenarioInstance] = []
@@ -465,7 +469,10 @@ def generate_history(
     intents.sort(key=lambda i: (i.at, str(i.id)))
 
     spec = config.profiles[population.profile]
-    balances = {a.id: a.balance_paise for a in (*population.accounts, *planner.payroll)}
+    balances = {
+        a.id: a.balance_paise for a in (*population.accounts, *network.accounts, *planner.payroll)
+    }
+    listed_at = {listing.account_id: listing.listed_at for listing in network.listings}
     payments: list[Payment] = []
     ledger: list[LedgerEntry] = []
     telemetry: list[SessionTelemetry] = []
@@ -488,12 +495,13 @@ def generate_history(
         device_is_new = (
             intent.device is not None and intent.at - first_seen[intent.device] < new_device
         )
+        listed = listed_at.get(intent.payee)
         decision = (
             decide_b1(
                 config.legacy_policy,
                 amount_paise=intent.amount_paise,
                 channel=intent.channel,
-                payee_listed=False,
+                payee_listed=listed is not None and listed <= intent.at,
                 payee_is_new=payee_new,
                 device_is_new=device_is_new,
             )

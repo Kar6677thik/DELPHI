@@ -8,6 +8,17 @@ upgrade changes them, `test_committed_freeze_matches_kb_v1_and_config` fails eve
 input changed. Then either keep the previous numpy, or regenerate with
 `uv run delphi sim freeze-response-models`, bump `generator_version` and record the upgrade here.
 
+## 6
+
+- Mule rings (docs/14 §4): 5–30 accounts in 1–4 layers across banks, one ring per 400
+  customers (at least 2). Home-bank mules are young, low-income customers with a device; half
+  the rings share one device across ≥ 3 of them. Half of all mule accounts have minimal KYC.
+- `sim_truth.account_truth` for every account.
+- False registry listings on 0.1% of genuine non-merchant accounts, with a MULE
+  `REGISTRY_LISTING` label when listed; B1 declines payments to a listed payee.
+- 5% of genuine non-merchant accounts have MINIMAL KYC (owner decision), so minimal KYC is
+  a signal, not a tell; mule opening balances are in paise like everyone else's.
+
 ## 5
 
 - GENUINE_UNUSUAL (docs/14 §4): large one-offs to a new hospital, wedding vendor or property
