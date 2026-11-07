@@ -7,12 +7,15 @@ once at start-up; an invalid or missing value stops the process with a precise m
 
 from __future__ import annotations
 
+from datetime import timedelta
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated
 
 from pydantic import Field, ValidationError, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from delphi.platform.jobs import QueueConfig
 
 # src/delphi/platform/settings.py → backend/
 _BACKEND_DIR = Path(__file__).resolve().parents[3]
@@ -65,6 +68,18 @@ class Settings(BaseSettings):
     # Readiness DB ping budget (docs/20 §3).
     ready_db_timeout_ms: int = Field(default=500, ge=50, le=10_000)
 
+    # Job queue and worker (docs/04 §5.4, docs/20 §3).
+    job_lease_s: int = Field(default=60, ge=5, le=3600)
+    job_retry_backoff_s: int = Field(default=30, ge=1, le=3600)
+    job_max_attempts: int = Field(default=3, ge=1, le=10)
+    worker_default_concurrency: int = Field(default=2, ge=1, le=8)
+    worker_fast_concurrency: int = Field(default=1, ge=1, le=4)
+    worker_poll_interval_s: float = Field(default=1.0, gt=0, le=60)
+    worker_heartbeat_max_age_s: int = Field(default=30, ge=5, le=600)
+    # Retention (docs/17 §6).
+    outbox_retention_h: int = Field(default=24, ge=1, le=24 * 30)
+    idempotency_retention_h: int = Field(default=24, ge=1, le=24 * 30)
+
     http_host: str = "0.0.0.0"  # nosec B104: binds inside the pod only (docs/23 §4)
     http_port: Port = 8000
     metrics_port: Port = 9000
@@ -76,6 +91,22 @@ class Settings(BaseSettings):
             msg = "must be a PostgreSQL URL (postgresql://user:password@host:port/db)"
             raise ValueError(msg)
         return value
+
+    @property
+    def queue_config(self) -> QueueConfig:
+        return QueueConfig(
+            lease=timedelta(seconds=self.job_lease_s),
+            retry_backoff=timedelta(seconds=self.job_retry_backoff_s),
+            default_max_attempts=self.job_max_attempts,
+        )
+
+    @property
+    def outbox_retention(self) -> timedelta:
+        return timedelta(hours=self.outbox_retention_h)
+
+    @property
+    def idempotency_retention(self) -> timedelta:
+        return timedelta(hours=self.idempotency_retention_h)
 
     @property
     def effective_migrate_url(self) -> str:

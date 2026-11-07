@@ -157,6 +157,10 @@ to start, exit code 2, naming the variable, if one is missing or invalid.
 | `DELPHI_DB_POOL_SIZE` | `5` | api, worker | — |
 | `DELPHI_DB_CONNECT_TIMEOUT_S` | `5` | api, worker | — |
 | `DELPHI_READY_DB_TIMEOUT_MS` | `500` | api | doc 20 §3 |
+| `DELPHI_JOB_LEASE_S` / `DELPHI_JOB_RETRY_BACKOFF_S` / `DELPHI_JOB_MAX_ATTEMPTS` | `60` / `30` / `3` | worker | doc 04 §5.4 |
+| `DELPHI_WORKER_DEFAULT_CONCURRENCY` / `DELPHI_WORKER_FAST_CONCURRENCY` | `2` / `1` | worker | doc 04 §5.4 |
+| `DELPHI_WORKER_POLL_INTERVAL_S` / `DELPHI_WORKER_HEARTBEAT_MAX_AGE_S` | `1.0` / `30` | worker | doc 20 §3 |
+| `DELPHI_OUTBOX_RETENTION_H` / `DELPHI_IDEMPOTENCY_RETENTION_H` | `24` / `24` | worker | doc 17 §6 |
 
 Later milestones add their settings to this table (`DELPHI_SECRET_KEY`, `DELPHI_PUBLIC_ORIGIN`,
 `DELPHI_LLM_*`, `DELPHI_TIME_MODE`, the bootstrap admin) together with the code that reads them.
