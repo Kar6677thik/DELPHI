@@ -8,6 +8,21 @@ upgrade changes them, `test_committed_freeze_matches_kb_v1_and_config` fails eve
 input changed. Then either keep the previous numpy, or regenerate with
 `uv run delphi sim freeze-response-models`, bump `generator_version` and record the upgrade here.
 
+## 15
+
+Follow-ups to the #60–#63 review (#64):
+- Person payees saved during the history or the window (by the customer, a fraud's victim or
+  a home-bank mule) are numbered "Family N" once every payee is known: N is the payee's place
+  among all the customer's payees, after the population's, in the order they were saved. The
+  genuine, fraud and mule planners each kept their own count before, so 176 customers on
+  `demo` had a genuine and a mule payee under the same label.
+- Persona customers take no part in the person-payee process, as savers or as payees (owner
+  decision). Before, on `demo`, Arjun, Ravi and four S-4 victims saved new people, and three
+  payees pointed at persona accounts.
+- A window salary's `sim_schedule` row keeps the salary's id, so the window's settlement order
+  (time, id) can be read back from the rows. The `window_schedule` id stream is gone.
+- The device /24 cache is bounded (`lru_cache`), so a long-running worker does not grow it.
+
 ## 14
 
 Follow-ups to the personas (#57):

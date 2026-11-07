@@ -31,6 +31,14 @@ _PAISE_PER_INR = 100
 _DAYS_PER_YEAR = 365
 _SECONDS_PER_DAY = 86_400
 _FINGERPRINT_BYTES = 16
+# A person payee's label (docs/14 §3): "Family N", N its place among the customer's payees.
+# Payees saved during the history are created as plain FAMILY and numbered once every payee is
+# known (#64).
+FAMILY = "Family"
+
+
+def family_label(place: int) -> str:
+    return f"{FAMILY} {place}"
 
 
 # --------------------------------------------------------------------------- the entities
@@ -186,7 +194,7 @@ class _Builder:
         return accounts[int(rng.integers(len(accounts)))], category.title().replace("_", " ")
 
     def _family_payee(self, rng: np.random.Generator, own: int, k: int) -> tuple[UUID, str]:
-        label = f"Family {k + 1}"
+        label = family_label(k + 1)
         if rng.random() < self.cfg.counterparty_home_bank_share and self.spec.customers > 1:
             other = int(rng.integers(self.spec.customers - 1))
             other += other >= own  # anyone but the customer themself

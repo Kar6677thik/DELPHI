@@ -14,7 +14,6 @@ The module also draws genuine customers' background CRM events, from
 from __future__ import annotations
 
 import math
-from collections import Counter
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from uuid import UUID
@@ -25,7 +24,7 @@ from delphi.sim.draws import between, choice
 from delphi.sim.generator_config import GeneratorConfig, Range
 from delphi.sim.ids import IdStream
 from delphi.sim.mules import MuleNetwork
-from delphi.sim.population import Customer, Device, Payee, Population
+from delphi.sim.population import FAMILY, Customer, Device, Payee, Population
 from delphi.sim.records import CrmEvent, ScenarioInstance
 from delphi.sim.rng import keyed_rng
 from delphi.sim.scenarios import ScenarioType, ground_truth_key
@@ -105,7 +104,6 @@ class _Planner:
         self.payees: list[Payee] = []
         self.crm: list[CrmEvent] = []
         self.saved: dict[tuple[UUID, UUID], int] = {}  # index into payees
-        self.payee_count = Counter(p.customer_id for p in population.payees)
         older = config.fraud.digital_arrest.older_age
         # Personas are scripted (docs/14 §6): no fraud happens to them or through their rings
         # before their story, so the S-4 victims have "no history of the scam" (§8).
@@ -122,18 +120,17 @@ class _Planner:
         return ring.id, layer[int(rng.integers(len(layer)))]
 
     def _save(self, customer: Customer, account: UUID, at: datetime) -> None:
-        """A victim saves each mule payee once, at the earliest instance that pays it. The
-        label follows the genuine scheme for a person ("Family N", N its place among the
-        customer's payees), so nothing in `bank.payees` marks a mule out."""
+        """A victim saves each mule payee once, at the earliest instance that pays it. It is a
+        person payee like any family one; the history numbers it ("Family N") with the
+        customer's other payees in the order they were saved (#64), so nothing in
+        `bank.payees` marks a mule out."""
         at = max(at, self.start)
         if (customer.id, account) in self.saved_before:
             return  # saved during the history already
         index = self.saved.get((customer.id, account))
         if index is None:
             self.saved[customer.id, account] = len(self.payees)
-            self.payee_count[customer.id] += 1
-            label = f"Family {self.payee_count[customer.id]}"
-            payee = Payee(self.ids["fraud_payee"].next(), customer.id, account, label, at)
+            payee = Payee(self.ids["fraud_payee"].next(), customer.id, account, FAMILY, at)
             self.payees.append(payee)
         elif at < self.payees[index].added_at:
             self.payees[index] = replace(self.payees[index], added_at=at)
