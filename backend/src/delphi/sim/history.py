@@ -55,7 +55,13 @@ from delphi.sim.population import (
     Population,
     _choice,
 )
-from delphi.sim.records import Complaint, CrmEvent, ScenarioInstance, ScheduledTransfer
+from delphi.sim.records import (
+    Complaint,
+    CrmEvent,
+    ScenarioInstance,
+    ScheduledTransfer,
+    ScheduleTruth,
+)
 from delphi.sim.response_models import TelemetryTargets, draw_signals
 from delphi.sim.rng import keyed_rng
 from delphi.sim.scenarios import ScenarioType, ground_truth_key
@@ -66,6 +72,8 @@ SIM_HISTORY = "SIM_HISTORY"
 SIM_LIVE = "SIM_LIVE"
 PENDING_GUARDIAN = "PENDING_GUARDIAN"
 TRANSFER = "TRANSFER"
+SALARY = "SALARY"
+MULE_FORWARDING_REASON = "MULE_FORWARDING"
 SALARY_CHANNEL = "NEFT"
 _STATUS = {
     PaymentDecision.RELEASED: "EXECUTED",  # in the simulation RELEASED → EXECUTED is immediate
@@ -140,6 +148,7 @@ class History:
     complaints: tuple[Complaint, ...] = ()  # those reported before the history ends
     window: WindowStream | None = None  # the live/eval window's undecided sessions
     schedule: tuple[ScheduledTransfer, ...] = ()  # payments due after the history ends
+    schedule_truth: tuple[ScheduleTruth, ...] = ()  # why each of them exists (sim_truth)
     cash_out_accounts: tuple[Account, ...] = ()  # one per bank, where cash-outs go
     registry_listings: tuple[RegistryListing, ...] = ()  # true listings of mule accounts
     account_labels: tuple[ScheduledLabel, ...] = ()  # their REGISTRY_LISTING labels
@@ -228,6 +237,13 @@ class _Planner:
         self.new_payees: list[Payee] = []
         # Merchants each customer saves during the history (a payee is saved only once).
         self.saved_during: defaultdict[UUID, list[UUID]] = defaultdict(list)
+        # People a customer can add as a new payee (#56): other customers' home-bank accounts
+        # and the external person accounts.
+        self.home_accounts = [self.home_account[c.id].id for c in population.customers]
+        self.external_people = [
+            a.id for a in population.accounts if a.customer_id is None and not a.is_merchant
+        ]
+        self.payee_count = Counter(p.customer_id for p in population.payees)
         self.phones: dict[UUID, list[Device]] = {}  # each customer's genuine new phones
         self.mule_customer: dict[UUID, Customer] = {}  # home-bank mule account → customer
         self.mule_device: dict[UUID, Device] = {}
@@ -611,6 +627,76 @@ class _Planner:
                     intents=intents,
                     instances=instances,
                 )
+        self._new_people(
+            index, habit=habit, devices=(original, phones), intents=intents, instance=instance.id
+        )
+
+    def _new_people(
+        self,
+        index: int,
+        *,
+        habit: float,
+        devices: tuple[list[Device], list[Device]],
+        intents: list[_Intent],
+        instance: UUID,
+    ) -> None:
+        """A genuine customer saves a new person (family or friend) as a payee now and then,
+        minutes before first paying them, and pays them again later (#56). Its own stream,
+        ``keyed_rng(seed, "person_payee", i)``, so the routine draws do not move."""
+        cfg = self.routine.new_person_payee
+        customer = self.pop.customers[index]
+        account = self.home_account[customer.id]
+        rng = keyed_rng(self.seed, "person_payee", str(index))
+        scale = self.cfg.population.income_amount_scale[customer.income_band]
+        amount = self.routine.amount_inr["FAMILY"]
+        original, phones = devices
+        at = self.pop.history_start
+        while True:
+            at += timedelta(days=float(rng.exponential(cfg.mean_days)))
+            if at >= self.horizon:
+                return
+            taken = {*self.payees.get(customer.id, []), *self.saved_during[customer.id]}
+            home = rng.random() < self.cfg.population.counterparty_home_bank_share
+            pool = self.home_accounts if home else self.external_people
+            payee = pool[int(rng.integers(len(pool)))]
+            if payee in taken or payee == account.id:
+                continue  # already a payee, or their own account: nothing new to save
+            self.saved_during[customer.id].append(payee)
+            self.payee_count[customer.id] += 1
+            span = cfg.lead_minutes.max - cfg.lead_minutes.min
+            lead = timedelta(minutes=cfg.lead_minutes.min + rng.random() * span)
+            day = at.astimezone(IST).replace(hour=0, minute=0, second=0, microsecond=0)
+            hour = (habit + self.routine.hour_sd * rng.standard_normal()) % _HOURS_PER_DAY
+            first = day + timedelta(seconds=int(hour * _SECONDS_PER_HOUR))
+            self.new_payees.append(
+                Payee(
+                    id=self.new_payee_ids.next(),
+                    customer_id=customer.id,
+                    account_id=payee,
+                    label=f"Family {self.payee_count[customer.id]}",
+                    added_at=max(first - lead, self.pop.history_start),
+                )
+            )
+            more = cfg.follow_up_payments
+            follow_ups = int(rng.integers(int(more.min), int(more.max) + 1))
+            later = [rng.random() * cfg.follow_up_days for _ in range(follow_ups)]
+            for when in sorted([first, *(first + timedelta(days=float(d)) for d in later)]):
+                if not self.pop.history_start <= when < self.horizon:
+                    continue
+                intents.append(
+                    self._session(
+                        rng,
+                        ScenarioType.GENUINE_ROUTINE,
+                        customer=customer,
+                        payer=account.id,
+                        payee=payee,
+                        amount_paise=_lognormal_paise(rng, amount.median * scale, amount.sigma),
+                        channel=_choice(rng, self.routine.channel["FAMILY"]),
+                        at=when,
+                        device=self._device_at(rng, original, phones, when),
+                        instance=instance,
+                    )
+                )
 
 
 def generate_history(
@@ -686,7 +772,8 @@ def generate_history(
     return replace(
         history,
         window=stream,
-        schedule=(*history.schedule, *salaries),
+        schedule=(*history.schedule, *(row for row, _ in salaries)),
+        schedule_truth=(*history.schedule_truth, *(truth for _, truth in salaries)),
         scenario_instances=(*history.scenario_instances, *(extra.instances if extra else ())),
         devices=(*history.devices, *(extra.devices if extra else ())),
         payees=(*history.payees, *(extra.payees if extra else ())),
@@ -762,7 +849,7 @@ def _intent_order(intent: _Intent) -> tuple[datetime, str]:
 
 def _window_stream(
     planner: _Planner, intents: list[_Intent], balances: Mapping[UUID, int]
-) -> tuple[WindowStream, list[ScheduledTransfer]]:
+) -> tuple[WindowStream, list[tuple[ScheduledTransfer, ScheduleTruth]]]:
     """The window's sessions as undecided payments, and its salaries as scheduled transfers.
     Each payment settles against the payer's running balance in the window (`_WindowBank`)."""
     ids = IdStream(planner.seed, "window_schedule")
@@ -771,23 +858,21 @@ def _window_stream(
     telemetry: list[SessionTelemetry] = []
     logins: list[LoginEvent] = []
     truth: list[PaymentTruth] = []
-    salaries: list[ScheduledTransfer] = []
+    salaries: list[tuple[ScheduledTransfer, ScheduleTruth]] = []
     for intent in sorted(intents, key=_intent_order):
         amount = bank.process(intent)
         if amount is None:
             continue
         if not intent.decided:
-            salaries.append(
-                _transfer(
-                    ids,
-                    intent.at,
-                    payer_account_id=intent.payer,
-                    payee_account_id=intent.payee,
-                    amount_paise=amount,
-                    channel=intent.channel,
-                    reason="SALARY",
-                )
+            row = _transfer(
+                ids,
+                intent.at,
+                payer=intent.payer,
+                payee=intent.payee,
+                amount_paise=amount,
+                channel=intent.channel,
             )
+            salaries.append((row, ScheduleTruth(row.id, SALARY, flow=None, session=False)))
             continue
         payments.append(
             Payment(
@@ -820,25 +905,29 @@ def _window_stream(
     return stream, salaries
 
 
-def _in_flight(ids: IdStream, hop: Hop) -> ScheduledTransfer:
+def _in_flight(ids: IdStream, hop: Hop) -> tuple[ScheduledTransfer, ScheduleTruth]:
     """A mule-ring payment due after the history (docs/14 §8: SIM_TICK advances it)."""
-    return _transfer(
+    row = _transfer(
         ids,
         hop.at,
-        payer_account_id=hop.payer,
-        payee_account_id=hop.payee,
+        payer=hop.payer,
+        payee=hop.payee,
         amount_paise=hop.amount_paise,
         channel=hop.channel,
-        reason="MULE_FORWARDING",
-        flow=hop.flow,
-        session=hop.session,
     )
+    return row, ScheduleTruth(row.id, MULE_FORWARDING_REASON, flow=hop.flow, session=hop.session)
 
 
-def _transfer(ids: IdStream, at: datetime, **payload: object) -> ScheduledTransfer:
-    """A TRANSFER row; UUIDs in the payload are stored as strings (jsonb)."""
-    values = {k: str(v) if isinstance(v, UUID) else v for k, v in payload.items()}
-    return ScheduledTransfer(ids.next(), at, TRANSFER, values)
+def _transfer(  # the bank row says only what making the payment needs (#56)
+    ids: IdStream, at: datetime, *, payer: UUID, payee: UUID, amount_paise: int, channel: str
+) -> ScheduledTransfer:
+    payload = {
+        "payer_account_id": str(payer),
+        "payee_account_id": str(payee),
+        "amount_paise": amount_paise,
+        "channel": channel,
+    }
+    return ScheduledTransfer(ids.next(), at, TRANSFER, payload)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1047,7 +1136,7 @@ def _run(planner: _Planner, intents: list[_Intent], *, context: _RunContext) -> 
     labels: list[ScheduledLabel] = []
     complaints: list[Complaint] = []
     schedule_ids = IdStream(planner.seed, "sim_schedule")
-    in_flight: list[ScheduledTransfer] = []
+    in_flight: list[tuple[ScheduledTransfer, ScheduleTruth]] = []
     queue = [(i.at, str(i.id), i) for i in intents]
     heapq.heapify(queue)
 
@@ -1103,5 +1192,6 @@ def _run(planner: _Planner, intents: list[_Intent], *, context: _RunContext) -> 
         cash_out_accounts=cash_accounts,
         registry_listings=tuple(registry.listings),
         account_labels=tuple(registry.labels),
-        schedule=tuple(in_flight),
+        schedule=tuple(row for row, _ in in_flight),
+        schedule_truth=tuple(truth for _, truth in in_flight),
     )

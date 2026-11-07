@@ -44,6 +44,7 @@ _ORDER: tuple[Table, ...] = (
     truth.scenario_instances,
     truth.payment_truth,
     truth.account_truth,
+    truth.schedule_truth,
     truth.label_schedule,
 )
 

@@ -33,6 +33,17 @@ class ScheduledTransfer:
 
 
 @dataclass(frozen=True, slots=True)
+class ScheduleTruth:
+    """A ``sim_truth.schedule_truth`` row: why a TRANSFER row exists. The app-visible payload
+    carries only what executing the payment needs (#56)."""
+
+    schedule_id: UUID
+    reason: str  # SALARY or MULE_FORWARDING
+    flow: int | None  # the mule-ring flow it continues
+    session: bool  # a home-bank mule's app session
+
+
+@dataclass(frozen=True, slots=True)
 class CrmEvent:
     """A row of ``bank.crm_events``."""
 

@@ -63,6 +63,8 @@ class PopulationConfig(_Frozen):
     opening_balance_inr: LogNormal
     home_city: dict[str, dict[str, float]]
     known_device_min_age_days: int = Field(ge=0)
+    young_account_share: Probability
+    young_account_days: Range
     genuine_kyc_minimal_share: Probability
     external_counterparty_income_band: str
 
@@ -78,6 +80,8 @@ class PopulationConfig(_Frozen):
             raise ValueError("home_city must cover every language")
         if set(self.income_amount_scale) != set(self.income_band):
             raise ValueError("income_amount_scale must cover every income band")
+        if self.young_account_days.min < self.known_device_min_age_days:
+            raise ValueError("young accounts must be older than a known device")
         if self.external_counterparty_income_band not in self.income_band:
             raise ValueError("external_counterparty_income_band must be an income band")
         return self
@@ -94,6 +98,15 @@ class MerchantConfig(_Frozen):
         return self
 
 
+class NewPersonPayeeConfig(_Frozen):
+    """Genuine customers saving new person payees during the history (#56)."""
+
+    mean_days: float = Field(gt=0)
+    lead_minutes: Range
+    follow_up_payments: Range
+    follow_up_days: float = Field(gt=0)
+
+
 class GenuineRoutineConfig(_Frozen):
     daily_rate_gamma: dict[str, float]
     zipf_exponent: float = Field(ge=0)
@@ -105,6 +118,7 @@ class GenuineRoutineConfig(_Frozen):
     salary_hour: Range
     payroll_opening_balance_inr: int = Field(gt=0)
     payroll_account_age_days: int = Field(ge=0)
+    new_person_payee: NewPersonPayeeConfig
 
     @model_validator(mode="after")
     def _shapes(self) -> GenuineRoutineConfig:

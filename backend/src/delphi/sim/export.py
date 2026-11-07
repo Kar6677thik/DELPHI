@@ -84,6 +84,7 @@ def dataset_records(dataset: Dataset) -> dict[str, list[DataclassInstance]]:
         "scenario_instances": list(history.scenario_instances),
         "payment_truth": [*history.payment_truth, *(window.payment_truth if window else ())],
         "account_truth": list(dataset.account_truth),
+        "schedule_truth": list(history.schedule_truth),
         "label_schedule": [*history.labels, *network.labels, *history.account_labels],
     }
 
@@ -97,6 +98,7 @@ _ORDER: dict[str, Callable[[Row], Any]] = {
     "sim_registry_listings": _by("account_id"),
     "sim_phone_risk": _by("phone_number"),
     "account_truth": _by("account_id"),
+    "schedule_truth": _by("schedule_id"),
     "ledger_entries": _by("at", "payment_id", "account_id"),
     "session_telemetry": _by("payment_id"),
     "payment_truth": _by("payment_id"),

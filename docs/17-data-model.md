@@ -200,10 +200,16 @@ response_overrides(scenario_type, source_key, coached bool, probs jsonb,
                    pk (scenario_type, source_key, coached))      -- frozen response models
 label_schedule(subject_type, subject_id, hypothesis_key, label_source, due_at, delivered bool,
                pk (subject_type, subject_id, label_source))  idx (due_at) where not delivered
+schedule_truth(schedule_id pk → bank.sim_schedule, reason (SALARY|MULE_FORWARDING),
+               flow null, session bool)                          -- migration 0004
 ```
 
+`bank.sim_schedule` payloads carry only what executing a transfer needs (payer, payee, amount,
+channel). Why a scheduled transfer exists is ground truth, kept in `schedule_truth` (#56).
+
 Ground truth references the bank (`payment_truth.payment_id → bank.payments`,
-`account_truth.account_id → bank.accounts`) with the default NO ACTION, so deleting a bank row
+`account_truth.account_id → bank.accounts`, `schedule_truth.schedule_id → bank.sim_schedule`)
+with the default NO ACTION, so deleting a bank row
 that truth still describes fails instead of silently dropping the truth. `response_overrides`
 keys coached rows separately (doc 14 §5.2) and stores `probs` as `{outcome: p}`. As everywhere
 (§1), every table also has `created_at`. The `delphi.sim.truth` module holds the SQLAlchemy Core

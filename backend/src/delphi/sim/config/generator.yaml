@@ -24,6 +24,10 @@ population:
   consent_call_status_probability: 0.70   # docs/14
   device_count: {1: 0.8, 2: 0.2}          # docs/14
   known_device_min_age_days: 30           # gap: a known device is ≥ 30 days old at the start
+  # Owner decision (#56): 10% of genuine non-merchant accounts were opened 30–365 days before
+  # the history (uniform), so a young payee account is a mule signal, not a tell (docs/14 §3).
+  young_account_share: 0.10
+  young_account_days: {min: 30, max: 365}
   # Owner decision (#49): 5% of genuine non-merchant accounts have MINIMAL KYC, so minimal KYC
   # is a strong mule signal but not a tell (docs/14 §3).
   genuine_kyc_minimal_share: 0.05
@@ -78,6 +82,16 @@ genuine_routine:
   salary_hour: {min: 10, max: 12}
   payroll_opening_balance_inr: 10000000000
   payroll_account_age_days: 3650           # payroll accounts are ten years old
+  # Owner decision (#56): genuine customers also add new person (family or friend) payees
+  # during the history, so a person payee saved during the history is not a mule tell. Gaps:
+  # about once a year per customer; another customer's DLPH account or an external person
+  # account (population.counterparty_home_bank_share); saved minutes before the first
+  # payment (as a victim's mule payee is); 0–3 more payments over the next 60 days.
+  new_person_payee:
+    mean_days: 365
+    lead_minutes: {min: 2, max: 30}
+    follow_up_payments: {min: 0, max: 3}
+    follow_up_days: 60
 
 # How a session's §5.1 signals become session_telemetry values (gaps). The values are placed
 # on the right side of the KB's classifier thresholds (kb/engine.yaml `classifiers`), so the

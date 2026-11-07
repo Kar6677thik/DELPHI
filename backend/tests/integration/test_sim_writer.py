@@ -129,3 +129,29 @@ def test_the_personas_write_too(create_database: Callable[[], str], kb: Knowledg
         ).scalars()
         assert set(keys) == set(dataset.personas.customers)
     engine.dispose()
+
+
+def test_sim_schedule_payloads_carry_no_truth(written: Written) -> None:
+    """#56: delphi_app can read bank.sim_schedule, so its payloads say only what making the
+    payment needs; why the transfer exists is in sim_truth.schedule_truth."""
+    engine = engine_as(written.url, "delphi_app")
+    with engine.connect() as conn:
+        keys = set(
+            conn.execute(
+                text("SELECT DISTINCT jsonb_object_keys(payload) FROM bank.sim_schedule")
+            ).scalars()
+        )
+        rows = conn.execute(text("SELECT count(*) FROM bank.sim_schedule")).scalar_one()
+    engine.dispose()
+    assert rows > 0
+    assert keys == {"payer_account_id", "payee_account_id", "amount_paise", "channel"}
+    sim = engine_as(written.url, "delphi_sim")
+    with sim.connect() as conn:
+        explained = conn.execute(
+            text(
+                "SELECT count(*) FROM bank.sim_schedule s "
+                "JOIN sim_truth.schedule_truth t ON t.schedule_id = s.id"
+            )
+        ).scalar_one()
+    sim.dispose()
+    assert explained == rows
