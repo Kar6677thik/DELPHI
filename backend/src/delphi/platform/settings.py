@@ -130,3 +130,8 @@ def sqlalchemy_url(url: str) -> str:
     if url.startswith("postgresql://"):
         return "postgresql+psycopg://" + url.removeprefix("postgresql://")
     return url
+
+
+def libpq_url(url: str) -> str:
+    """The plain libpq form (``postgresql://``) for drivers used without SQLAlchemy."""
+    return "postgresql://" + url.split("://", 1)[1]

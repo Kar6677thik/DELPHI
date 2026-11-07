@@ -26,6 +26,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session, sessionmaker
 
 from delphi.platform.clock import Clock
+from delphi.platform.events import EventType, publish
 from delphi.platform.ids import uuid7
 from delphi.platform.logging import get_logger
 from delphi.platform.tables import jobs
@@ -35,6 +36,14 @@ log = get_logger(__name__)
 # The longest error text kept on a job row; the full traceback goes to the log.
 MAX_ERROR_CHARS = 2000
 DEFAULT_MAX_ATTEMPTS = 3  # docs/04 §5.4, FR-PLT-07; settings may override
+
+
+def _announce(session: Session, job_id: UUID, status: str, progress: float | None = None) -> None:
+    """`job.updated` in the same transaction as the change (docs/16 §3)."""
+    payload: dict[str, Any] = {"status": status}
+    if progress is not None:
+        payload["progress"] = progress
+    publish(session, EventType.JOB_UPDATED, str(job_id), payload)
 
 
 class JobStatus(StrEnum):
@@ -163,6 +172,7 @@ def enqueue(
         .returning(jobs.c.id)
     ).scalar_one_or_none()
     if inserted is not None:
+        _announce(session, inserted, JobStatus.QUEUED.value, 0.0)
         return Enqueued(inserted, created=True)
     existing = session.execute(
         select(jobs.c.id).where(jobs.c.idempotency_key == idempotency_key)
@@ -215,6 +225,8 @@ class JobQueue:
                 )
                 .returning(*jobs.c)
             ).one_or_none()
+            if row is not None:
+                _announce(session, row.id, JobStatus.RUNNING.value, row.progress)
         if row is None:
             return None
         job = Job.from_row(row)
@@ -243,6 +255,8 @@ class JobQueue:
                 .returning(jobs.c.id)
             )
             reaped = [r.id for r in result]
+            for job_id in reaped:
+                _announce(session, job_id, JobStatus.FAILED.value)
         for job_id in reaped:
             log.warning("job.reaped", job_id=str(job_id))
         return len(reaped)
@@ -318,6 +332,8 @@ class JobQueue:
                 )
                 .returning(jobs.c.id)
             ).one_or_none()
+            if done is not None:
+                _announce(session, job_id, JobStatus.QUEUED.value, 0.0)
         return done is not None
 
     def _owned_update(self, job: Job, worker_id: str, values: Mapping[str, Any]) -> bool:
@@ -330,8 +346,10 @@ class JobQueue:
                     jobs.c.status == JobStatus.RUNNING.value,
                 )
                 .values(**values)
-                .returning(jobs.c.id)
+                .returning(jobs.c.id, jobs.c.status, jobs.c.progress)
             ).one_or_none()
+            if row is not None and ("status" in values or "progress" in values):
+                _announce(session, row.id, row.status, row.progress)
         if row is None:
             log.warning("job.lease_lost", job_id=str(job.id), worker=worker_id)
             return False
