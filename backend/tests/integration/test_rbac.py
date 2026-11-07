@@ -35,6 +35,10 @@ ACCESS: dict[tuple[str, str], str | Permission] = {
     ("GET", "/api/v1/jobs/{job_id}"): Permission.VIEW,
     ("GET", "/api/v1/jobs"): Permission.ADMIN,
     ("POST", "/api/v1/jobs/{job_id}/retry"): Permission.ADMIN,
+    ("GET", "/api/v1/admin/users"): Permission.ADMIN,
+    ("POST", "/api/v1/admin/users"): Permission.ADMIN,
+    ("PATCH", "/api/v1/admin/users/{user_id}"): Permission.ADMIN,
+    ("GET", "/api/v1/admin/audit/verify"): Permission.ADMIN,
 }
 PASSWORD = "correct horse battery"
 BROWSER = {"X-Delphi-Csrf": "1", "Origin": "https://testserver"}
@@ -98,7 +102,7 @@ def test_access(
     clients: dict[Role | None, TestClient], role: Role | None, method: str, path: str
 ) -> None:
     rule = ACCESS[(method, path)]
-    url = path.replace("{job_id}", str(uuid4()))
+    url = path.replace("{job_id}", str(uuid4())).replace("{user_id}", str(uuid4()))
     if (method, path) in {("POST", "/api/v1/auth/logout")}:
         # Signing out would end this module's shared session; check access with a probe
         # that needs the same rule (a signed-in caller).

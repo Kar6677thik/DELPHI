@@ -8,17 +8,25 @@ and need at least 12 characters.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
+from typing import Any
 from uuid import UUID
 
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from delphi.platform.audit import ActorType, record
 from delphi.platform.clock import Clock
-from delphi.platform.errors import DelphiError, ProblemCode
+from delphi.platform.errors import (
+    DelphiError,
+    InvalidStateTransitionError,
+    NotFoundError,
+    ProblemCode,
+    VersionConflictError,
+)
 from delphi.platform.ids import uuid7
 from delphi.platform.logging import get_logger
 from delphi.platform.tables import users
@@ -181,3 +189,122 @@ def ensure_bootstrap_admin(
         hint="sign in and rotate this password",
     )
     return admin
+
+
+@dataclass(frozen=True, slots=True)
+class UserRecord:
+    """A user as the admin pages show it (never the password hash)."""
+
+    id: UUID
+    username: str
+    display_name: str
+    role: Role
+    disabled: bool
+    created_at: datetime
+    version: int
+
+
+def _record(row: Any) -> UserRecord:
+    return UserRecord(
+        row.id,
+        row.username,
+        row.display_name,
+        Role(row.role),
+        row.disabled,
+        row.created_at,
+        row.version,
+    )
+
+
+def list_users(session: Session) -> list[UserRecord]:
+    return [_record(r) for r in session.execute(select(users).order_by(users.c.username))]
+
+
+def get_user_record(session: Session, user_id: UUID) -> UserRecord | None:
+    row = session.execute(select(users).where(users.c.id == user_id)).one_or_none()
+    return _record(row) if row is not None else None
+
+
+@dataclass(frozen=True, slots=True)
+class UserChange:
+    """A partial update (PATCH /admin/users/{id}); None leaves a field as it is."""
+
+    display_name: str | None = None
+    role: Role | None = None
+    disabled: bool | None = None
+    password: str | None = None
+
+
+def _enabled_admins(session: Session) -> int:
+    count: int = session.execute(
+        select(func.count())
+        .select_from(users)
+        .where(users.c.role == Role.ADMIN.value, users.c.disabled.is_(False))
+    ).scalar_one()
+    return count
+
+
+def update_user(
+    session: Session,
+    clock: Clock,
+    user_id: UUID,
+    change: UserChange,
+    *,
+    expected_version: int,
+    actor_id: UUID,
+) -> tuple[UserRecord, bool]:
+    """Apply ``change`` if the user is still at ``expected_version`` (optimistic locking,
+    FR-PLT-06). Returns the updated user and whether their sessions must end (disabled, role
+    changed or password reset). Every changed field is audited. Refuses to leave the system
+    without an enabled ADMIN, so nobody can lock everyone out."""
+    # Lock the row: a concurrent edit waits, then sees the new version and gets 412.
+    row = session.execute(
+        select(users).where(users.c.id == user_id).with_for_update()
+    ).one_or_none()
+    if row is None:
+        raise NotFoundError("No user with this id.")
+    current = _record(row)
+    if current.version != expected_version:
+        raise VersionConflictError("This user was changed by someone else; reload and retry.")
+    values: dict[str, Any] = {}
+    events: list[tuple[str, dict[str, Any]]] = []
+    if change.display_name is not None and change.display_name != current.display_name:
+        values["display_name"] = change.display_name
+        events.append(("user.renamed", {"display_name": change.display_name}))
+    if change.role is not None and change.role is not current.role:
+        values["role"] = change.role.value
+        events.append(("user.role_changed", {"from": current.role.value, "to": change.role.value}))
+    if change.disabled is not None and change.disabled != current.disabled:
+        values["disabled"] = change.disabled
+        events.append(("user.disabled" if change.disabled else "user.enabled", {}))
+    if change.password is not None:
+        values["password_hash"] = hash_password(change.password)
+        events.append(("user.password_reset", {}))
+    if not values:
+        return current, False
+    was_admin = current.role is Role.ADMIN and not current.disabled
+    stays_admin = (change.role in (None, Role.ADMIN)) and not values.get(
+        "disabled", current.disabled
+    )
+    if was_admin and not stays_admin and _enabled_admins(session) <= 1:
+        raise InvalidStateTransitionError("This is the last enabled ADMIN; keep one.")
+    session.execute(
+        update(users)
+        .where(users.c.id == user_id, users.c.version == expected_version)
+        .values(**values, version=users.c.version + 1)
+    )
+    for action, payload in events:
+        record(
+            session,
+            clock,
+            actor_type=ActorType.USER,
+            actor_id=str(actor_id),
+            action=action,
+            entity_type="user",
+            entity_id=str(user_id),
+            payload=payload,
+        )
+    updated = get_user_record(session, user_id)
+    assert updated is not None
+    ends_sessions = any(k in values for k in ("role", "disabled", "password_hash"))
+    return updated, ends_sessions
