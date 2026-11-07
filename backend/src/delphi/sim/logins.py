@@ -7,6 +7,7 @@ genuine customers. Fraud scenarios (ATO) log in from elsewhere.
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import ipaddress
 from dataclasses import dataclass
@@ -33,6 +34,7 @@ class LoginEvent:
     at: datetime
 
 
+@functools.cache  # one string per device, shared by its logins (#58)
 def device_prefix24(fingerprint: str) -> str:
     """A stable synthetic /24 for a device: 10.x.y.0/24 from its fingerprint."""
     digest = hashlib.sha256(fingerprint.encode()).digest()
