@@ -297,6 +297,33 @@ class ForwardingConfig(_Frozen):
         return self
 
 
+class FriConfig(_Frozen):
+    ring_numbers: dict[str, float]
+    genuine_numbers: dict[str, float]
+
+    @model_validator(mode="after")
+    def _weights(self) -> FriConfig:
+        for name in ("ring_numbers", "genuine_numbers"):
+            weights = getattr(self, name)
+            _distribution(weights, f"external_systems.fri.{name}")
+            if set(weights) != {"VERY_HIGH", "HIGH", "MEDIUM", "LOW"}:
+                raise ValueError("FRI categories are VERY_HIGH, HIGH, MEDIUM and LOW")
+        return self
+
+
+class CfcfrmsConfig(_Frozen):
+    ack_minutes: LogNormal
+    never_ack_share: Probability
+    ack_deadline_minutes: float = Field(gt=0)
+
+
+class ExternalSystemsConfig(_Frozen):
+    """The simulated external systems (docs/14 §9)."""
+
+    fri: FriConfig
+    cfcfrms: CfcfrmsConfig
+
+
 class GeneratorConfig(_Frozen):
     profiles: dict[str, ProfileConfig]
     fixed_history_end: datetime
@@ -311,6 +338,7 @@ class GeneratorConfig(_Frozen):
     collect_refund: CollectRefundConfig
     forwarding: ForwardingConfig
     crm: CrmConfig
+    external_systems: ExternalSystemsConfig
     new_device_mean_days: float = Field(gt=0)
     login_lead_s: Range
     cities: dict[str, City]

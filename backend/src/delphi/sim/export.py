@@ -73,6 +73,7 @@ def dataset_records(dataset: Dataset) -> dict[str, list[DataclassInstance]]:
         "devices": [*pop.devices, *network.devices, *history.devices],
         "payees": [*pop.payees, *history.payees],
         "sim_registry_listings": list(listed),
+        "sim_phone_risk": list(dataset.phone_risk),
         "sim_schedule": list(history.schedule),
         "payments": [*history.payments, *(window.payments if window else ())],
         "ledger_entries": list(history.ledger),
@@ -94,6 +95,7 @@ def _by(*columns: str) -> Callable[[Row], Any]:
 # The canonical order of each table's rows.
 _ORDER: dict[str, Callable[[Row], Any]] = {
     "sim_registry_listings": _by("account_id"),
+    "sim_phone_risk": _by("phone_number"),
     "account_truth": _by("account_id"),
     "ledger_entries": _by("at", "payment_id", "account_id"),
     "session_telemetry": _by("payment_id"),

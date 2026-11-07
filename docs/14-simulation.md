@@ -437,6 +437,20 @@ golden hour, SLA timers) is multiplied by `demo_time_scale` = 1/30. The UI shows
 | External banks | Hold ledgers in the same database. Lien placement is honoured if the funds are present at acknowledgement |
 | Customer outreach call | Samples `CUSTOMER_OUTREACH_CALL` from the response model (a perturbation of the KB row, as in §5.2) |
 
+`delphi.sim.external` implements these, with numbers in `generator.yaml`
+(`external_systems`). Where the table is silent:
+
+- **FRI.** Every account's phone number gets a category in `bank.sim_phone_risk`, from its own
+  stream `keyed_rng(seed, "fri", phone_number)`. Mule accounts' numbers are the "numbers used by
+  fraud rings". "HIGH-MEDIUM 0.35" and "MEDIUM-HIGH 0.03" are split evenly between HIGH and
+  MEDIUM.
+- **CFCFRMS.** The latency is log-normal with σ 0.8 (the §7 delay spread), one stream per
+  ticket. A drawn latency past 2 h counts as never acknowledged, so slightly over 10% of
+  tickets are never acknowledged. Times are whole seconds; `demo_time_scale` is applied by the
+  caller.
+- **Outreach.** Each payment's answer comes from `keyed_rng(seed, "outreach", payment_id)`, so
+  every policy hears the same answer (doc 22 §1).
+
 ## 10. Demo control
 
 - `POST /admin/demo/scenarios/{story}/run {mode: "interactive"|"autoplay"}` for stories S-1 to
