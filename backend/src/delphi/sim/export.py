@@ -55,8 +55,9 @@ def canonical_tables(dataset: Dataset) -> dict[str, list[Row]]:
     return {
         "customers": _rows(pop.customers, by_id),
         "accounts": _rows(accounts, by_id),
-        "devices": _rows(pop.devices, by_id),
-        "payees": _rows(pop.payees, by_id),
+        "devices": _rows((*pop.devices, *history.devices), by_id),
+        "payees": _rows((*pop.payees, *history.payees), by_id),
+        "login_events": _rows(history.logins, by_id),
         "payments": _rows(history.payments, by_id),
         "ledger_entries": _rows(
             history.ledger, lambda r: (r["at"], r["payment_id"], r["account_id"])

@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import time
 from collections import Counter
+from datetime import timedelta
+from uuid import UUID
 
 import pytest
 import yaml
@@ -13,9 +15,9 @@ from delphi.kb.model import ClassifierThresholds, KnowledgeBase
 from delphi.sim.dataset import Dataset, generate_dataset
 from delphi.sim.export import canonical_export, canonical_tables, dataset_sha256
 from delphi.sim.generator_config import GeneratorConfig, LegacyPolicyConfig, load_generator_config
-from delphi.sim.history import IST
+from delphi.sim.history import IST, Payment
 from delphi.sim.labels import LabelSource, PaymentDecision
-from delphi.sim.legacy_policy import decide_b1
+from delphi.sim.legacy_policy import decide_b1, payee_is_new
 from delphi.sim.response_models import CONFIG_DIR, load_config
 from delphi.sim.scenarios import ScenarioType
 from delphi.sim.telemetry import SessionTelemetry
@@ -112,13 +114,16 @@ def test_truth_and_labels(test_dataset: Dataset) -> None:
     assert {t.payment_id for t in history.payment_truth} == {p.id for p in history.payments}
     assert not any(t.is_fraud for t in history.payment_truth)
     instances = {i.id: i for i in history.scenario_instances}
-    assert all(
-        instances[t.scenario_instance_id].scenario_type == "GENUINE_ROUTINE"
-        for t in history.payment_truth
-    )
-    # Released genuine customer payments mature as GENUINE after 7 days on `test` (docs/14 §7).
+    assert {instances[t.scenario_instance_id].scenario_type for t in history.payment_truth} <= {
+        "GENUINE_ROUTINE",
+        "GENUINE_UNUSUAL",
+    }
+
+    # Released genuine customer payments mature as GENUINE after 7 days on `test` (docs/14 §7);
+    # held ones are never investigated, so they get no label (selective labels).
     customer_payments = {str(p.id): p for p in history.payments if p.device_id is not None}
-    assert {label.subject_id for label in history.labels} == set(customer_payments)
+    released = {pid for pid, p in customer_payments.items() if p.status == "EXECUTED"}
+    assert {label.subject_id for label in history.labels} == released
     for label in history.labels:
         assert label.label_source is LabelSource.NO_COMPLAINT_60D
         assert (label.due_at - customer_payments[label.subject_id].initiated_at).days == 7
@@ -161,6 +166,8 @@ def test_b1_follows_docs_22_section_2(kwargs: dict[str, object], decision: Payme
         hold_new_payee_min_inr=50_000,
         hold_new_device_min_inr=10_000,
         hold_collect_approval_min_inr=25_000,
+        new_payee_hours=24,
+        payee_baseline_days=30,
     )
     args: dict[str, object] = {
         "amount_paise": 100_000,
@@ -180,6 +187,7 @@ def test_b1_config_matches_the_spec(config: GeneratorConfig) -> None:
         b1.hold_new_device_min_inr,
         b1.hold_collect_approval_min_inr,
     ) == (50_000, 10_000, 25_000)
+    assert (b1.new_payee_hours, b1.payee_baseline_days) == (24, 30)  # docs/13 §3
 
 
 def test_exported_floats_are_platform_independent(test_dataset: Dataset) -> None:
@@ -198,3 +206,99 @@ def test_exported_floats_are_platform_independent(test_dataset: Dataset) -> None
         t.session_duration_s == round(t.session_duration_s, 6)
         for t in test_dataset.history.telemetry
     )
+
+
+@pytest.fixture(scope="module")
+def long_test(config: GeneratorConfig, kb: KnowledgeBase) -> Dataset:
+    """The `test` population over a 150-day history: enough GENUINE_UNUSUAL events to count."""
+    profiles = {
+        **config.profiles,
+        "test": config.profiles["test"].model_copy(update={"history_days": 150}),
+    }
+    return generate_dataset(config.model_copy(update={"profiles": profiles}), "test", kb=kb)
+
+
+def _by_scenario(dataset: Dataset) -> dict[str, list[Payment]]:
+    history = dataset.history
+    kinds = {i.id: i.scenario_type for i in history.scenario_instances}
+    scenario = {t.payment_id: kinds[t.scenario_instance_id] for t in history.payment_truth}
+    out: dict[str, list[Payment]] = {}
+    for p in history.payments:
+        if p.device_id is not None:
+            out.setdefault(scenario[p.id], []).append(p)
+    return out
+
+
+def test_genuine_unusual_rate_and_night_share(long_test: Dataset) -> None:
+    """docs/14 §4: 150 per 10,000 payments; 30% at night."""
+    sessions = _by_scenario(long_test)
+    unusual = sessions["GENUINE_UNUSUAL"]
+    per_10k = 10_000 * len(unusual) / sum(len(v) for v in sessions.values())
+    assert 100 < per_10k < 200
+    night = [p for p in unusual if p.initiated_at.astimezone(IST).hour in {22, 23, 0, 1, 2, 3, 4}]
+    assert len(night) / len(unusual) == pytest.approx(0.30, abs=0.08)
+
+
+def test_b1_holds_large_payments_to_new_payees_and_from_new_phones(
+    long_test: Dataset, kb: KnowledgeBase
+) -> None:
+    """The new merchant is saved minutes before the payment and the new phone first seen
+    minutes before it, so B1 (docs/22 §2) holds the large ones; nothing labels them."""
+    history = long_test.history
+    unusual = _by_scenario(long_test)["GENUINE_UNUSUAL"]
+    held = [p for p in unusual if p.status == "HELD"]
+    assert len(held) > len(unusual) / 2
+    assert all(p.amount_paise >= 1_000_000 for p in held)
+    labelled = {label.subject_id for label in history.labels}
+    assert not any(str(p.id) in labelled for p in held)
+    seen = {d.id: d.first_seen_at for d in (*long_test.population.devices, *history.devices)}
+    assert all(seen[p.device_id] <= p.initiated_at for p in history.payments if p.device_id)
+    assert all(p.added_at >= long_test.population.history_start for p in history.payees)
+    # New phones: once per 400 days in the background, plus the unusual ones.
+    assert len(history.devices) >= len(long_test.population.customers) * 150 / 400 * 0.6
+
+
+def test_every_customer_session_starts_with_a_login(long_test: Dataset) -> None:
+    pop, history = long_test.population, long_test.history
+    sessions = [p for p in history.payments if p.device_id is not None]
+    assert len(history.logins) == len(sessions)
+    home = {c.id: c.home_city for c in pop.customers}
+    prefixes: dict[UUID, str] = {}
+    for login in history.logins:
+        assert login.city == home[login.customer_id]
+        assert login.ip_prefix24.startswith("10.") and login.ip_prefix24.endswith(".0/24")
+        assert prefixes.setdefault(login.device_id, login.ip_prefix24) == login.ip_prefix24
+
+
+@pytest.mark.parametrize(
+    ("added_days_ago", "ever_paid", "new"),
+    [
+        (31, False, False),  # saved over 30 days ago: established even if never paid
+        (2, False, True),  # saved 2 days ago and never paid: new
+        (2, True, False),
+        (0.5, True, True),  # saved < 24 h ago: new even if paid
+        (None, False, True),  # never saved
+    ],
+)
+def test_payee_newness_follows_docs_13_section_3(
+    config: GeneratorConfig, added_days_ago: float | None, ever_paid: bool, new: bool
+) -> None:
+    at = config.fixed_history_end
+    added = None if added_days_ago is None else at - timedelta(days=added_days_ago)
+    assert payee_is_new(config.legacy_policy, added_at=added, at=at, ever_paid=ever_paid) is new
+
+
+def test_each_payee_is_saved_once(long_test: Dataset) -> None:
+    """bank.payees is unique on (customer_id, account_id) (docs/17 §3)."""
+    pairs = [
+        (p.customer_id, p.account_id)
+        for p in (*long_test.population.payees, *long_test.history.payees)
+    ]
+    assert len(pairs) == len(set(pairs))
+
+
+def test_nothing_starts_before_the_history(long_test: Dataset) -> None:
+    start, history = long_test.population.history_start, long_test.history
+    assert all(login.at >= start for login in history.logins)
+    assert all(p.added_at >= start for p in history.payees)
+    assert all(d.first_seen_at >= start for d in history.devices)

@@ -8,6 +8,19 @@ upgrade changes them, `test_committed_freeze_matches_kb_v1_and_config` fails eve
 input changed. Then either keep the previous numpy, or regenerate with
 `uv run delphi sim freeze-response-models`, bump `generator_version` and record the upgrade here.
 
+## 5
+
+- GENUINE_UNUSUAL (docs/14 §4): large one-offs to a new hospital, wedding vendor or property
+  merchant, or from a new phone, at each customer's routine rate × 150 / 9,700, 30% at night.
+- Genuine new phones once per 400 days (docs/14 §3); later payments use the newest device.
+- A login before every customer session, from the device's stable /24 in the home city.
+- B1 now sees new payees and new devices (the KB's `new_device_days`), so it holds most
+  unusual payments; held ones get no label. A payee is new by the amended docs/13 §3 rule:
+  saved < 24 h ago, or never paid and saved within the 30-day baseline window.
+- A customer saves each merchant once (no duplicate payees); unusual events outside the
+  history leave no payee or phone; nothing (logins, saved times, phones) starts before the
+  history.
+
 ## 4
 
 - Floats are rounded to 6 decimals at the source (session telemetry) and in the canonical

@@ -142,6 +142,28 @@ review pending):
   - **DECLINE:** ends `DECLINED`.
 
   Labels are scheduled by `schedule_payment_labels` (§7).
+- **GENUINE_UNUSUAL** runs at each customer's routine rate × 150 / 9,700 (the table's rates).
+  Each event is one of two kinds:
+  - **New merchant** (0.6): a hospital, wedding vendor or property merchant, saved 2–30 minutes
+    before paying it.
+  - **New phone** (0.4): a phone first seen 2–30 minutes before, paying an established family
+    payee.
+
+  The amount is log-normal, median ₹80,000 × the income scale, σ 0.7, by IMPS. 30% fall at
+  night (22:00–05:00 IST), the rest at the habitual hour. A customer saves each merchant once:
+  a new merchant is one not saved before or during the history (if none is left, the event is
+  a new phone). An event that falls outside the history saves no payee and adds no phone. One
+  the customer cannot fund keeps its payee or phone: the payment failed, the set-up did not.
+- **New phones** (§3, once per 400 days) arrive as a Poisson process; later payments use the
+  newest device.
+- **Logins.** Every customer session starts with a login 30–300 s earlier (never before the
+  history starts), from the session's device (a stable synthetic `10.x.y.0/24` per device) in
+  the home city. Saved times and new phones are likewise never before the history starts.
+- **B1 inputs.** B1 sees a payee as new by doc 13 §3's `is_new_payee`: saved < 24 h ago, or
+  never paid and saved within the 30-day baseline window (`legacy_policy.new_payee_hours` and
+  `payee_baseline_days`, the one place the simulator reads them from). It sees a device as new if
+  first seen within the KB's `new_device_days`. So it holds most unusual payments, and those
+  never get a label.
 
 ## 5. Response models (the simulator's truth)
 
