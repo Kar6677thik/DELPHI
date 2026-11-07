@@ -29,6 +29,7 @@ from uuid import UUID
 import numpy as np
 
 from delphi.kb.model import ClassifierThresholds
+from delphi.sim.draws import choice
 from delphi.sim.forwarding import Forwarder, Hop
 from delphi.sim.fraud import FraudPlan, plan_fraud
 from delphi.sim.generator_config import GeneratorConfig
@@ -53,7 +54,6 @@ from delphi.sim.population import (
     Device,
     Payee,
     Population,
-    _choice,
 )
 from delphi.sim.records import (
     Complaint,
@@ -285,15 +285,20 @@ class _Planner:
             day += timedelta(days=1)
         return days
 
-    def _new_device(self, rng: np.random.Generator, customer_id: UUID, at: datetime) -> Device:
+    def _new_device(
+        self, rng: np.random.Generator, customer_id: UUID, at: datetime, *, record: bool = True
+    ) -> Device:
+        """A phone first seen at ``at``; ``record=False`` makes the same draws (and id) but
+        keeps the phone out of the dataset."""
         device = Device(
             id=self.new_device_ids.next(),
             customer_id=customer_id,
             fingerprint=rng.bytes(16).hex(),
-            os=_choice(rng, self.cfg.population.device_os),
+            os=choice(rng, self.cfg.population.device_os),
             first_seen_at=at,
         )
-        self.new_devices.append(device)
+        if record:
+            self.new_devices.append(device)
         return device
 
     @staticmethod
@@ -377,7 +382,9 @@ class _Planner:
             minutes=cfg.lead_minutes.min
             + rng.random() * (cfg.lead_minutes.max - cfg.lead_minutes.min)
         )
-        kind = _choice(rng, cfg.kind)
+        kind = choice(rng, cfg.kind)
+        if customer.persona_key is not None:
+            kind = "NEW_MERCHANT"  # personas keep their scripted devices (#57)
         start = self.pop.history_start
         if not start <= at < self.horizon:
             return  # outside the history and window: no payment, so no payee or phone either
@@ -385,6 +392,8 @@ class _Planner:
         taken = {*saved, *self.saved_during[customer.id]}
         options = [m for m in self.unusual_merchants if m not in taken]
         if kind == "NEW_MERCHANT" and not options:
+            if customer.persona_key is not None:
+                return  # no new phone for a persona either
             kind = "NEW_PHONE"  # every unusual merchant is saved already
         if kind == "NEW_MERCHANT":
             payee = options[int(rng.integers(len(options)))]
@@ -571,7 +580,11 @@ class _Planner:
             at += timedelta(days=float(rng.exponential(self.cfg.new_device_mean_days)))
             if at >= self.horizon:
                 break
-            phones.append(self._new_device(rng, customer.id, at))
+            # Personas keep their scripted devices (#57); the draws are made all the same.
+            scripted = customer.persona_key is not None
+            phone = self._new_device(rng, customer.id, at, record=not scripted)
+            if not scripted:
+                phones.append(phone)
         self.phones[customer.id] = phones
         employer = self.payroll[int(rng.integers(len(self.payroll)))]
         for day in self._local_days():
@@ -599,7 +612,7 @@ class _Planner:
                 payee = payees[min(bisect.bisect_right(cdf, rng.random()), len(payees) - 1)]
                 payee_type = _payee_type(self.accounts[payee])
                 amount = routine.amount_inr[payee_type]
-                channel = _choice(rng, routine.channel[payee_type])
+                channel = choice(rng, routine.channel[payee_type])
                 hour = (habit + routine.hour_sd * rng.standard_normal()) % _HOURS_PER_DAY
                 at = day + timedelta(seconds=int(hour * _SECONDS_PER_HOUR))
                 intents.append(
@@ -691,7 +704,7 @@ class _Planner:
                         payer=account.id,
                         payee=payee,
                         amount_paise=_lognormal_paise(rng, amount.median * scale, amount.sigma),
-                        channel=_choice(rng, self.routine.channel["FAMILY"]),
+                        channel=choice(rng, self.routine.channel["FAMILY"]),
                         at=when,
                         device=self._device_at(rng, original, phones, when),
                         instance=instance,
@@ -1019,7 +1032,7 @@ def _complaint(
         id=ids.next(),
         reported_at=label.due_at,
         victim_customer_id=victim,
-        channel=_choice(rng, cfg.complaint_channel),
+        channel=choice(rng, cfg.complaint_channel),
         category=cfg.complaint_category[intent.scenario.value],
         payment_ids=(intent.id,),
         counterparty_account_ids=(intent.payee,),

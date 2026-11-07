@@ -21,10 +21,11 @@ from uuid import UUID
 
 import numpy as np
 
+from delphi.sim.draws import between, choice
 from delphi.sim.generator_config import GeneratorConfig, Range
 from delphi.sim.ids import IdStream
 from delphi.sim.mules import MuleNetwork
-from delphi.sim.population import Customer, Device, Payee, Population, _between, _choice
+from delphi.sim.population import Customer, Device, Payee, Population
 from delphi.sim.records import CrmEvent, ScenarioInstance
 from delphi.sim.rng import keyed_rng
 from delphi.sim.scenarios import ScenarioType, ground_truth_key
@@ -151,14 +152,14 @@ class _Planner:
         return instance.id
 
     def _start(self, rng: np.random.Generator, span: timedelta) -> datetime:
-        return _between(rng, self.start, max(self.end - span, self.start + timedelta(seconds=1)))
+        return between(rng, self.start, max(self.end - span, self.start + timedelta(seconds=1)))
 
     def ato(self, rng: np.random.Generator) -> int:
         cfg = self.cfg.ato
         index = self.victims[int(rng.integers(len(self.victims)))]
         customer = self.pop.customers[index]
         login_at = self._start(rng, timedelta(minutes=cfg.window_minutes))
-        kind = _choice(rng, cfg.kind)
+        kind = choice(rng, cfg.kind)
         if kind == SIM_SWAP:
             lead = timedelta(hours=_uniform(rng, cfg.sim_swap_lead_hours))
             self.crm.append(
@@ -173,7 +174,7 @@ class _Planner:
             id=self.ids["fraud_device"].next(),
             customer_id=customer.id,
             fingerprint=rng.bytes(_FINGERPRINT_BYTES).hex(),
-            os=_choice(rng, self.config.population.device_os),
+            os=choice(rng, self.config.population.device_os),
             first_seen_at=login_at,
         )
         self.devices.append(device)
@@ -196,7 +197,7 @@ class _Planner:
                     index,
                     mule,
                     payee_at + timedelta(seconds=offset + 1),
-                    _choice(rng, cfg.channel),
+                    choice(rng, cfg.channel),
                     instance,
                     coached=False,
                     balance_share=share,
@@ -231,7 +232,7 @@ class _Planner:
                     index,
                     mule,
                     at,
-                    _choice(rng, cfg.channel),
+                    choice(rng, cfg.channel),
                     instance,
                     coached=coached,
                     balance_share=_uniform(rng, cfg.balance_share),
@@ -277,7 +278,7 @@ class _Planner:
                     index,
                     platform,
                     start + timedelta(seconds=int(offset)),
-                    _choice(rng, cfg.channel),
+                    choice(rng, cfg.channel),
                     instance,
                     coached=coached,
                     amount_paise=max(amount, _PAISE_PER_INR),
@@ -293,7 +294,7 @@ class _Planner:
         cfg = self.config.collect_refund
         index = self.victims[int(rng.integers(len(self.victims)))]
         customer = self.pop.customers[index]
-        at = _between(rng, self.start, self.end)
+        at = between(rng, self.start, self.end)
         ring, mule = self._mule(rng)
         instance = self._instance(ScenarioType.UPI_COLLECT_REFUND, customer, ring, at)
         low, high = math.log(cfg.amount_inr.min), math.log(cfg.amount_inr.max)
@@ -323,7 +324,7 @@ class _Planner:
                 if at >= until:
                     break
                 self.crm.append(
-                    CrmEvent(self.ids["crm_event"].next(), customer.id, _choice(rng, cfg.types), at)
+                    CrmEvent(self.ids["crm_event"].next(), customer.id, choice(rng, cfg.types), at)
                 )
 
 

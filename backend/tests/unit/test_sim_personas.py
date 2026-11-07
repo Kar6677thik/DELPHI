@@ -17,8 +17,6 @@ from delphi.sim.persona_config import PersonaConfig, Story, StoryTelemetry, load
 
 from ..golden.test_story_behaviour import ARJUN_PASSIVE, KAMALA_PASSIVE
 
-ESTABLISHED = (3, 3, 90)  # docs/08 §5: ≥ 3 earlier payments from ≥ 3 customers over ≥ 90 days
-
 
 @pytest.fixture(scope="module")
 def config() -> GeneratorConfig:
@@ -59,9 +57,9 @@ def _passive(  # docs/08 §5, first match wins
         else timedelta(0)
     )
     established = (
-        len(earlier) >= ESTABLISHED[0]
-        and len(payers) >= ESTABLISHED[1]
-        and span >= timedelta(days=ESTABLISHED[2])
+        len(earlier) >= th.established_payee_min_payments
+        and len(payers) >= th.established_payee_min_distinct_customers
+        and span >= timedelta(days=th.established_payee_min_age_days)
     )
     if payee in listed:
         beneficiary = "LISTED_SUSPECT"
@@ -242,6 +240,26 @@ def test_personas_change_no_other_row(config: GeneratorConfig, kb: KnowledgeBase
     again = generate_dataset(config, "test", kb=kb, personas=True)
     assert again.personas == with_personas.personas
     assert canonical_export(again) == canonical_export(with_personas)
+
+
+@pytest.mark.parametrize(
+    "created_at", ["2026-11-07T00:00:00Z", "2027-03-15T09:30:00Z", "2027-08-01T18:00:00Z"]
+)
+def test_persona_devices_are_stable_on_demo(
+    config: GeneratorConfig, kb: KnowledgeBase, created_at: str
+) -> None:
+    """#57: personas get no new phones in the history, so Kamala, Arjun and Ravi keep their one
+    device whenever `demo` is created (fewer customers here, to keep it quick)."""
+    small = config.profiles["demo"].model_copy(update={"customers": 100})
+    smaller = config.model_copy(update={"profiles": {**config.profiles, "demo": small}})
+    at = datetime.fromisoformat(created_at)
+    dataset = generate_dataset(smaller, "demo", kb=kb, created_at=at)
+    assert dataset.personas is not None
+    personas = {c.id for c in dataset.population.customers if c.persona_key}
+    assert not [d for d in dataset.history.devices if d.customer_id in personas]
+    assert dataset.history.devices  # the generated customers still get new phones
+    for key in ("KAMALA", "ARJUN", "RAVI"):
+        assert len(dataset.personas.devices[key]) == 1, key
 
 
 def test_the_demo_profile_has_personas_by_default() -> None:

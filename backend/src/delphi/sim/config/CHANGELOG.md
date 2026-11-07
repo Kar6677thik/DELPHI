@@ -8,6 +8,16 @@ upgrade changes them, `test_committed_freeze_matches_kb_v1_and_config` fails eve
 input changed. Then either keep the previous numpy, or regenerate with
 `uv run delphi sim freeze-response-models`, bump `generator_version` and record the upgrade here.
 
+## 14
+
+Follow-ups to the personas (#57):
+- Persona customers get no new phones in the history, so Kamala, Arjun and Ravi keep their
+  one device on `demo` whatever its `created_at`; a persona's new-phone one-off becomes a
+  new-merchant one. Their draws are still made, so no other row changes.
+- CFCFRMS: exactly `never_ack_share` (10%) of tickets are never acknowledged; the other
+  latencies are redrawn below the 2 h deadline (before: about 11.3% never were).
+- The `test` hash is the same as version 13's (`test` has no personas).
+
 ## 13
 
 Removes three ground-truth tells from the bank tables (#56):

@@ -406,6 +406,9 @@ silent:
   changes no other row, and `test` without personas keeps its recorded hash.
 - **Draws.** Each persona makes the normal customer draws, then takes its scripted values
   (age, language, home city, income band, consent, device count, tenure, opening balance).
+- **Devices.** Personas get no new phones in the history, so they keep their scripted device
+  count however long it runs (#57). Their new-phone draws are still made, so no other row
+  changes, and a persona's GENUINE_UNUSUAL new-phone one-off becomes a new-merchant one.
 - **No fraud before the story.** No history fraud reaches a persona or a scripted ring, so
   the S-4 victims have no history of the scam (§8), and Ring-7 and Kamala's payee are
   uncredited and unlisted when the demo starts.
@@ -503,10 +506,10 @@ golden hour, SLA timers) is multiplied by `demo_time_scale` = 1/30. The UI shows
   stream `keyed_rng(seed, "fri", phone_number)`. Mule accounts' numbers are the "numbers used by
   fraud rings". "HIGH-MEDIUM 0.35" and "MEDIUM-HIGH 0.03" are split evenly between HIGH and
   MEDIUM.
-- **CFCFRMS.** The latency is log-normal with σ 0.8 (the §7 delay spread), one stream per
-  ticket. A drawn latency past 2 h counts as never acknowledged, so slightly over 10% of
-  tickets are never acknowledged. Times are whole seconds; `demo_time_scale` is applied by the
-  caller.
+- **CFCFRMS.** Exactly 10% of tickets (`never_ack_share`) are never acknowledged. The others
+  get a log-normal latency with σ 0.8 (the §7 delay spread), truncated below 2 h: a draw past
+  the deadline is redrawn from the ticket's own stream (#57). One stream per ticket. Times are
+  whole seconds; `demo_time_scale` is applied by the caller.
 - **Outreach.** Each payment's answer comes from `keyed_rng(seed, "outreach", payment_id)`, so
   every policy hears the same answer (doc 22 §1).
 
