@@ -113,3 +113,19 @@ def test_a_null_merchant_category_is_still_allowed(written: Written) -> None:
         )
         conn.rollback()
     engine.dispose()
+
+
+def test_the_personas_write_too(create_database: Callable[[], str], kb: KnowledgeBase) -> None:
+    """docs/21 §1: the E2E stack runs `test` with the personas."""
+    url = create_database()
+    upgrade(url)
+    dataset = generate_dataset(load_generator_config(), "test", kb=kb, personas=True)
+    assert dataset.personas is not None
+    engine = engine_as(url, "delphi_sim")
+    with engine.begin() as conn:
+        write_dataset(conn, dataset)
+        keys = conn.execute(
+            text("SELECT persona_key FROM bank.customers WHERE persona_key IS NOT NULL")
+        ).scalars()
+        assert set(keys) == set(dataset.personas.customers)
+    engine.dispose()

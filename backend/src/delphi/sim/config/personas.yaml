@@ -1,0 +1,117 @@
+# The demo personas (docs/14 §6). Kamala's and Arjun's passive outcomes are pinned by the golden
+# tests (tests/golden/test_story_behaviour.py KAMALA_PASSIVE, ARJUN_PASSIVE); the persona tests
+# check the generated rows give exactly those. Values marked "gap" fill what docs/14 §6 leaves
+# open and are listed there. A change here is a new generator_version.
+
+# docs/14 §6: personas are on the demo profile. docs/21 §1's E2E stack also runs `test` with
+# personas (generate_dataset(..., personas=True)).
+profiles: [demo]
+
+customers:
+  - key: KAMALA                 # S-1, docs/14 §6
+    display_name: Kamala Devi
+    age: 68
+    language: te
+    home_city: Hyderabad        # te → Hyderabad (docs/14 §3)
+    income_band: MID            # gap
+    consent_call_status: true
+    devices: 1
+    tenure_years: 6             # "6 years as a customer"
+    opening_balance_inr: 900000   # gap: covers the ₹4,80,000 story payment
+  - key: ARJUN                  # S-2
+    display_name: Arjun Mehta
+    age: 34
+    language: en
+    home_city: Bengaluru        # gap
+    income_band: HIGH           # gap
+    consent_call_status: true   # gap
+    devices: 1                  # the story's new phone arrives at T
+    tenure_years: 4             # gap
+    opening_balance_inr: 600000   # gap: covers ₹1,80,000
+  - key: RAVI                   # S-3 victim
+    display_name: Ravi Kumar
+    age: 45
+    language: hi
+    home_city: Delhi            # gap
+    income_band: MID            # gap
+    consent_call_status: true   # gap
+    devices: 1                  # gap
+    tenure_years: 8             # gap
+    opening_balance_inr: 800000   # gap: covers ₹3,00,000
+
+# docs/14 §6, §8: 15 collect-refund victims created at seed time, with no history of the scam;
+# otherwise drawn like any customer.
+s4_victims: {count: 15, key_prefix: S4_VICTIM}
+
+rings:
+  # S-1: "a freshly opened layer-1 mule account at XBK2, not yet listed", with phone FRI LOW,
+  # scripted so p_mule < 0.5 (gap: its own one-account ring, opened 3 days before the history
+  # ends, full KYC, no shared device, no money through it).
+  - key: KAMALA_PAYEE
+    layers: [[XBK2]]
+    shared_device: false
+    opened_days_before_end: 3      # gap: "freshly opened"
+    kyc_level: FULL
+    fri: LOW
+  # S-3: "12 mule accounts across DLPH, XBK1, XBK3" in 3 layers (gap: 4 per layer, the banks
+  # below, and its 3 home-bank mules share one device).
+  - key: RING_7
+    layers:
+      - [XBK1, DLPH, XBK3, XBK1]
+      - [DLPH, XBK3, XBK1, XBK3]
+      - [XBK1, XBK3, DLPH, XBK3]
+    shared_device: true
+
+merchants:
+  # S-2: "Sunrise Multispeciality Hospital (a registered merchant)". Accounts have no name
+  # column, so the first generated hospital stands in for it (gap), with FRI LOW (gap: S-2's
+  # pinned LOW_OR_UNKNOWN).
+  - key: SUNRISE_HOSPITAL
+    name: Sunrise Multispeciality Hospital
+    category: HOSPITAL
+    fri: LOW
+
+stories:
+  S1:   # docs/14 §6, docs/21 ENG-S1 / E2E-S1
+    customer: KAMALA
+    payee: KAMALA_PAYEE
+    amount_inr: 480000
+    channel: IMPS               # gap
+    local_time: "23:40"
+    telemetry:                  # on a call with an unknown number, typing normally
+      typing_cadence_z: 0.3     # gap
+      paste_on_account_field: false
+      max_field_dwell_s: 6.0    # gap
+      remote_access_active: false
+      screen_share_active: false
+      on_call: true
+      call_counterparty_known: false
+      session_duration_s: 95.0  # gap
+    answers:
+      - {probe: PURPOSE_QUESTION, answer: FAMILY_OR_FRIEND, after_s: 6}
+      - {probe: SPELL_BREAKER_DIGITAL_ARREST, answer: "NO", after_s: 11, app_switches: 1}
+  S2:   # docs/14 §6, docs/21 ENG-S2 / E2E-S2
+    customer: ARJUN
+    payee: SUNRISE_HOSPITAL
+    amount_inr: 180000
+    channel: UPI_PUSH           # gap
+    new_device_os: ANDROID      # "new phone today" (gap: OS)
+    telemetry:                  # not on a call, typing normally (ARJUN_PASSIVE)
+      typing_cadence_z: 0.2     # gap
+      paste_on_account_field: false
+      max_field_dwell_s: 4.0    # gap
+      remote_access_active: false
+      screen_share_active: false
+      on_call: false
+      call_counterparty_known: null
+      session_duration_s: 60.0  # gap
+    answers:
+      - {probe: BIOMETRIC_STEP_UP, answer: MATCH, after_s: 2}       # gap: 2 s
+      - {probe: PURPOSE_QUESTION, answer: MEDICAL, after_s: 5}
+  S3:   # docs/14 §6, docs/21 ENG-S3
+    customer: RAVI
+    payee: RING_7
+    amount_inr: 300000
+    channel: IMPS               # gap
+    minutes_before_t0: 10       # "released earlier, at T−10 min"
+    complaint_channel: NCRP_1930   # "complaint at T0" (gap: channel)
