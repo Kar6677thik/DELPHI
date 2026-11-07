@@ -65,7 +65,7 @@ def test_rings_follow_docs_14_section_4(many_rings: MuleNetwork, population: Pop
         for layer, ids in enumerate(ring.layers, start=1):
             assert all(truth[a].ring_id == ring.id and truth[a].layer == layer for a in ids)
     home = sum(a.bank_code == "DLPH" for a in many_rings.accounts) / len(many_rings.accounts)
-    assert home == pytest.approx(0.42, abs=0.04)  # 0.4, nudged up by the shared devices
+    assert home == pytest.approx(0.23, abs=0.03)  # 0.21, nudged up by the shared devices
 
 
 def test_home_bank_mules_are_customers_with_devices(many_rings: MuleNetwork) -> None:
@@ -163,13 +163,17 @@ def test_dataset_exports_mules_and_truth(listed_dataset: Dataset) -> None:
     assert all(row["ring_id"] is None for a, row in truth.items() if a not in mules)
     customers = {row["id"] for row in tables["customers"]}
     assert {str(c.id) for c in listed_dataset.network.customers} <= customers
+    end = listed_dataset.population.history_end
+    listings = (*listed_dataset.network.listings, *listed_dataset.history.registry_listings)
     assert {row["account_id"] for row in tables["sim_registry_listings"]} == {
-        str(r.account_id) for r in listed_dataset.network.listings
+        str(r.account_id)
+        for r in listings
+        if r.listed_at < end  # docs/14 §8
     }
     registry_labels = [
         row for row in tables["label_schedule"] if row["label_source"] == "REGISTRY_LISTING"
     ]
-    assert len(registry_labels) == len(listed_dataset.network.listings)
+    assert len(registry_labels) == len(listings)
 
 
 def test_mules_do_not_stand_out_in_the_bank_tables(
