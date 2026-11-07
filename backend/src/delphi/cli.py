@@ -24,8 +24,9 @@ from delphi.kb.canonical import content_sha256
 from delphi.kb.issues import KbValidationError
 from delphi.kb.loader import load_and_validate
 from delphi.platform.db import alembic_config
+from delphi.platform.events import EventHub
 from delphi.platform.logging import configure_logging, get_logger
-from delphi.platform.settings import Settings, SettingsError, load_settings
+from delphi.platform.settings import Settings, SettingsError, libpq_url, load_settings
 from delphi.platform.wiring import build_platform
 from delphi.platform.worker import install_stop_handlers, run_worker
 from delphi.probes.registry import CLASSIFIER_NAMES
@@ -126,9 +127,10 @@ def _quiet_alembic() -> None:
 def _api(settings: Settings) -> int:
     _quiet_alembic()
     platform = build_platform(settings, process="api")
+    hub = EventHub(platform.sessions, libpq_url(settings.database_url))
     try:
         uvicorn.run(
-            create_app(platform),
+            create_app(platform, event_hub=hub),
             host=settings.http_host,
             port=settings.http_port,
             log_config=None,  # logging is configured by configure_logging (docs/20 §1)

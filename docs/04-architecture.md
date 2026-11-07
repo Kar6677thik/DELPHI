@@ -223,6 +223,20 @@ and fans events out to subscribers. This is a transactional outbox (EFG §11), s
 lost if the api restarts: on reconnect, the client sends `Last-Event-ID` and the server replays
 from `outbox_events`.
 
+Implementation rules (`delphi.platform.events`):
+
+- `publish(session, type, entity_id, payload)` takes `pg_advisory_xact_lock(43)` before
+  inserting, so publishing transactions commit in id order and a reader that has seen id N has
+  seen every id below it. Lock 42 is the audit chain's (doc 17 §4). Publish as the last step of
+  a transaction, so the lock is held briefly.
+- The api's listener thread holds one plain connection that LISTENs. On each notification, and
+  every 5 s as a safety net, it reads the outbox rows after the last id it has seen. It hands
+  them to the event loop, which puts each event on every matching subscriber's queue (1,000
+  events). A subscriber whose queue is full is closed; its client reconnects and replays.
+- A stream subscribes before it replays and skips ids it has already sent, so nothing
+  committed during the replay is lost.
+- Job state changes publish `job.updated` (`{status, progress}`) in the same transaction.
+
 ## 6. Cross-cutting concerns
 
 | Concern | Approach | Doc |

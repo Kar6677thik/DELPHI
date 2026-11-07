@@ -158,7 +158,18 @@ Permission names refer to doc 19 §3.
 
 ## 3. Server-Sent Events
 
-`GET /api/v1/events/stream` with `Accept: text/event-stream`. Each event:
+`GET /api/v1/events/stream` with `Accept: text/event-stream`. Query `topics` (comma-separated,
+default all) selects event types by prefix:
+- `guardian` → `guardian.*`
+- `cases` → `case.*`, `evidence.*`, `campaign.*`
+- `chase` → `chase.*`
+- `jobs` → `job.*`
+- `scout` → `scout.*`
+- `kb` → `kb.*`
+- `sim` → `sim.*`
+
+An unknown topic, or a `Last-Event-ID` that is not an event id, is `422 VALIDATION_FAILED`.
+The stream needs the `view` permission. Each event:
 
 ```
 id: <outbox_events.id>

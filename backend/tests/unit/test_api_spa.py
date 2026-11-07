@@ -112,7 +112,9 @@ def test_nothing_is_served_without_a_build(tmp_path: Path) -> None:
 
 def test_the_fallback_is_not_in_the_contract(client: TestClient) -> None:
     paths = client.get("/api/v1/openapi.json").json()["paths"]
-    assert set(paths) == {"/api/v1/health", "/api/v1/ready"}
+    assert {"/api/v1/health", "/api/v1/ready"} <= set(paths)
+    # The SPA fallback is a 404 handler, not a route: only API paths appear in the contract.
+    assert all(p.startswith("/api/v1/") for p in paths)
 
 
 def _problem(response: object, status: int) -> None:
