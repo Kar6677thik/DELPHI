@@ -38,6 +38,8 @@ def _value(value: object) -> object:
         return {k: _value(v) for k, v in value.items()}
     if isinstance(value, float):
         return quantise(value)
+    if isinstance(value, tuple | list):
+        return [_value(v) for v in value]
     return value
 
 
@@ -64,6 +66,8 @@ def canonical_tables(dataset: Dataset) -> dict[str, list[Row]]:
         "account_truth": _rows(dataset.account_truth, by_account),
         "payees": _rows((*pop.payees, *history.payees), by_id),
         "login_events": _rows(history.logins, by_id),
+        "crm_events": _rows(history.crm_events, by_id),
+        "complaints": _rows(history.complaints, by_id),
         "payments": _rows(history.payments, by_id),
         "ledger_entries": _rows(
             history.ledger, lambda r: (r["at"], r["payment_id"], r["account_id"])

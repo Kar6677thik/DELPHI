@@ -185,6 +185,88 @@ class MuleRingConfig(_Frozen):
         return self
 
 
+class AtoConfig(_Frozen):
+    transfers: Range
+    drain_share: Range
+    window_minutes: float = Field(gt=0)
+    kind: dict[str, float]
+    sim_swap_lead_hours: Range
+    payee_lead_minutes: Range
+    channel: dict[str, float]
+
+    @model_validator(mode="after")
+    def _weights(self) -> AtoConfig:
+        _distribution(self.kind, "fraud.ato.kind")
+        _distribution(self.channel, "fraud.ato.channel")
+        if self.payee_lead_minutes.max >= self.window_minutes:
+            raise ValueError("fraud.ato: the payee must be added inside the transfer window")
+        return self
+
+
+class DigitalArrestConfig(_Frozen):
+    older_share: Probability
+    older_age: int = Field(ge=18)
+    transfers: Range
+    span_days: Range
+    balance_share: Range
+    channel: dict[str, float]
+
+    @model_validator(mode="after")
+    def _weights(self) -> DigitalArrestConfig:
+        _distribution(self.channel, "fraud.digital_arrest.channel")
+        return self
+
+
+class InvestmentConfig(_Frozen):
+    payments: Range
+    fee_payments: Range
+    span_days: Range
+    fee_phase_share: Probability
+    first_amount_inr: LogNormal
+    escalation: float = Field(ge=1)
+    fee_share: Probability
+    max_balance_share: Probability
+    channel: dict[str, float]
+
+    @model_validator(mode="after")
+    def _weights(self) -> InvestmentConfig:
+        _distribution(self.channel, "fraud.investment.channel")
+        return self
+
+
+class FraudConfig(_Frozen):
+    """The fraud victims' scenarios (docs/14 §4)."""
+
+    rate_per_10k: dict[str, float]
+    genuine_rate_per_10k: float = Field(gt=0)
+    payee_lead_minutes: Range
+    ato: AtoConfig
+    digital_arrest: DigitalArrestConfig
+    investment: InvestmentConfig
+    complaint_channel: dict[str, float]
+    complaint_category: dict[str, str]
+
+    @model_validator(mode="after")
+    def _scenarios(self) -> FraudConfig:
+        _distribution(self.complaint_channel, "fraud.complaint_channel")
+        scenarios = {"ATO", "APP_DIGITAL_ARREST", "APP_INVESTMENT"}
+        if set(self.rate_per_10k) != scenarios or set(self.complaint_category) != scenarios:
+            raise ValueError("fraud needs a rate and a complaint category per victim scenario")
+        return self
+
+
+class CrmConfig(_Frozen):
+    """Genuine customers' background CRM events."""
+
+    background_mean_days: float = Field(gt=0)
+    types: dict[str, float]
+
+    @model_validator(mode="after")
+    def _weights(self) -> CrmConfig:
+        _distribution(self.types, "crm.types")
+        return self
+
+
 class GeneratorConfig(_Frozen):
     profiles: dict[str, ProfileConfig]
     fixed_history_end: datetime
@@ -195,6 +277,8 @@ class GeneratorConfig(_Frozen):
     legacy_policy: LegacyPolicyConfig
     genuine_unusual: GenuineUnusualConfig
     mule_rings: MuleRingConfig
+    fraud: FraudConfig
+    crm: CrmConfig
     new_device_mean_days: float = Field(gt=0)
     login_lead_s: Range
     cities: dict[str, City]

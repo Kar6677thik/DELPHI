@@ -1,17 +1,18 @@
-"""The history period's genuine payments, decided by the legacy policy B1 (docs/14 §4, #17).
+"""The history period's payments, decided by the legacy policy B1 (docs/14 §4, #17).
 
 GENUINE_UNUSUAL events (a large one-off to a new merchant, or from a new phone; 30% at night)
 run at each customer's routine rate × 150 / 9,700, genuine new phones appear once per 400 days,
-and every customer session starts with a login.
+and every customer session starts with a login. The fraud victims' sessions come from
+`delphi.sim.fraud`, scaled to the genuine sessions a dry run of the history makes.
 
 Each customer plans its GENUINE_ROUTINE payments from its own stream,
 ``keyed_rng(seed, "routine", i)``: a daily rate λ ~ Gamma(2, 0.3), Poisson counts per day,
 Zipf-weighted payees, log-normal amounts per payee type at a habitual local hour, plus a monthly
 salary credit. One chronological pass then applies B1 (which declines payments to a payee the
-sim registry lists by then), keeps balances non-negative (a payment
-the payer cannot fund is not made), writes the double-entry ledger (docs/05 §1) and schedules
-each customer payment's labels (docs/14 §7): a held or declined history payment is never
-investigated, so it never gets a label.
+sim registry lists by then), keeps balances non-negative (a payment the payer cannot fund is
+not made), writes the double-entry ledger (docs/05 §1), schedules each customer payment's
+labels (docs/14 §7) and files the complaints the bank receives. A held or declined history
+payment is never investigated, so it never gets a label.
 """
 
 from __future__ import annotations
@@ -20,18 +21,19 @@ import bisect
 import math
 from collections import defaultdict
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
-from typing import Any
 from uuid import UUID
 
 import numpy as np
 
 from delphi.kb.model import ClassifierThresholds
+from delphi.sim.fraud import FraudPlan, plan_fraud
 from delphi.sim.generator_config import GeneratorConfig
 from delphi.sim.ids import IdStream
 from delphi.sim.labels import (
     LabelConfig,
+    LabelSource,
     PaymentDecision,
     PaymentOutcome,
     ScheduledLabel,
@@ -41,6 +43,7 @@ from delphi.sim.legacy_policy import decide_b1, payee_is_new
 from delphi.sim.logins import LoginEvent, login_before
 from delphi.sim.mules import MuleNetwork
 from delphi.sim.population import ACTIVE, FULL_KYC, Account, Device, Payee, Population, _choice
+from delphi.sim.records import Complaint, CrmEvent, ScenarioInstance
 from delphi.sim.response_models import TelemetryTargets, draw_signals
 from delphi.sim.rng import keyed_rng
 from delphi.sim.scenarios import ScenarioType, ground_truth_key
@@ -84,15 +87,6 @@ class LedgerEntry:
 
 
 @dataclass(frozen=True, slots=True)
-class ScenarioInstance:
-    id: UUID
-    scenario_type: str
-    hypothesis_key: str
-    params: Mapping[str, Any]
-    started_at: datetime
-
-
-@dataclass(frozen=True, slots=True)
 class PaymentTruth:
     payment_id: UUID
     scenario_instance_id: UUID
@@ -114,6 +108,8 @@ class History:
     devices: tuple[Device, ...] = ()  # phones first seen during the history
     payees: tuple[Payee, ...] = ()  # payees saved during the history
     logins: tuple[LoginEvent, ...] = ()
+    crm_events: tuple[CrmEvent, ...] = ()
+    complaints: tuple[Complaint, ...] = ()  # those reported before the history ends
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,6 +128,24 @@ class _Intent:
     telemetry: SessionTelemetry | None
     scenario: ScenarioType = ScenarioType.GENUINE_ROUTINE
     login: LoginEvent | None = None
+    is_fraud: bool = False
+    coached: bool = False
+    balance_share: float | None = None  # the amount is this share of the payer's balance
+    max_balance_share: float | None = None  # the amount is at most this share of the balance
+    fee_share: float | None = None  # a fee of this share of the instance's deposits made
+
+    def settle(self, balance: int, deposited: int = 0) -> int:
+        """The amount actually sent, given the payer's balance at the time and, for a fee,
+        what the instance has deposited so far."""
+        if self.balance_share is not None:
+            return int(balance * self.balance_share) // _PAISE_PER_INR * _PAISE_PER_INR
+        amount = self.amount_paise
+        if self.fee_share is not None:
+            amount = round(deposited * self.fee_share / _PAISE_PER_INR) * _PAISE_PER_INR
+        if self.max_balance_share is not None:
+            cap = int(balance * self.max_balance_share) // _PAISE_PER_INR * _PAISE_PER_INR
+            return min(amount, cap)
+        return amount
 
 
 def _lognormal_paise(rng: np.random.Generator, median_inr: float, sigma: float) -> int:
@@ -176,6 +190,7 @@ class _Planner:
         self.new_payees: list[Payee] = []
         # Merchants each customer saves during the history (a payee is saved only once).
         self.saved_during: defaultdict[UUID, list[UUID]] = defaultdict(list)
+        self.phones: dict[UUID, list[Device]] = {}  # each customer's genuine new phones
         self.unusual_merchants = [
             a.id
             for a in population.accounts
@@ -245,19 +260,21 @@ class _Planner:
         at: datetime,
         device: Device,
         instance: UUID,
+        city: str | None = None,
     ) -> _Intent:
         customer = self.pop.customers[customer_index]
         payment_id = self.payment_ids.next()
         signals = draw_signals(rng, self.targets[scenario])
         telemetry = render_telemetry(rng, payment_id, signals, self.cfg.telemetry, self.thresholds)
+        city = city or customer.home_city
         login = login_before(
             rng,
             login_id=self.login_ids.next(),
             customer_id=customer.id,
             device_id=device.id,
             fingerprint=device.fingerprint,
-            city_name=customer.home_city,
-            city=self.cfg.cities[customer.home_city],
+            city_name=city,
+            city=self.cfg.cities[city],
             session_at=at,
             lead_s=self.cfg.login_lead_s,
             not_before=self.pop.history_start,
@@ -354,6 +371,43 @@ class _Planner:
             )
         )
 
+    def fraud(self, plan: FraudPlan) -> list[_Intent]:
+        """The victims' payments as customer sessions, each instance from its own stream."""
+        intents = []
+        streams: dict[UUID, np.random.Generator] = {}
+        for session in plan.sessions:
+            customer = self.pop.customers[session.customer_index]
+            rng = streams.setdefault(
+                session.instance, keyed_rng(self.seed, "fraud_session", str(session.instance))
+            )
+            device = session.device or self._device_at(
+                rng, self.devices[customer.id], self.phones[customer.id], session.at
+            )
+            intent = self._session(
+                rng,
+                session.scenario,
+                customer_index=session.customer_index,
+                payer=self.home_account[customer.id].id,
+                payee=session.payee,
+                amount_paise=session.amount_paise,
+                channel=session.channel,
+                at=session.at,
+                device=device,
+                instance=session.instance,
+                city=session.city,
+            )
+            intents.append(
+                replace(
+                    intent,
+                    is_fraud=True,
+                    coached=session.coached,
+                    balance_share=session.balance_share,
+                    max_balance_share=session.max_balance_share,
+                    fee_share=session.fee_share,
+                )
+            )
+        return intents
+
     def customer(
         self, index: int, intents: list[_Intent], instances: list[ScenarioInstance]
     ) -> None:
@@ -390,6 +444,7 @@ class _Planner:
             if at >= self.pop.history_end:
                 break
             phones.append(self._new_device(rng, customer.id, at))
+        self.phones[customer.id] = phones
         employer = self.payroll[int(rng.integers(len(self.payroll)))]
         for day in self._local_days():
             if day.day == 1:
@@ -454,62 +509,150 @@ def generate_history(
     thresholds: ClassifierThresholds,
     label_config: LabelConfig,
     network: MuleNetwork,
+    coached_share: float,
 ) -> History:
-    """Genuine payments and salaries over the history, decided by B1.
+    """The history's genuine and fraud payments and salaries, decided by B1.
 
     ``targets`` are the scenarios' telemetry targets (docs/14 §5.1) and ``thresholds`` the KB's
     classifier thresholds (docs/08 §5). ``network`` holds the mule accounts, whose balances the
-    history carries, and the registry listings B1 declines payments to."""
+    history carries, and the registry listings B1 declines payments to. ``coached_share`` is
+    the share of well-coached DA and INV victims (docs/14 §5.2)."""
     planner = _Planner(config, population, targets, thresholds)
-    intents: list[_Intent] = []
+    genuine: list[_Intent] = []
     instances: list[ScenarioInstance] = []
     for index in range(len(population.customers)):
-        planner.customer(index, intents, instances)
-    intents = [i for i in intents if population.history_start <= i.at < population.history_end]
-    intents.sort(key=lambda i: (i.at, str(i.id)))
+        planner.customer(index, genuine, instances)
+    inside = population.history_start, population.history_end
+    genuine = sorted(
+        (i for i in genuine if inside[0] <= i.at < inside[1]), key=lambda i: (i.at, str(i.id))
+    )
+    # The fraud rates are per 10,000 payments made: a dry run of the genuine payments counts
+    # the sessions that happen (some are never made, for want of funds).
+    dry = _Bank(planner, network)
+    made = sum(dry.process(i) is not None and i.decided for i in genuine)
+    plan = plan_fraud(
+        config, population, network, genuine_sessions=made, coached_share=coached_share
+    )
+    instances.extend(plan.instances)
+    planner.new_devices.extend(plan.devices)
+    planner.new_payees.extend(plan.payees)
+    fraud = [i for i in planner.fraud(plan) if inside[0] <= i.at < inside[1]]
+    intents = sorted((*genuine, *fraud), key=lambda i: (i.at, str(i.id)))
+    return _run(planner, intents, context=_RunContext(network, instances, plan, label_config))
 
-    spec = config.profiles[population.profile]
-    balances = {
-        a.id: a.balance_paise for a in (*population.accounts, *network.accounts, *planner.payroll)
+
+@dataclass(frozen=True, slots=True)
+class _RunContext:
+    network: MuleNetwork
+    instances: list[ScenarioInstance]
+    plan: FraudPlan
+    label_config: LabelConfig
+
+
+class _Bank:
+    """The bank's state through the pass: balances, B1's view of payees and devices."""
+
+    def __init__(self, planner: _Planner, network: MuleNetwork) -> None:
+        pop = planner.pop
+        self.policy = planner.cfg.legacy_policy
+        self.history_start = pop.history_start
+        self.balances = {
+            a.id: a.balance_paise for a in (*pop.accounts, *network.accounts, *planner.payroll)
+        }
+        self.listed_at = {listing.account_id: listing.listed_at for listing in network.listings}
+        home = planner.home_account
+        self.saved_at = {
+            (home[p.customer_id].id, p.account_id): p.added_at
+            for p in (*pop.payees, *planner.new_payees)
+        }
+        self.first_seen = {d.id: d.first_seen_at for d in (*pop.devices, *planner.new_devices)}
+        self.new_device = timedelta(days=planner.thresholds.new_device_days)
+        self.paid: set[tuple[UUID, UUID]] = set()
+        self.deposited: dict[UUID, int] = {}  # each investment scam's deposits made so far
+
+    def _decide(self, intent: _Intent) -> PaymentDecision:
+        if not intent.decided:
+            return PaymentDecision.RELEASED
+        pair = (intent.payer, intent.payee)
+        payee_new = payee_is_new(
+            self.policy, added_at=self.saved_at.get(pair), at=intent.at, ever_paid=pair in self.paid
+        )
+        device_is_new = (
+            intent.device is not None
+            and intent.at - self.first_seen[intent.device] < self.new_device
+        )
+        listed = self.listed_at.get(intent.payee)
+        return decide_b1(
+            self.policy,
+            amount_paise=intent.amount_paise,
+            channel=intent.channel,
+            payee_listed=listed is not None and listed <= intent.at,
+            payee_is_new=payee_new,
+            device_is_new=device_is_new,
+        )
+
+    def process(self, planned: _Intent) -> tuple[_Intent, PaymentDecision] | None:
+        """B1's decision on the payment as made, or None if it is never made. A released
+        payment is executed at once."""
+        amount = planned.settle(
+            self.balances[planned.payer], self.deposited.get(planned.instance, 0)
+        )
+        if amount <= 0:
+            return None  # nothing left to take
+        intent = (
+            replace(planned, amount_paise=amount) if amount != planned.amount_paise else planned
+        )
+        decision = self._decide(intent)
+        if decision is PaymentDecision.RELEASED:
+            if self.balances[intent.payer] < amount:
+                return None  # the payer cannot fund it, so the payment is never made
+            self.paid.add((intent.payer, intent.payee))
+            if intent.scenario is ScenarioType.APP_INVESTMENT and intent.fee_share is None:
+                self.deposited[intent.instance] = self.deposited.get(intent.instance, 0) + amount
+            self.balances[intent.payer] -= amount
+            self.balances[intent.payee] += amount
+        return intent, decision
+
+
+def _complaint(
+    planner: _Planner, label: ScheduledLabel, intent: _Intent, victim: UUID, ids: IdStream
+) -> Complaint:
+    cfg = planner.cfg.fraud
+    rng = keyed_rng(planner.seed, "complaint", str(intent.id))
+    return Complaint(
+        id=ids.next(),
+        reported_at=label.due_at,
+        victim_customer_id=victim,
+        channel=_choice(rng, cfg.complaint_channel),
+        category=cfg.complaint_category[intent.scenario.value],
+        payment_ids=(intent.id,),
+        counterparty_account_ids=(intent.payee,),
+    )
+
+
+def _run(planner: _Planner, intents: list[_Intent], *, context: _RunContext) -> History:
+    """One chronological pass: B1, the funds check, the ledger, truth, labels, complaints."""
+    population = planner.pop
+    spec = planner.cfg.profiles[population.profile]
+    bank = _Bank(planner, context.network)
+    complaint_ids = IdStream(planner.seed, "complaint")
+    victim_of = {
+        a.id: a.customer_id
+        for a in (*population.accounts, *context.network.accounts)
+        if a.customer_id
     }
-    listed_at = {listing.account_id: listing.listed_at for listing in network.listings}
     payments: list[Payment] = []
     ledger: list[LedgerEntry] = []
     telemetry: list[SessionTelemetry] = []
     truth: list[PaymentTruth] = []
     labels: list[ScheduledLabel] = []
     logins: list[LoginEvent] = []
-    home = planner.home_account
-    saved_at = {
-        (home[p.customer_id].id, p.account_id): p.added_at
-        for p in (*population.payees, *planner.new_payees)
-    }
-    first_seen = {d.id: d.first_seen_at for d in (*population.devices, *planner.new_devices)}
-    new_device = timedelta(days=thresholds.new_device_days)
-    paid: set[tuple[UUID, UUID]] = set()
-    for intent in intents:
-        pair = (intent.payer, intent.payee)
-        payee_new = payee_is_new(
-            config.legacy_policy, added_at=saved_at.get(pair), at=intent.at, ever_paid=pair in paid
-        )
-        device_is_new = (
-            intent.device is not None and intent.at - first_seen[intent.device] < new_device
-        )
-        listed = listed_at.get(intent.payee)
-        decision = (
-            decide_b1(
-                config.legacy_policy,
-                amount_paise=intent.amount_paise,
-                channel=intent.channel,
-                payee_listed=listed is not None and listed <= intent.at,
-                payee_is_new=payee_new,
-                device_is_new=device_is_new,
-            )
-            if intent.decided
-            else PaymentDecision.RELEASED
-        )
-        if decision is PaymentDecision.RELEASED and balances[intent.payer] < intent.amount_paise:
-            continue  # the payer cannot fund it, so the payment is never made
+    complaints: list[Complaint] = []
+    for planned in intents:
+        made = bank.process(planned)
+        if made is None:
+            continue
+        intent, decision = made
         executed = decision is PaymentDecision.RELEASED
         payments.append(
             Payment(
@@ -528,47 +671,48 @@ def generate_history(
         if intent.login is not None:
             logins.append(intent.login)
         if executed:
-            paid.add(pair)
-            balances[intent.payer] -= intent.amount_paise
-            balances[intent.payee] += intent.amount_paise
-            ledger.append(
-                LedgerEntry(
-                    intent.payer, intent.id, -intent.amount_paise, balances[intent.payer], intent.at
+            for account, delta in (
+                (intent.payer, -intent.amount_paise),
+                (intent.payee, intent.amount_paise),
+            ):
+                ledger.append(
+                    LedgerEntry(account, intent.id, delta, bank.balances[account], intent.at)
                 )
-            )
-            ledger.append(
-                LedgerEntry(
-                    intent.payee, intent.id, intent.amount_paise, balances[intent.payee], intent.at
-                )
-            )
         if intent.telemetry is not None:
             telemetry.append(intent.telemetry)
         truth.append(
             PaymentTruth(
                 payment_id=intent.id,
                 scenario_instance_id=intent.instance,
-                is_fraud=False,
+                is_fraud=intent.is_fraud,
                 hypothesis_key=ground_truth_key(intent.scenario),
-                coached=False,
+                coached=intent.coached,
             )
         )
         if intent.decided:
             outcome = PaymentOutcome(str(intent.id), intent.scenario, decision, intent.at)
-            labels.extend(
-                schedule_payment_labels(
-                    outcome, label_config, seed=spec.seed, maturity_days=spec.maturity_days
-                )
+            scheduled = schedule_payment_labels(
+                outcome, context.label_config, seed=spec.seed, maturity_days=spec.maturity_days
+            )
+            labels.extend(scheduled)
+            complaints.extend(
+                _complaint(planner, label, intent, victim_of[intent.payer], complaint_ids)
+                for label in scheduled
+                if label.label_source is LabelSource.CUSTOMER_COMPLAINT
+                and label.due_at < population.history_end
             )
     return History(
         payroll_accounts=planner.payroll,
         payments=tuple(payments),
         ledger=tuple(ledger),
         telemetry=tuple(telemetry),
-        scenario_instances=tuple(instances),
+        scenario_instances=tuple(context.instances),
         payment_truth=tuple(truth),
         labels=tuple(labels),
-        balances=balances,
+        balances=bank.balances,
         devices=tuple(planner.new_devices),
         payees=tuple(planner.new_payees),
         logins=tuple(logins),
+        crm_events=context.plan.crm_events,
+        complaints=tuple(complaints),
     )
