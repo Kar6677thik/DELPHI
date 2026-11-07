@@ -146,7 +146,7 @@ Permission names refer to doc 19 §3.
 
 | Method & path | Perm | Notes |
 |---|---|---|
-| GET/POST `/admin/users`, PATCH `/admin/users/{id}` | `admin` | create, disable, reset password, change role |
+| GET/POST `/admin/users`, PATCH `/admin/users/{id}` | `admin` | Create `{username, display_name, password, role}`; a taken username is 422. PATCH `{display_name?, role?, disabled?, password?}` with `If-Match` (ETag `"<version>"`): a stale one is 412, a missing one 422. Disabling, a role change or a password reset ends the user's sessions at once. Removing the last enabled ADMIN (disable or demote) is `409 INVALID_STATE_TRANSITION`. Every change is audited |
 | POST `/admin/datasets` | `admin` | `{profile, seed}` → job |
 | POST `/admin/sensing/train` | `admin` | → job |
 | POST `/admin/demo/scenarios/{story}/run` | `demo:drive` | story ∈ `S1,S2,S3,S4`; `{mode}` |
