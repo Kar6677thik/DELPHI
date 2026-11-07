@@ -40,7 +40,12 @@ def _client(static_dir: Path) -> Iterator[TestClient]:
         db_connect_timeout_s=1,
     )
     platform = build_platform(settings, process="test")
-    yield TestClient(create_app(platform), raise_server_exceptions=False)
+    yield TestClient(
+        create_app(platform),
+        raise_server_exceptions=False,
+        # What the SPA sends with every request (docs/16 §1 CSRF rule).
+        headers={"X-Delphi-Csrf": "1", "Origin": "http://testserver"},
+    )
     platform.close()
 
 

@@ -60,9 +60,16 @@ class DelphiError(Exception):
 
     code: ProblemCode = ProblemCode.INTERNAL
 
-    def __init__(self, detail: str, *, code: ProblemCode | None = None) -> None:
+    def __init__(
+        self,
+        detail: str,
+        *,
+        code: ProblemCode | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> None:
         super().__init__(detail)
         self.detail = detail
+        self.headers = headers  # e.g. Retry-After on RATE_LIMITED
         if code is not None:
             self.code = code
 

@@ -15,6 +15,7 @@ from typing import Annotated
 from pydantic import Field, SecretStr, ValidationError, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from delphi.platform.auth_sessions import SessionPolicy
 from delphi.platform.jobs import QueueConfig
 
 # src/delphi/platform/settings.py → backend/
@@ -76,6 +77,17 @@ class Settings(BaseSettings):
     worker_fast_concurrency: int = Field(default=1, ge=1, le=4)
     worker_poll_interval_s: float = Field(default=1.0, gt=0, le=60)
     worker_heartbeat_max_age_s: int = Field(default=30, ge=5, le=600)
+    # Sessions and sign-in (docs/19 §2, docs/16 §1).
+    session_idle_h: int = Field(default=12, ge=1, le=24 * 7)
+    session_absolute_days: int = Field(default=7, ge=1, le=90)
+    login_max_failures: int = Field(default=5, ge=1, le=100)
+    login_window_min: int = Field(default=15, ge=1, le=24 * 60)
+    # The public origin (scheme://host) mutating requests must come from (CSRF, docs/19 §4).
+    # Unset in development: the request's own origin is used.
+    public_origin: str | None = None
+    # Header carrying the real client IP behind the tunnel (`CF-Connecting-IP` in the home
+    # deployment); unset: the socket peer.
+    client_ip_header: str | None = None
     # The first ADMIN, created on start when no user exists (docs/19 §2, FR-PLT-03).
     bootstrap_admin_username: str | None = None
     bootstrap_admin_password: SecretStr | None = None
@@ -102,6 +114,17 @@ class Settings(BaseSettings):
             retry_backoff=timedelta(seconds=self.job_retry_backoff_s),
             default_max_attempts=self.job_max_attempts,
         )
+
+    @property
+    def session_policy(self) -> SessionPolicy:
+        return SessionPolicy(
+            idle=timedelta(hours=self.session_idle_h),
+            absolute=timedelta(days=self.session_absolute_days),
+        )
+
+    @property
+    def login_window(self) -> timedelta:
+        return timedelta(minutes=self.login_window_min)
 
     @property
     def outbox_retention(self) -> timedelta:

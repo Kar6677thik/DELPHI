@@ -132,7 +132,7 @@ accepted, because only the owner holds either.
 | `CronJob delphi-pg-backup` | `30 21 * * *` UTC (= 03:00 IST); `pg_dump -Fc` to PVC `delphi-backups` (5Gi); keep 7 most recent; insert a row into `delphi.ops_backup_runs` |
 | `Deployment cloudflared` | `cloudflare/cloudflared` pinned; `tunnel --no-autoupdate run --token $(TUNNEL_TOKEN)` from Secret `cloudflared-token`; 1 replica; metrics port for liveness |
 | `NetworkPolicy` | **ingress only** (egress is not restricted: plain NetworkPolicy cannot filter by FQDN): default-deny ingress for the namespace; allow pods labelled `app=cloudflared` → `delphi-api:8000`; allow pods labelled `delphi.io/db-client: "true"` → `delphi-postgres:5432`. The api, worker, migrate, seed, backup and restore-test pods carry that label. Port 9000 (metrics) gets no ingress rule from outside the namespace, except an optional rule for the owner's Prometheus namespace |
-| `ConfigMap delphi-config` | `DELPHI_ENV=demo`, `DELPHI_PUBLIC_ORIGIN`, `DELPHI_LLM_PROVIDER=anthropic`, `DELPHI_LLM_MODEL=claude-opus-5-5`, `DELPHI_TIME_MODE=DEMO`, `DELPHI_LOG_LEVEL=INFO` |
+| `ConfigMap delphi-config` | `DELPHI_ENV=demo`, `DELPHI_PUBLIC_ORIGIN`, `DELPHI_CLIENT_IP_HEADER=CF-Connecting-IP`, `DELPHI_LLM_PROVIDER=anthropic`, `DELPHI_LLM_MODEL=claude-opus-5-5`, `DELPHI_TIME_MODE=DEMO`, `DELPHI_LOG_LEVEL=INFO` |
 
 Overlay `home` sets the image `ghcr.io/kar6677thik/delphi` with the initial `newTag:
 sha-<first deployed sha>` (Image Updater overrides it afterwards), and the public host.
@@ -161,6 +161,10 @@ to start, exit code 2, naming the variable, if one is missing or invalid.
 | `DELPHI_WORKER_DEFAULT_CONCURRENCY` / `DELPHI_WORKER_FAST_CONCURRENCY` | `2` / `1` | worker | doc 04 §5.4 |
 | `DELPHI_WORKER_POLL_INTERVAL_S` / `DELPHI_WORKER_HEARTBEAT_MAX_AGE_S` | `1.0` / `30` | worker | doc 20 §3 |
 | `DELPHI_OUTBOX_RETENTION_H` / `DELPHI_IDEMPOTENCY_RETENTION_H` | `24` / `24` | worker | doc 17 §6 |
+| `DELPHI_PUBLIC_ORIGIN` | unset | api | ConfigMap, e.g. `https://delphi.<domain>`. The Origin that mutating requests must carry (CSRF, doc 19 §4). Unset in development: the request's own origin |
+| `DELPHI_CLIENT_IP_HEADER` | unset | api | ConfigMap: `CF-Connecting-IP`. The header with the real client IP behind the tunnel, used for the login lockout and audit. Safe because only cloudflared can reach the api pod (§4 NetworkPolicy) |
+| `DELPHI_SESSION_IDLE_H` / `DELPHI_SESSION_ABSOLUTE_DAYS` | `12` / `7` | api | doc 19 §2 |
+| `DELPHI_LOGIN_MAX_FAILURES` / `DELPHI_LOGIN_WINDOW_MIN` | `5` / `15` | api | doc 16 §1 |
 | `DELPHI_BOOTSTRAP_ADMIN_USERNAME` / `DELPHI_BOOTSTRAP_ADMIN_PASSWORD` | unset | api | Secret `delphi-app`. Required only while `users` is empty: the api then creates this ADMIN, or exits with code 2 if they are unset (doc 19 §2) |
 
 Later milestones add their settings to this table (`DELPHI_SECRET_KEY`, `DELPHI_PUBLIC_ORIGIN`,

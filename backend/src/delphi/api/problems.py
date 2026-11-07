@@ -118,7 +118,7 @@ def internal_error_response(path: str) -> JSONResponse:
 
 async def _delphi_error(request: Request, exc: Exception) -> JSONResponse:
     assert isinstance(exc, DelphiError)
-    return problem(request, exc.code, exc.detail)
+    return problem(request, exc.code, exc.detail, headers=exc.headers)
 
 
 async def _validation_error(request: Request, exc: Exception) -> JSONResponse:
