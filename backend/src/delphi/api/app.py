@@ -14,7 +14,7 @@ from delphi.api.problems import (
     install_problem_handlers,
 )
 from delphi.api.request_context import RequestContextMiddleware
-from delphi.api.routers import API_PREFIX, events, platform
+from delphi.api.routers import API_PREFIX, events, jobs, platform
 from delphi.api.spa import install_spa
 from delphi.platform.events import EventHub
 from delphi.platform.wiring import Platform
@@ -51,6 +51,7 @@ def create_app(resources: Platform, *, event_hub: EventHub | None = None) -> Fas
     app.add_middleware(RequestContextMiddleware)
     app.include_router(platform.router)
     app.include_router(events.router)
+    app.include_router(jobs.router)
     # Last: the SPA catch-all must not shadow any API route.
     install_spa(app, resources.settings.static_dir)
     return app

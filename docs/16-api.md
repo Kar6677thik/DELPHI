@@ -18,7 +18,7 @@ documents its error body as a `default` response of `application/problem+json` w
 | Probabilities | `{hypothesis_key: float}`, 6 decimals |
 | Time | RFC 3339 UTC strings (`…Z`) |
 | Pagination | Keyset: `?limit=50&cursor=<opaque>`; response `{items, next_cursor}`. Max limit 200 |
-| Idempotency | `Idempotency-Key` header (UUID) REQUIRED on: create Guardian session, probe response, evidence request, disposition, chase operation, lien approvals, job creation. The same key and same body returns the stored response; the same key with a different body returns `409 IDEMPOTENCY_CONFLICT`. Keys are kept 24 h |
+| Idempotency | `Idempotency-Key` header (UUID) REQUIRED on: create Guardian session, probe response, evidence request, disposition, chase operation, lien approvals, job creation. The same key and same body returns the stored response, with header `Idempotent-Replayed: true`; the same key with a different body (or endpoint) returns `409 IDEMPOTENCY_CONFLICT`. Bodies are compared after canonicalising JSON (sorted keys, no whitespace). Keys are per user. A missing or non-UUID key is `422 VALIDATION_FAILED`. The response is stored in the same transaction as the request's changes, and concurrent requests with one key are serialised, so the work runs once. An error response is not stored. Keys are kept 24 h |
 | Concurrency | Mutable aggregates return `ETag: "<version>"`. Mutations need `If-Match`; a mismatch returns `412 VERSION_CONFLICT` |
 | Errors | RFC 9457 `application/problem+json`: `{type, title, status, detail, code, instance, request_id, errors?: [{path, code, message}]}` |
 | Request id | `X-Request-Id` is accepted or generated, and echoed in the response and the logs |
@@ -151,8 +151,8 @@ Permission names refer to doc 19 §3.
 | POST `/admin/sensing/train` | `admin` | → job |
 | POST `/admin/demo/scenarios/{story}/run` | `demo:drive` | story ∈ `S1,S2,S3,S4`; `{mode}` |
 | POST `/admin/demo/reset` | `admin` | → job |
-| GET `/jobs/{id}` | `view` | `{id, type, status, progress (0–1), result, error}` |
-| GET `/jobs` | `admin` | list, filters `type, status` |
+| GET `/jobs/{id}` | `view` | `{id, type, status, progress (0–1), result, error, attempts, created_at, finished_at}` |
+| GET `/jobs` | `admin` | list, newest first, keyset-paged; filters `type, status` |
 | POST `/jobs/{id}/retry` | `admin` | FAILED → QUEUED |
 | GET `/admin/audit/verify?from=&to=` | `admin` | recompute the hash chain; `{ok, checked, first_bad_id?}` |
 
