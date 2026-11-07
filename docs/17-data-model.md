@@ -87,8 +87,10 @@ Choices the list above leaves open:
 
   Account `status` stays plain `text`: the freeze and lien states are Chase's to define (M6).
   A new value widens its CHECK in a later migration.
-- `delphi.sim.writer` bulk-inserts a generated dataset through the Core tables in foreign-key
-  order, in one transaction, as `delphi_sim`.
+- `delphi.sim.writer` streams a generated dataset in with `COPY … FROM STDIN` (psycopg 3), one
+  table at a time in foreign-key order, in one transaction, as `delphi_sim` (#58). The column
+  lists come from the records; columns they lack take their defaults. A failed COPY raises the
+  same SQLAlchemy error an insert would, and the transaction rolls back.
 - `payments.scheduled_by → sim_schedule`; `ip_prefix24` is a `cidr` /24; `balance_paise`,
   `balance_after_paise ≥ 0`; `delta_paise ≠ 0`.
 - `login_events`, `crm_events` and `ledger_entries` are event logs: `at` is their creation time.

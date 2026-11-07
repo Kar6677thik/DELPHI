@@ -155,3 +155,39 @@ def test_sim_schedule_payloads_carry_no_truth(written: Written) -> None:
         ).scalar_one()
     sim.dispose()
     assert explained == rows
+
+
+def test_copy_round_trips_jsonb_arrays_and_enums(written: Written) -> None:
+    """#58: COPY adapts values itself, so read back the columns an insert used to convert."""
+    history = written.dataset.history
+    engine = engine_as(written.url, "delphi_sim")
+    with engine.connect() as conn:
+        payloads = dict(conn.execute(text("SELECT id, payload FROM bank.sim_schedule")).all())
+        params = dict(
+            conn.execute(text("SELECT id, params FROM sim_truth.scenario_instances")).all()
+        )
+        complaints = {
+            row.id: (tuple(row.payment_ids), tuple(row.counterparty_account_ids))
+            for row in conn.execute(
+                text("SELECT id, payment_ids, counterparty_account_ids FROM bank.complaints")
+            )
+        }
+        labels = set(
+            conn.execute(
+                text(
+                    "SELECT subject_type, subject_id::text, label_source, delivered "
+                    "FROM sim_truth.label_schedule"
+                )
+            ).all()
+        )
+    engine.dispose()
+    assert payloads == {s.id: dict(s.payload) for s in history.schedule}
+    assert params == {s.id: dict(s.params) for s in history.scenario_instances}
+    assert complaints and complaints == {
+        c.id: (c.payment_ids, c.counterparty_account_ids) for c in history.complaints
+    }
+    records = dataset_records(written.dataset)["label_schedule"]
+    assert labels == {
+        (label.subject_type.value, str(label.subject_id), label.label_source.value, False)
+        for label in records
+    }

@@ -735,13 +735,12 @@ def generate_history(
         planner.customer(index, genuine, instances)
     inside = population.history_start, population.history_end
     in_window = [i for i in genuine if population.history_end <= i.at < planner.horizon]
-    genuine = sorted(
-        (i for i in genuine if inside[0] <= i.at < inside[1]), key=lambda i: (i.at, str(i.id))
-    )
+    genuine = sorted((i for i in genuine if inside[0] <= i.at < inside[1]), key=_intent_order)
     # The fraud rates are per 10,000 payments made: a dry run of the genuine payments counts
     # the sessions that happen (some are never made, for want of funds).
     dry = _Bank(planner, network)
     made = sum(dry.process(i) is not None and i.decided for i in genuine)
+    del dry
     # Background CRM events run on through the window, so a window SIM-swap report is not
     # an ATO tell (#55); the history's events are the same either way.
     plan = plan_fraud(
@@ -776,7 +775,10 @@ def generate_history(
         Forwarder(config, network, seed=planner.seed, start=population.history_start),
         rings,
     )
-    history = _run(planner, [*genuine, *fraud], context=context)
+    # The pass consumes the intents, so each is freed once processed (#58).
+    genuine.extend(fraud)
+    del fraud
+    history = _run(planner, genuine, context=context)
     # The window comes after the history pass: its payments settle against the balances the
     # history ends with.
     window = _plan_window(planner, network, in_window, history.balances, coached_share)
@@ -856,8 +858,9 @@ def _plan_window(
     return _WindowPlan([*genuine, *fraud], plan)
 
 
-def _intent_order(intent: _Intent) -> tuple[datetime, str]:
-    return intent.at, str(intent.id)
+def _intent_order(intent: _Intent) -> tuple[datetime, UUID]:
+    # UUIDs order as their hex strings do, without making a string per intent (#58).
+    return intent.at, intent.id
 
 
 def _window_stream(
@@ -1132,7 +1135,8 @@ class _Rows:
 
 def _run(planner: _Planner, intents: list[_Intent], *, context: _RunContext) -> History:
     """One chronological pass: B1, the funds check, the ledger, truth, labels, complaints, and
-    the onward transfers through the mule rings as their credits arrive."""
+    the onward transfers through the mule rings as their credits arrive. It empties
+    ``intents``."""
     population = planner.pop
     forwarder = context.forwarder
     cash_accounts = tuple(forwarder.cash_accounts.values())
@@ -1150,7 +1154,8 @@ def _run(planner: _Planner, intents: list[_Intent], *, context: _RunContext) -> 
     complaints: list[Complaint] = []
     schedule_ids = IdStream(planner.seed, "sim_schedule")
     in_flight: list[tuple[ScheduledTransfer, ScheduleTruth]] = []
-    queue = [(i.at, str(i.id), i) for i in intents]
+    queue = [(*_intent_order(i), i) for i in intents]
+    intents.clear()  # the queue holds them now; each is dropped once processed (#58)
     heapq.heapify(queue)
 
     def schedule(hops: list[Hop]) -> None:
@@ -1162,7 +1167,7 @@ def _run(planner: _Planner, intents: list[_Intent], *, context: _RunContext) -> 
             intent = planner.forward(
                 hop, context.network, context.ring_instances[ring_of[hop.payer]]
             )
-            heapq.heappush(queue, (intent.at, str(intent.id), intent))
+            heapq.heappush(queue, (*_intent_order(intent), intent))
 
     while queue:
         _, _, planned = heapq.heappop(queue)
