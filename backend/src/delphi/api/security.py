@@ -11,23 +11,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from enum import StrEnum
 from uuid import UUID
 
 from fastapi import Depends, Request
 
+from delphi.platform.accounts import Permission
 from delphi.platform.errors import DelphiError, ProblemCode
 
-
-class Permission(StrEnum):
-    """docs/19 §3."""
-
-    VIEW = "view"
-    DEMO_DRIVE = "demo:drive"
-    CASE_WRITE = "case:write"
-    CHASE_WRITE = "chase:write"
-    FDE = "fde"
-    ADMIN = "admin"
+__all__ = ["Permission", "Principal", "current_principal", "require"]
 
 
 @dataclass(frozen=True, slots=True)

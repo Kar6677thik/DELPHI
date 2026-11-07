@@ -24,7 +24,9 @@ the integrity of KB versions and the audit log, and the home server itself.
 ## 2. Authentication
 
 - Username + password. Argon2id (`argon2-cffi` defaults: time_cost 3, memory 64 MiB,
-  parallelism 4). Minimum password length 12.
+  parallelism 4). Minimum password length 12. Usernames are stored trimmed and lower-case, and
+  matched case-insensitively. An unknown username still costs one Argon2 verification (against
+  a dummy hash), so response time does not reveal which usernames exist.
 - Session: a random 256-bit token in cookie `delphi_session`
   (`HttpOnly; Secure; SameSite=Strict; Path=/`). Only the SHA-256 of the token is stored
   server-side. Idle timeout 12 h, absolute 7 days. The session id rotates on login.
