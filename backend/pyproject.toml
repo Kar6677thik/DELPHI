@@ -45,6 +45,7 @@ addopts = "-ra --strict-markers"
 markers = [
   "benchmark: timing checks (warn-level in CI per docs/21 §1)",
   "integration: needs PostgreSQL (DELPHI_TEST_DATABASE_URL); docs/21 §1",
+  "slow: minutes-long checks, e.g. the eval-profile stats (run with DELPHI_RUN_SLOW=1)",
 ]
 
 # ---------------------------------------------------------------- ruff

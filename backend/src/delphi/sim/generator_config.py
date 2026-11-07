@@ -255,6 +255,14 @@ class FraudConfig(_Frozen):
         return self
 
 
+class CollectRefundConfig(_Frozen):
+    """The hidden UPI_COLLECT_REFUND scenario, live/eval window only (docs/14 §4)."""
+
+    rate_per_10k: float = Field(gt=0)
+    amount_inr: Range
+    channel: str
+
+
 class CrmConfig(_Frozen):
     """Genuine customers' background CRM events."""
 
@@ -278,6 +286,7 @@ class ForwardingConfig(_Frozen):
     split_gap_minutes: Range
     channel: dict[str, float]
     cash_account_age_days: int = Field(ge=0)
+    rate_per_10k: float = Field(gt=0)
     payee_lead_minutes: Range
 
     @model_validator(mode="after")
@@ -299,6 +308,7 @@ class GeneratorConfig(_Frozen):
     genuine_unusual: GenuineUnusualConfig
     mule_rings: MuleRingConfig
     fraud: FraudConfig
+    collect_refund: CollectRefundConfig
     forwarding: ForwardingConfig
     crm: CrmConfig
     new_device_mean_days: float = Field(gt=0)

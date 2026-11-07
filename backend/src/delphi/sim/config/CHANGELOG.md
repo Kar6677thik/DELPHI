@@ -8,6 +8,19 @@ upgrade changes them, `test_committed_freeze_matches_kb_v1_and_config` fails eve
 input changed. Then either keep the previous numpy, or regenerate with
 `uv run delphi sim freeze-response-models`, bump `generator_version` and record the upgrade here.
 
+## 9
+
+- The live/eval window (`test` 3 days, `eval` 30): customers plan through it with the same
+  habits; its fraud scenarios, plus the window-only UPI_COLLECT_REFUND (10 per 10,000), run at
+  their rates against its genuine sessions. Every window session is an undecided
+  `PENDING_GUARDIAN` / `SIM_LIVE` payment with telemetry, a login and truth; no ledger, no
+  labels (docs/22 §1).
+- Mule-ring payments still in flight when the history ends, and the window's salaries, are
+  `bank.sim_schedule` TRANSFER rows (docs/14 §8) instead of being dropped.
+- The canonical export covers `sim_schedule` and the window's rows.
+- The mule home-bank share is re-calibrated on `eval` to 0.31 (MULE_FORWARDING 30.9 per
+  10,000); the earlier 0.21 was measured with ten times fewer victims per ring.
+
 ## 8
 
 - Mule forwarding (docs/14 §4): after a log-normal dwell (12 min at layer 1, 25 min deeper,

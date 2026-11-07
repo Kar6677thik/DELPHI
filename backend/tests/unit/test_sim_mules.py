@@ -65,7 +65,7 @@ def test_rings_follow_docs_14_section_4(many_rings: MuleNetwork, population: Pop
         for layer, ids in enumerate(ring.layers, start=1):
             assert all(truth[a].ring_id == ring.id and truth[a].layer == layer for a in ids)
     home = sum(a.bank_code == "DLPH" for a in many_rings.accounts) / len(many_rings.accounts)
-    assert home == pytest.approx(0.23, abs=0.03)  # 0.21, nudged up by the shared devices
+    assert home == pytest.approx(0.33, abs=0.03)  # 0.31, nudged up by the shared devices
 
 
 def test_home_bank_mules_are_customers_with_devices(many_rings: MuleNetwork) -> None:

@@ -13,6 +13,8 @@ from delphi.kb.model import KnowledgeBase
 from delphi.sim.dataset import Dataset, generate_dataset
 from delphi.sim.forwarding import CASH_OUT, Forwarder
 from delphi.sim.generator_config import GeneratorConfig, load_generator_config
+from delphi.sim.history import _in_flight
+from delphi.sim.ids import IdStream
 from delphi.sim.mules import MuleNetwork, generate_mule_network
 from delphi.sim.population import generate_population
 
@@ -176,3 +178,35 @@ def test_home_bank_mules_save_their_payees_first(long_test: Dataset) -> None:
         payee = saved[customer_of[p.payer_account_id], p.payee_account_id]
         assert payee.added_at <= p.initiated_at
         assert payee.label.startswith("Family ")
+
+
+def test_flows_in_flight_at_the_end_are_scheduled(long_test: Dataset) -> None:
+    """docs/14 §8: a mule-ring payment due after the history becomes a TRANSFER row that the
+    live simulation (or the evaluation replay) makes later; it is not dropped."""
+    pop, history = long_test.population, long_test.history
+    in_flight = [r for r in history.schedule if r.payload["reason"] == "MULE_FORWARDING"]
+    mules = {str(a.id) for a in long_test.network.accounts}
+    for row in in_flight:
+        assert row.due_at >= pop.history_end
+        assert row.payload["payer_account_id"] in mules
+    flows = {row.payload["flow"] for row in in_flight}
+    assert len(flows) <= len(in_flight)
+
+
+def test_an_in_flight_hop_becomes_a_transfer_row(
+    config: GeneratorConfig, network: MuleNetwork
+) -> None:
+    forwarder = _forwarder(config, network)
+    ring = next(r for r in network.rings if len(r.layers) >= 2)
+    (hop, *_) = forwarder.arrive(ring.layers[0][0], 1_000_000, config.fixed_history_end)
+    row = _in_flight(IdStream(1, "sim_schedule"), hop)
+    assert row.kind == "TRANSFER" and row.due_at == hop.at and row.done_at is None
+    assert row.payload == {
+        "payer_account_id": str(hop.payer),
+        "payee_account_id": str(hop.payee),
+        "amount_paise": hop.amount_paise,
+        "channel": hop.channel,
+        "reason": "MULE_FORWARDING",
+        "flow": hop.flow,
+        "session": hop.session,
+    }

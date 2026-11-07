@@ -21,6 +21,18 @@ class ScenarioInstance:
 
 
 @dataclass(frozen=True, slots=True)
+class ScheduledTransfer:
+    """A ``bank.sim_schedule`` TRANSFER row (docs/14 §8): a payment that falls due after the
+    history, made later by the live simulation or the evaluation replay."""
+
+    id: UUID
+    due_at: datetime
+    kind: str
+    payload: Mapping[str, Any]
+    done_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class CrmEvent:
     """A row of ``bank.crm_events``."""
 
