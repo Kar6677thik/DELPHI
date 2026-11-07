@@ -9,7 +9,6 @@ another's. Ids come from per-kind ``IdStream``s (docs/14 §2). Every number is i
 
 from __future__ import annotations
 
-import bisect
 import math
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
@@ -17,6 +16,7 @@ from uuid import UUID
 
 import numpy as np
 
+from delphi.sim.draws import between, choice
 from delphi.sim.generator_config import GeneratorConfig
 from delphi.sim.ids import IdStream
 from delphi.sim.persona_config import PersonaConfig, PersonaCustomer
@@ -99,25 +99,6 @@ class Population:
 # --------------------------------------------------------------------------- generation
 
 
-_CDFS: dict[tuple[tuple[str, float], ...], tuple[tuple[str, ...], list[float]]] = {}
-
-
-def _choice(rng: np.random.Generator, weights: dict[str, float]) -> str:
-    """One draw from a categorical distribution (one uniform, inverse CDF)."""
-    key = tuple(weights.items())
-    if key not in _CDFS:
-        totals = np.cumsum([w for _, w in key])
-        _CDFS[key] = (tuple(k for k, _ in key), [float(t) for t in totals / totals[-1]])
-    keys, cdf = _CDFS[key]
-    return keys[min(bisect.bisect_right(cdf, rng.random()), len(keys) - 1)]
-
-
-def _between(rng: np.random.Generator, start: datetime, end: datetime) -> datetime:
-    """A uniformly random instant in [start, end), to the second."""
-    seconds = int((end - start).total_seconds())
-    return start + timedelta(seconds=int(rng.integers(0, max(seconds, 1))))
-
-
 class _Builder:
     def __init__(
         self,
@@ -176,7 +157,7 @@ class _Builder:
         count = round(self.spec.customers * self.merchant_cfg.per_customer)
         hospitals = round(count / self.merchant_cfg.hospital_one_in)
         for i in range(count):
-            category = HOSPITAL if i < hospitals else _choice(rng, self.merchant_cfg.categories)
+            category = HOSPITAL if i < hospitals else choice(rng, self.merchant_cfg.categories)
             bank_code = self._bank(rng)
             account = Account(
                 id=self.ids["merchant_account"].next(),
@@ -242,12 +223,12 @@ class _Builder:
         cfg = self.cfg
         script = persona if isinstance(persona, PersonaCustomer) else None
         rng = keyed_rng(self.spec.seed, "customer", str(i))
-        band = int(_choice(rng, {str(b): p for b, (_, _, p) in enumerate(cfg.age_bands)}))
+        band = int(choice(rng, {str(b): p for b, (_, _, p) in enumerate(cfg.age_bands)}))
         low, high, _ = cfg.age_bands[band]
         age = int(rng.integers(low, high + 1))
-        language = _choice(rng, cfg.language)
+        language = choice(rng, cfg.language)
         disability = bool(rng.random() < cfg.disability_probability)
-        income_band = _choice(rng, cfg.income_band)
+        income_band = choice(rng, cfg.income_band)
         customer = Customer(
             id=self.ids["customer"].next(),
             display_name=f"Customer {i:05d}",
@@ -258,7 +239,7 @@ class _Builder:
             segment=cfg.segment,
             income_band=income_band,
             consent_call_status=bool(rng.random() < cfg.consent_call_status_probability),
-            home_city=_choice(rng, cfg.home_city[language]),
+            home_city=choice(rng, cfg.home_city[language]),
         )
         if persona is not None:
             customer = _scripted(customer, persona, self.vulnerable_age)
@@ -285,21 +266,21 @@ class _Builder:
         )
         known_until = self.start - timedelta(days=cfg.known_device_min_age_days)
         device_counts = {str(k): v for k, v in cfg.device_count.items()}
-        device_count = int(_choice(rng, device_counts))
+        device_count = int(choice(rng, device_counts))
         for _ in range(script.devices if script is not None else device_count):
             devices.append(
                 Device(
                     id=self.ids["device"].next(),
                     customer_id=customer.id,
                     fingerprint=rng.bytes(_FINGERPRINT_BYTES).hex(),
-                    os=_choice(rng, cfg.device_os),
-                    first_seen_at=_between(rng, opened_at, known_until),
+                    os=choice(rng, cfg.device_os),
+                    first_seen_at=between(rng, opened_at, known_until),
                 )
             )
         chosen: set[UUID] = set()
         count = int(rng.integers(int(cfg.payee_count.min), int(cfg.payee_count.max) + 1))
         while len(chosen) < count:
-            payee_type = _choice(rng, cfg.payee_type)
+            payee_type = choice(rng, cfg.payee_type)
             if payee_type == "FAMILY":
                 account_id, label = self._family_payee(rng, i, len(chosen))
             else:
@@ -313,7 +294,7 @@ class _Builder:
                     customer_id=customer.id,
                     account_id=account_id,
                     label=label,
-                    added_at=_between(rng, opened_at, self.start),
+                    added_at=between(rng, opened_at, self.start),
                 )
             )
         return customer

@@ -47,3 +47,13 @@ def test_young_accounts_are_a_signal_not_a_tell(demo: Dataset) -> None:
     young_genuine = sum(end - a.opened_at < timedelta(days=365) for a in genuine)
     young_mules = sum(end - a.opened_at < timedelta(days=365) for a in network.accounts)
     assert young_mules / (young_mules + young_genuine) < 0.5
+
+
+def test_the_personas_keep_their_scripted_devices(demo: Dataset) -> None:
+    """#57: personas get no new phones in the history, so Kamala, Arjun and Ravi have the one
+    device each that docs/14 §6 gives them, however long the history runs."""
+    assert demo.personas is not None
+    personas = {c.id for c in demo.population.customers if c.persona_key}
+    assert not [d for d in demo.history.devices if d.customer_id in personas]
+    for key in ("KAMALA", "ARJUN", "RAVI"):
+        assert len(demo.personas.devices[key]) == 1, key

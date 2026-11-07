@@ -90,6 +90,17 @@ backend/src/delphi/
 | `LlmPort` | navigator, scout, llm jobs | `AnthropicLlm`, `TemplateLlm` | — |
 | `Clock` | everything except engine | `SystemClock`, `VirtualClock` (evaluation) | — |
 
+The simulated adapters for the external systems live with their consumers and call the
+samplers in `delphi.sim.external` (doc 14 §9, #57):
+
+- `SimPhoneRisk` in `delphi.probes` (M3/M4) reads `bank.sim_phone_risk`, and `SimCfcfrms` in
+  `delphi.chase` (M6) draws each ticket's acknowledgement from its own stream. Both run in the
+  api as well as the worker, so they never import `delphi.sim.truth` or read `sim_truth`
+  (§4.1 rule 5).
+- `SimOutreachCall` (the navigator's evidence, M5) answers from the response model of the
+  payment's true scenario, so like `SimCustomerChannel` it lives under `delphi.sim` and runs
+  only in the worker, which holds the `delphi_sim` pool (§5.1).
+
 Adapters are chosen in one composition root (`delphi.platform.wiring`) from configuration.
 There are no hidden singletons; dependencies are passed explicitly (EFG §2 "prefer
 explicitness").

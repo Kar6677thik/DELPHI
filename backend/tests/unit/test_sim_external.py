@@ -63,7 +63,7 @@ def test_cfcfrms_acknowledges_most_tickets_in_about_20_minutes(config: Generator
     delays = [cfcfrms_ack_delay(config, 1, f"ticket-{i}") for i in range(20_000)]
     acknowledged = [d.total_seconds() / 60 for d in delays if d is not None]
     never = 1 - len(acknowledged) / len(delays)
-    assert never == pytest.approx(0.10 + 0.013, abs=0.01)  # 10%, plus latencies past 2 h
+    assert never == pytest.approx(0.10, abs=0.01)  # #57: exactly never_ack_share
     assert statistics.median(acknowledged) == pytest.approx(20, rel=0.05)
     assert max(acknowledged) < 120
     assert cfcfrms_ack_delay(config, 1, "ticket-7") == delays[7]  # per-ticket stream

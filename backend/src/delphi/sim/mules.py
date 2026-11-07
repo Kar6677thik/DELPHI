@@ -22,6 +22,7 @@ from uuid import UUID
 
 import numpy as np
 
+from delphi.sim.draws import between, choice
 from delphi.sim.generator_config import GeneratorConfig
 from delphi.sim.ids import IdStream
 from delphi.sim.labels import MULE, LabelSource, ScheduledLabel, SubjectType
@@ -35,8 +36,6 @@ from delphi.sim.population import (
     Customer,
     Device,
     Population,
-    _between,
-    _choice,
 )
 from delphi.sim.rng import keyed_rng
 
@@ -168,7 +167,7 @@ class _RingBuilder:
         )
 
     def _customer(self, rng: np.random.Generator, index: int) -> Customer:
-        language = _choice(rng, self.pop_cfg.language)
+        language = choice(rng, self.pop_cfg.language)
         return Customer(
             id=self.ids["mule_customer"].next(),
             display_name=f"Customer {index:05d}",
@@ -179,7 +178,7 @@ class _RingBuilder:
             segment=self.pop_cfg.segment,
             income_band=MULE_INCOME_BAND,
             consent_call_status=bool(rng.random() < self.pop_cfg.consent_call_status_probability),
-            home_city=_choice(rng, self.pop_cfg.home_city[language]),
+            home_city=choice(rng, self.pop_cfg.home_city[language]),
         )
 
     def ring(self, r: int) -> MuleRing:
@@ -246,8 +245,8 @@ class _RingBuilder:
                                 if shares and fingerprint
                                 else rng.bytes(_FINGERPRINT_BYTES).hex()
                             ),
-                            os=_choice(rng, self.pop_cfg.device_os),
-                            first_seen_at=_between(rng, account.opened_at, self.pop.history_start),
+                            os=choice(rng, self.pop_cfg.device_os),
+                            first_seen_at=between(rng, account.opened_at, self.pop.history_start),
                         )
                     )
                 else:

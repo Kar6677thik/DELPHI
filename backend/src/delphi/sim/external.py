@@ -24,13 +24,15 @@ from dataclasses import dataclass
 from datetime import timedelta
 from uuid import UUID
 
+from delphi.sim.draws import choice
 from delphi.sim.generator_config import GeneratorConfig
-from delphi.sim.population import Account, _choice
+from delphi.sim.population import Account
 from delphi.sim.response_models import ResponseModels
 from delphi.sim.rng import keyed_rng
 from delphi.sim.scenarios import ScenarioType
 
 OUTREACH_SOURCE = "CUSTOMER_OUTREACH_CALL"
+_SECONDS_PER_MINUTE = 60
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,20 +54,23 @@ def phone_risk(
             continue
         weights = fri.ring_numbers if account.id in ring_accounts else fri.genuine_numbers
         rng = keyed_rng(seed, "fri", account.phone_number)
-        rows.append(PhoneRisk(account.phone_number, _choice(rng, weights)))
+        rows.append(PhoneRisk(account.phone_number, choice(rng, weights)))
     return tuple(rows)
 
 
 def cfcfrms_ack_delay(config: GeneratorConfig, seed: int, ticket_id: str) -> timedelta | None:
     """When CFCFRMS acknowledges a ticket, in simulated time; ``None`` if it never does
-    within the deadline. A drawn latency past the deadline counts as never."""
+    within the deadline (docs/14 §9: 10% of tickets). The latency of an acknowledged ticket is
+    the log-normal truncated below the deadline (redrawn from the ticket's stream), so exactly
+    ``never_ack_share`` are never acknowledged (#57)."""
     cfg = config.external_systems.cfcfrms
     rng = keyed_rng(seed, "cfcfrms", ticket_id)
-    never, z = rng.random(), rng.standard_normal()
-    minutes = cfg.ack_minutes.median * math.exp(cfg.ack_minutes.sigma * z)
-    if never < cfg.never_ack_share or minutes >= cfg.ack_deadline_minutes:
+    if rng.random() < cfg.never_ack_share:
         return None
-    return timedelta(seconds=int(minutes * 60))
+    while True:
+        minutes = cfg.ack_minutes.median * math.exp(cfg.ack_minutes.sigma * rng.standard_normal())
+        if minutes < cfg.ack_deadline_minutes:
+            return timedelta(seconds=int(minutes * _SECONDS_PER_MINUTE))
 
 
 def outreach_answer(

@@ -197,7 +197,9 @@ class MuleRingConfig(_Frozen):
         if not 1 <= self.layers.min <= self.layers.max <= self.size.min <= self.size.max:
             raise ValueError("mule_rings needs 1 ≤ layers ≤ size, so every layer has an account")
         if self.shared_device_min_accounts >= self.size.min:
-            raise ValueError("mule_rings.shared_device_min_accounts exceeds the smallest ring")
+            raise ValueError(
+                "mule_rings.shared_device_min_accounts must be below the smallest ring size"
+            )
         return self
 
 

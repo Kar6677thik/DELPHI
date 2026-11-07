@@ -22,10 +22,11 @@ from uuid import UUID
 
 import numpy as np
 
+from delphi.sim.draws import choice
 from delphi.sim.generator_config import GeneratorConfig
 from delphi.sim.ids import IdStream
 from delphi.sim.mules import MuleNetwork
-from delphi.sim.population import ACTIVE, FULL_KYC, HOME_BANK, Account, _choice
+from delphi.sim.population import ACTIVE, FULL_KYC, HOME_BANK, Account
 from delphi.sim.rng import keyed_rng
 
 CASH_OUT = "CASH_OUT"
@@ -121,7 +122,7 @@ class Forwarder:
         session = self.bank_of[account] == HOME_BANK
         hops = []
         for amount in _split(rng, amount_paise, parts):
-            channel = _choice(rng, self.cfg.channel)
+            channel = choice(rng, self.cfg.channel)
             hops.append(Hop(flow, account, target, amount, at, channel, session))
             gap = self.cfg.split_gap_minutes
             gap_minutes = gap.min + (gap.max - gap.min) * rng.random()
