@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import os
-from datetime import timedelta
+from datetime import datetime, timedelta
+from uuid import UUID
 
 import pytest
 
@@ -74,7 +75,7 @@ def test_collect_refund_runs_in_the_window_only(
     mules = {a for ring in long_window.network.rings for a in ring.layers[0]}
     for p in refunds:
         assert p.channel == "UPI_COLLECT_APPROVAL"
-        assert 200_000 <= p.amount_paise <= 5_000_000  # ₹2k–₹50k
+        assert 0 < p.amount_paise <= 5_000_000  # ₹2k–₹50k, at most 90% of the balance
         assert p.payee_account_id in mules
     truth = {t.payment_id: t for t in history.window.payment_truth}
     assert all(
@@ -127,7 +128,9 @@ def test_eval_matches_the_configured_rates_within_ten_percent(
     rates. History: every history scenario, MULE_FORWARDING and the 40% listing share. Window:
     every scenario it holds, UPI_COLLECT_REFUND included."""
     assert os.environ.get("DELPHI_RUN_SLOW") == "1"
-    report = dataset_stats(generate_dataset(config, "eval", kb=kb), config)
+    dataset = generate_dataset(config, "eval", kb=kb)
+    assert not _sim_swaps_without_a_report(dataset)  # #55, on eval too
+    report = dataset_stats(dataset, config)
     print(format_report(report))
     for rate in report.rates:
         if rate.scenario is not ScenarioType.UPI_COLLECT_REFUND:
@@ -143,3 +146,75 @@ def test_cli_prints_the_stats_report(capsys: pytest.CaptureFixture[str]) -> None
     assert main(["sim", "stats", "--profile", "test"]) == 0
     out = capsys.readouterr().out
     assert "profile test:" in out and "MULE_FORWARDING" in out
+
+
+def _sim_swaps_without_a_report(dataset: Dataset) -> list[UUID]:
+    """Window SIM-swap ATO instances with no SIM_SWAP_REPORTED 1–48 h before the login."""
+    end = dataset.population.history_end
+    reports: dict[str, list[datetime]] = {}
+    for event in dataset.history.crm_events:
+        if event.type == "SIM_SWAP_REPORTED":
+            reports.setdefault(str(event.customer_id), []).append(event.at)
+    missing = []
+    for instance in dataset.history.scenario_instances:
+        if instance.params.get("kind") != "SIM_SWAP" or instance.started_at < end:
+            continue
+        before = [
+            instance.started_at - at for at in reports.get(instance.params["customer_id"], [])
+        ]
+        if not any(timedelta(hours=1) <= gap <= timedelta(hours=48) for gap in before):
+            missing.append(instance.id)
+    return missing
+
+
+def test_window_sim_swaps_are_reported_before_the_login(long_window: Dataset) -> None:
+    """#55: the window's SIM-swap ATO cases keep their CRM report (docs/14 §4)."""
+    end = long_window.population.history_end
+    window_swaps = [
+        i
+        for i in long_window.history.scenario_instances
+        if i.params.get("kind") == "SIM_SWAP" and i.started_at >= end
+    ]
+    assert window_swaps
+    assert not _sim_swaps_without_a_report(long_window)
+
+
+def test_background_crm_runs_on_through_the_window(long_window: Dataset) -> None:
+    """#55: genuine CRM reports continue in the window, so a window report is not an ATO tell."""
+    end = long_window.population.history_end
+    in_window = [e for e in long_window.history.crm_events if e.at >= end]
+    assert any(e.type == "DEVICE_LOST_REPORTED" for e in in_window)
+    ato_customers = {
+        i.params["customer_id"]
+        for i in long_window.history.scenario_instances
+        if i.scenario_type == "ATO" and i.started_at >= end
+    }
+    assert any(str(e.customer_id) not in ato_customers for e in in_window)
+
+
+def test_no_window_payment_takes_more_than_the_balance(long_window: Dataset) -> None:
+    """#55: window payments settle against the payer's running balance: the end-of-history
+    balance, plus the window's salaries, minus earlier window payments."""
+    history = long_window.history
+    assert history.window is not None
+    running = dict(history.balances)
+    salaries = [
+        (
+            row.due_at,
+            0,
+            UUID(row.payload["payer_account_id"]),
+            UUID(row.payload["payee_account_id"]),
+            row.payload["amount_paise"],
+        )
+        for row in history.schedule
+        if row.payload.get("reason") == "SALARY"
+    ]
+    payments = [
+        (p.initiated_at, 1, p.payer_account_id, p.payee_account_id, p.amount_paise)
+        for p in history.window.payments
+    ]
+    for _, kind, payer, payee, amount in sorted(salaries + payments, key=lambda e: (e[0], e[1])):
+        if kind == 1:
+            assert 0 < amount <= running[payer]
+        running[payer] -= amount
+        running[payee] += amount

@@ -8,6 +8,20 @@ upgrade changes them, `test_committed_freeze_matches_kb_v1_and_config` fails eve
 input changed. Then either keep the previous numpy, or regenerate with
 `uv run delphi sim freeze-response-models`, bump `generator_version` and record the upgrade here.
 
+## 12
+
+- The eval window keeps its SIM-swap CRM events, and the genuine background CRM events run on
+  through the window (#55).
+- Window payments settle against running balances (end of history, plus the window's
+  salaries, minus earlier window payments); a payment the payer cannot fund is not made, so
+  ATO drains no longer overdraw (#55). The window's fraud is scaled to the genuine sessions
+  a dry run makes.
+- GENUINE_UNUSUAL one-offs and collect refunds take at most 90% of the payer's balance at the
+  time (the customer pays what they can), so they are made in the window too and keep their
+  rates. B1 now holds about 40% of unusual one-offs in the history (it held most before).
+- The planned one-off rate is scaled by `genuine_unusual.made_share` (0.85, calibrated on
+  `eval`), so GENUINE_UNUSUAL stays at 150 per 10,000 payments made.
+
 ## 11
 
 - The demo personas (docs/14 §6, #19), from `sim/config/personas.yaml`: Kamala, Arjun, Ravi

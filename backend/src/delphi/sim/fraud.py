@@ -166,7 +166,7 @@ class _Planner:
                     self.ids["crm_event"].next(),
                     customer.id,
                     SIM_SWAP_REPORTED,
-                    max(login_at - lead, self.start),
+                    max(login_at - lead, self.pop.history_start),
                 )
             )
         device = Device(
@@ -308,18 +308,19 @@ class _Planner:
                 instance,
                 coached=False,
                 amount_paise=round(rupees) * _PAISE_PER_INR,
+                max_balance_share=cfg.max_balance_share,
             )
         )
         return 1
 
-    def background_crm(self) -> None:
+    def background_crm(self, until: datetime) -> None:
         cfg = self.config.crm
         for i, customer in enumerate(self.pop.customers):
             rng = keyed_rng(self.seed, "crm", str(i))
             at = self.pop.history_start
             while True:
                 at += timedelta(days=float(rng.exponential(cfg.background_mean_days)))
-                if at >= self.end:
+                if at >= until:
                     break
                 self.crm.append(
                     CrmEvent(self.ids["crm_event"].next(), customer.id, _choice(rng, cfg.types), at)
@@ -334,13 +335,15 @@ def plan_fraud(
     genuine_sessions: int,
     coached_share: float,
     window: tuple[datetime, datetime] | None = None,
+    crm_until: datetime | None = None,
     saved: frozenset[tuple[UUID, UUID]] = frozenset(),
 ) -> FraudPlan:
     """The fraud victims, scaled to ``genuine_sessions`` (the genuine customer sessions made).
     ``coached_share`` is the response models' share of well-coached DA and INV victims
     (docs/14 §5.2).
 
-    Without ``window`` this plans the history, plus the customers' background CRM events. With
+    Without ``window`` this plans the history, plus the customers' background CRM events up to
+    ``crm_until`` (the end of the window, so they run on through it; #55). With
     ``window`` (start, end) it plans the live/eval window instead, from ``"window"``-prefixed
     streams, and adds the window-only UPI_COLLECT_REFUND scenario."""
     span = window or (population.history_start, population.history_end)
@@ -348,7 +351,7 @@ def plan_fraud(
     planner = _Planner(config, population, network, span, stream)
     planner.saved_before = saved  # (customer, account) pairs already saved as payees
     if window is None:
-        planner.background_crm()
+        planner.background_crm(crm_until or span[1])
     scenarios = (
         (*_VICTIM_SCENARIOS, ScenarioType.UPI_COLLECT_REFUND) if window else _VICTIM_SCENARIOS
     )

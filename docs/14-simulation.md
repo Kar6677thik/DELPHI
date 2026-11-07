@@ -146,15 +146,19 @@ review pending):
   - **DECLINE:** ends `DECLINED`.
 
   Labels are scheduled by `schedule_payment_labels` (§7).
-- **GENUINE_UNUSUAL** runs at each customer's routine rate × 150 / 9,700 (the table's rates).
-  Each event is one of two kinds:
+- **GENUINE_UNUSUAL** runs at each customer's routine rate × 150 / 9,700 (the table's rates)
+  × 0.85 (`made_share`): a routine payment the customer cannot fund is not made, but a one-off
+  always is (it is capped at 90% of the balance), so its planned rate is scaled to come out at
+  150 per 10,000 payments made (calibrated on `eval`, #55). Each event is one of two kinds:
   - **New merchant** (0.6): a hospital, wedding vendor or property merchant, saved 2–30 minutes
     before paying it.
   - **New phone** (0.4): a phone first seen 2–30 minutes before, paying an established family
     payee.
 
-  The amount is log-normal, median ₹80,000 × the income scale, σ 0.7, by IMPS. 30% fall at
-  night (22:00–05:00 IST), the rest at the habitual hour. A customer saves each merchant once:
+  The amount is log-normal, median ₹80,000 × the income scale, σ 0.7, by IMPS, but at most 90%
+  of the balance at the time (#55): the customer pays what they can, so the one-off is made
+  in the window as in the history. 30% fall at night (22:00–05:00 IST), the rest at the
+  habitual hour. A customer saves each merchant once:
   a new merchant is one not saved before or during the history (if none is left, the event is
   a new phone). An event that falls outside the history saves no payee and adds no phone. One
   the customer cannot fund keeps its payee or phone: the payment failed, the set-up did not.
@@ -166,7 +170,8 @@ review pending):
 - **B1 inputs.** B1 sees a payee as new by doc 13 §3's `is_new_payee`: saved < 24 h ago, or
   never paid and saved within the 30-day baseline window (`legacy_policy.new_payee_hours` and
   `payee_baseline_days`, the one place the simulator reads them from). It sees a device as new if
-  first seen within the KB's `new_device_days`. So it holds most unusual payments, and those
+  first seen within the KB's `new_device_days`. So it holds the large unusual payments (about
+  40% of them; the 90% balance cap keeps poorer customers' one-offs under ₹50,000), and those
   never get a label. It declines a payment to a payee the sim registry lists by then.
 
 `delphi.sim.fraud` adds the fraud victims to the history, also from `generator.yaml`:
@@ -202,7 +207,8 @@ review pending):
   `sim_truth.label_schedule`.
 - **Background CRM events.** Genuine customers report a SIM swap or a lost phone (0.5 / 0.5)
   once per 500 days, from `keyed_rng(seed, "crm", i)`, so about 3% of genuine payments have
-  one in the 14-day CRM lookback.
+  one in the 14-day CRM lookback. They run on through the live/eval window (#55), so a
+  window SIM-swap report is not an ATO tell.
 
 `delphi.sim.mules` builds the mule networks, also from `generator.yaml`:
 
@@ -271,14 +277,21 @@ replays (doc 22 §1). This design is proposed in the last #17 PR, for the owner'
   payees.
 - **Fraud scenarios.** The window has its own fraud scenarios at their rates against the
   window's genuine sessions, from `keyed_rng(seed, "window", "fraud", scenario)` and their own
-  id streams. **UPI_COLLECT_REFUND** runs here only (10 per 10,000):
-  - one `UPI_COLLECT_APPROVAL` payment per victim, ₹2k–₹50k log-uniform
+  id streams. The window's SIM-swap ATO cases keep their CRM report 1–48 h before the login
+  (#55). **UPI_COLLECT_REFUND** runs here only (10 per 10,000):
+  - one `UPI_COLLECT_APPROVAL` payment per victim, ₹2k–₹50k log-uniform, at most 90% of the
+    balance (a victim cannot approve more than they have)
   - requested by a layer-1 mule
   - an unknown-number call in 60% of cases (its §5.1 target)
 - **Undecided.** Every window session is a `PENDING_GUARDIAN` payment with origin `SIM_LIVE`,
   with telemetry, a login and ground truth. No policy has decided it, so there is no ledger
-  entry and no label. An amount that depends on a balance uses the balance at the end of the
-  history. Investment fees use the window's planned deposits.
+  entry and no label.
+- **Running balances.** The window is planned after the history pass. Each window payment is
+  settled in time order against the payer's running balance: the end-of-history balance, plus
+  the window's salaries, minus earlier window payments. A payment the payer cannot fund is
+  not made, as in the history, so an ATO drain never takes more than is there (#55).
+  Investment fees use the deposits made so far. The window's fraud targets come from a
+  genuine-only dry run against the same balances.
 - **Not in the stream.** The window holds no MULE_FORWARDING sessions: they follow from what
   each policy releases, so the replay generates them with `delphi.sim.forwarding`. The
   window's salaries are TRANSFER rows (`reason: SALARY`).
