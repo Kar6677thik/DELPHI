@@ -20,6 +20,11 @@ from delphi.sim.generator_config import City, Range
 
 # Private 10.0.0.0/8: synthetic, never a real network.
 _PRIVATE_FIRST_OCTET = 10
+# Devices whose /24 string is kept, so their logins share one string (#58): over twice
+# `eval`'s device count (about 2.2 per customer on `demo`). Bounded so a long-running worker
+# does not grow it across generations (#64). It only saves time and memory; the values never
+# depend on it.
+_PREFIX_CACHE_DEVICES = 1 << 17
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,7 +39,7 @@ class LoginEvent:
     at: datetime
 
 
-@functools.cache  # one string per device, shared by its logins (#58)
+@functools.lru_cache(maxsize=_PREFIX_CACHE_DEVICES)
 def device_prefix24(fingerprint: str) -> str:
     """A stable synthetic /24 for a device: 10.x.y.0/24 from its fingerprint."""
     digest = hashlib.sha256(fingerprint.encode()).digest()

@@ -18,6 +18,7 @@ from delphi.sim.generator_config import GeneratorConfig, LegacyPolicyConfig, loa
 from delphi.sim.history import IST, Payment
 from delphi.sim.labels import LabelSource, PaymentDecision
 from delphi.sim.legacy_policy import decide_b1, payee_is_new
+from delphi.sim.logins import device_prefix24
 from delphi.sim.response_models import CONFIG_DIR, load_config
 from delphi.sim.scenarios import ScenarioType
 from delphi.sim.telemetry import SessionTelemetry
@@ -276,6 +277,12 @@ def test_every_customer_session_starts_with_a_login(long_test: Dataset) -> None:
         assert (login.city == home[login.customer_id]) == (login.device_id not in attackers)
         assert login.ip_prefix24.startswith("10.") and login.ip_prefix24.endswith(".0/24")
         assert prefixes.setdefault(login.device_id, login.ip_prefix24) == login.ip_prefix24
+
+
+def test_the_device_prefix_cache_is_bounded() -> None:
+    """#64: a long-running worker generates many datasets, so the /24 cache has a bound."""
+    info = device_prefix24.cache_info()
+    assert info.maxsize is not None and info.currsize <= info.maxsize
 
 
 @pytest.mark.parametrize(

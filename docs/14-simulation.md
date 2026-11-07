@@ -169,13 +169,21 @@ review pending):
 - **New person payees** (#56, owner decision). About once a year (exponential gaps, mean 365
   days), a genuine customer saves a new person as a payee: another customer's DLPH account
   (0.7) or an external person account (0.3), never one already saved, from
-  `keyed_rng(seed, "person_payee", i)`.
+  `keyed_rng(seed, "person_payee", i)`. Persona customers take no part, as savers or as
+  payees (§6).
   - The payee is "Family N", saved 2–30 minutes before the first payment, as a victim saves a
     mule.
   - The first payment has the family amount and channel; 0–3 more follow over the next 60 days.
   - The process runs through the window too.
   - So a person payee saved during the history is no longer a mule tell: on `demo`, 791 of
     1,639 are genuine.
+- **Payee labels** (#64). Every person payee saved during the history or the window (by the
+  customer, by a fraud's victim, or by a home-bank mule) is "Family N". N is its place among
+  all the customer's payees: after the population's, then in the order they were saved
+  (`added_at`, then id), merchants taking a place as they do in the population. The numbers
+  are given once every payee is known, so no customer has two "Family N" payees with the same
+  N, and the numbers do not show who saved a payee. Merchant payees keep their category, so a
+  customer can have two "Utility" payees, as in the population.
 - **New phones** (§3, once per 400 days) arrive as a Poisson process; later payments use the
   newest device.
 - **Logins.** Every customer session starts with a login 30–300 s earlier (never before the
@@ -195,8 +203,8 @@ review pending):
   made, for want of funds). Each scenario draws from `keyed_rng(seed, "fraud", scenario)`, and
   the sessions of an instance from `keyed_rng(seed, "fraud_session", instance_id)`. A victim
   pays layer-1 mules of a uniformly chosen ring, saved as a payee 2–30 minutes before the
-  first payment to it and labelled like any family payee ("Family N"), so the label gives
-  nothing away.
+  first payment to it and labelled like any family payee ("Family N", numbered as above), so
+  the label gives nothing away.
 - **ATO.**
   - Half are SIM swaps, which the CRM records (`SIM_SWAP_REPORTED`) 1–48 h before the login;
     half are phishing.
@@ -311,7 +319,9 @@ replays (doc 22 §1). This design is proposed in the last #17 PR, for the owner'
   genuine-only dry run against the same balances.
 - **Not in the stream.** The window holds no MULE_FORWARDING sessions: they follow from what
   each policy releases, so the replay generates them with `delphi.sim.forwarding`. The
-  window's salaries are TRANSFER rows (reason SALARY, in `sim_truth.schedule_truth`).
+  window's salaries are TRANSFER rows (reason SALARY, in `sim_truth.schedule_truth`). A
+  salary's row keeps the salary's id, so the window's settlement order, (time, id), can be
+  read back from the rows (#64).
 - **Stats.** `delphi.sim.stats` (`delphi sim stats --profile`) reports sessions per 10,000 per
   scenario for the history and the window, against these rates. The #17 acceptance check (±10%
   on `eval`, a `slow` test) uses:
@@ -409,6 +419,9 @@ silent:
 - **Devices.** Personas get no new phones in the history, so they keep their scripted device
   count however long it runs (#57). Their new-phone draws are still made, so no other row
   changes, and a persona's GENUINE_UNUSUAL new-phone one-off becomes a new-merchant one.
+- **Person payees.** Personas save no new person payees, and no customer saves a persona's
+  account as one (#64, owner decision), in the history or the window. Profiles without
+  personas (`test`, `eval`) are unchanged by this.
 - **No fraud before the story.** No history fraud reaches a persona or a scripted ring, so
   the S-4 victims have no history of the scam (§8), and Ring-7 and Kamala's payee are
   uncredited and unlisted when the demo starts.

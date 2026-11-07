@@ -16,6 +16,8 @@ from delphi.sim.history import IST
 from delphi.sim.scenarios import ScenarioType
 from delphi.sim.stats import dataset_stats, format_report
 
+from .test_sim_demo import duplicate_family_labels
+
 
 @pytest.fixture(scope="module")
 def config() -> GeneratorConfig:
@@ -209,6 +211,7 @@ def test_no_window_payment_takes_more_than_the_balance(long_window: Dataset) -> 
     salaries = [
         (
             row.due_at,
+            row.id,
             0,
             UUID(row.payload["payer_account_id"]),
             UUID(row.payload["payee_account_id"]),
@@ -218,11 +221,18 @@ def test_no_window_payment_takes_more_than_the_balance(long_window: Dataset) -> 
         if why[row.id] == "SALARY"
     ]
     payments = [
-        (p.initiated_at, 1, p.payer_account_id, p.payee_account_id, p.amount_paise)
+        (p.initiated_at, p.id, 1, p.payer_account_id, p.payee_account_id, p.amount_paise)
         for p in history.window.payments
     ]
-    for _, kind, payer, payee, amount in sorted(salaries + payments, key=lambda e: (e[0], e[1])):
+    # The bank's own order: (time, id). A window salary's row carries the salary's id (#64).
+    for _, _, kind, payer, payee, amount in sorted(salaries + payments):
         if kind == 1:
             assert 0 < amount <= running[payer]
         running[payer] -= amount
         running[payee] += amount
+
+
+def test_window_payees_join_the_customers_label_count(long_window: Dataset) -> None:
+    """#64: the window's fraud payees are numbered with the history's, so no customer has two
+    payees under the same label."""
+    assert not duplicate_family_labels(long_window)

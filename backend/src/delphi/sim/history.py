@@ -48,12 +48,14 @@ from delphi.sim.logins import LoginEvent, login_before
 from delphi.sim.mules import MuleNetwork, RegistryListing
 from delphi.sim.population import (
     ACTIVE,
+    FAMILY,
     FULL_KYC,
     Account,
     Customer,
     Device,
     Payee,
     Population,
+    family_label,
 )
 from delphi.sim.records import (
     Complaint,
@@ -238,18 +240,19 @@ class _Planner:
         # Merchants each customer saves during the history (a payee is saved only once).
         self.saved_during: defaultdict[UUID, list[UUID]] = defaultdict(list)
         # People a customer can add as a new payee (#56): other customers' home-bank accounts
-        # and the external person accounts.
-        self.home_accounts = [self.home_account[c.id].id for c in population.customers]
+        # and the external person accounts. Never a persona's: their scripts stay fully
+        # controlled (#64).
+        self.home_accounts = [
+            self.home_account[c.id].id for c in population.customers if c.persona_key is None
+        ]
         self.external_people = [
             a.id for a in population.accounts if a.customer_id is None and not a.is_merchant
         ]
-        self.payee_count = Counter(p.customer_id for p in population.payees)
         self.phones: dict[UUID, list[Device]] = {}  # each customer's genuine new phones
         self.mule_customer: dict[UUID, Customer] = {}  # home-bank mule account → customer
         self.mule_device: dict[UUID, Device] = {}
         self.flow_streams: dict[int, np.random.Generator] = {}
         self.mule_payee_ids = IdStream(self.seed, "mule_payee")
-        self.mule_payee_count: Counter[UUID] = Counter()
         self.unusual_merchants = [
             a.id
             for a in population.accounts
@@ -477,8 +480,8 @@ class _Planner:
         return replace(intent, is_fraud=True, flow=hop.flow)
 
     def mule_payee(self, hop: Hop, network: MuleNetwork) -> Payee:
-        """A home-bank mule saves its next-layer account as a payee before first paying it,
-        labelled like any family payee, from ``keyed_rng(seed, "mule_payee", payer/payee)``."""
+        """A home-bank mule saves its next-layer account as a payee before first paying it, a
+        person payee like any family one, from ``keyed_rng(seed, "mule_payee", payer/payee)``."""
         if not self.mule_customer:
             self.forward_customers(network)
         customer = self.mule_customer[hop.payer]
@@ -488,12 +491,11 @@ class _Planner:
         added = max(
             hop.at - timedelta(seconds=int(minutes * _SECONDS_PER_MINUTE)), self.pop.history_start
         )
-        self.mule_payee_count[customer.id] += 1
         payee = Payee(
             id=self.mule_payee_ids.next(),
             customer_id=customer.id,
             account_id=hop.payee,
-            label=f"Family {self.mule_payee_count[customer.id]}",
+            label=FAMILY,  # numbered with the customer's other payees (#64)
             added_at=added,
         )
         self.new_payees.append(payee)
@@ -640,9 +642,14 @@ class _Planner:
                     intents=intents,
                     instances=instances,
                 )
-        self._new_people(
-            index, habit=habit, devices=(original, phones), intents=intents, instance=instance.id
-        )
+        if customer.persona_key is None:  # personas save no new people (#64)
+            self._new_people(
+                index,
+                habit=habit,
+                devices=(original, phones),
+                intents=intents,
+                instance=instance.id,
+            )
 
     def _new_people(
         self,
@@ -675,7 +682,6 @@ class _Planner:
             if payee in taken or payee == account.id:
                 continue  # already a payee, or their own account: nothing new to save
             self.saved_during[customer.id].append(payee)
-            self.payee_count[customer.id] += 1
             span = cfg.lead_minutes.max - cfg.lead_minutes.min
             lead = timedelta(minutes=cfg.lead_minutes.min + rng.random() * span)
             day = at.astimezone(IST).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -686,7 +692,7 @@ class _Planner:
                     id=self.new_payee_ids.next(),
                     customer_id=customer.id,
                     account_id=payee,
-                    label=f"Family {self.payee_count[customer.id]}",
+                    label=FAMILY,  # numbered with the customer's other payees (#64)
                     added_at=max(first - lead, self.pop.history_start),
                 )
             )
@@ -782,7 +788,7 @@ def generate_history(
     # The window comes after the history pass: its payments settle against the balances the
     # history ends with.
     window = _plan_window(planner, network, in_window, history.balances, coached_share)
-    stream, salaries = _window_stream(planner, window.intents, history.balances)
+    stream, salaries = _window_stream(window.intents, history.balances)
     extra = window.plan
     return replace(
         history,
@@ -791,9 +797,28 @@ def generate_history(
         schedule_truth=(*history.schedule_truth, *(truth for _, truth in salaries)),
         scenario_instances=(*history.scenario_instances, *(extra.instances if extra else ())),
         devices=(*history.devices, *(extra.devices if extra else ())),
-        payees=(*history.payees, *(extra.payees if extra else ())),
+        payees=_number_family_payees(
+            population, (*history.payees, *(extra.payees if extra else ()))
+        ),
         crm_events=(*history.crm_events, *(extra.crm_events if extra else ())),
     )
+
+
+def _number_family_payees(population: Population, payees: tuple[Payee, ...]) -> tuple[Payee, ...]:
+    """Number the person payees saved during the history and the window "Family N" (#64).
+
+    N is the payee's place among all the customer's payees: after the population's, then in
+    the order they were saved (``added_at``, then id), merchants taking a place as they do in
+    the population. There is one count per customer, whoever saved the payee (the customer, a
+    fraud, a home-bank mule forwarding), so no two payees share a label and the numbers do not
+    show who saved them."""
+    places = Counter(p.customer_id for p in population.payees)
+    labels: dict[UUID, str] = {}
+    for payee in sorted(payees, key=lambda p: (p.added_at, p.id)):
+        places[payee.customer_id] += 1
+        if payee.label == FAMILY:
+            labels[payee.id] = family_label(places[payee.customer_id])
+    return tuple(replace(p, label=labels[p.id]) if p.id in labels else p for p in payees)
 
 
 class _WindowBank:
@@ -864,11 +889,12 @@ def _intent_order(intent: _Intent) -> tuple[datetime, UUID]:
 
 
 def _window_stream(
-    planner: _Planner, intents: list[_Intent], balances: Mapping[UUID, int]
+    intents: list[_Intent], balances: Mapping[UUID, int]
 ) -> tuple[WindowStream, list[tuple[ScheduledTransfer, ScheduleTruth]]]:
     """The window's sessions as undecided payments, and its salaries as scheduled transfers.
-    Each payment settles against the payer's running balance in the window (`_WindowBank`)."""
-    ids = IdStream(planner.seed, "window_schedule")
+    Each payment settles against the payer's running balance in the window (`_WindowBank`), in
+    the order (time, id). A salary's row keeps the salary's id, so that order can be read back
+    from the rows (#64)."""
     bank = _WindowBank(balances)
     payments: list[Payment] = []
     telemetry: list[SessionTelemetry] = []
@@ -881,7 +907,7 @@ def _window_stream(
             continue
         if not intent.decided:
             row = _transfer(
-                ids,
+                intent.id,
                 intent.at,
                 payer=intent.payer,
                 payee=intent.payee,
@@ -924,7 +950,7 @@ def _window_stream(
 def _in_flight(ids: IdStream, hop: Hop) -> tuple[ScheduledTransfer, ScheduleTruth]:
     """A mule-ring payment due after the history (docs/14 §8: SIM_TICK advances it)."""
     row = _transfer(
-        ids,
+        ids.next(),
         hop.at,
         payer=hop.payer,
         payee=hop.payee,
@@ -935,7 +961,7 @@ def _in_flight(ids: IdStream, hop: Hop) -> tuple[ScheduledTransfer, ScheduleTrut
 
 
 def _transfer(  # the bank row says only what making the payment needs (#56)
-    ids: IdStream, at: datetime, *, payer: UUID, payee: UUID, amount_paise: int, channel: str
+    row_id: UUID, at: datetime, *, payer: UUID, payee: UUID, amount_paise: int, channel: str
 ) -> ScheduledTransfer:
     payload = {
         "payer_account_id": str(payer),
@@ -943,7 +969,7 @@ def _transfer(  # the bank row says only what making the payment needs (#56)
         "amount_paise": amount_paise,
         "channel": channel,
     }
-    return ScheduledTransfer(ids.next(), at, TRANSFER, payload)
+    return ScheduledTransfer(row_id, at, TRANSFER, payload)
 
 
 @dataclass(frozen=True, slots=True)
