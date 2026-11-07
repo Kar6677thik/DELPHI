@@ -25,7 +25,13 @@ the integrity of KB versions and the audit log, and the home server itself.
 
 - Username + password. Argon2id (`argon2-cffi` defaults: time_cost 3, memory 64 MiB,
   parallelism 4). Minimum password length 12. Usernames are stored trimmed and lower-case, and
-  matched case-insensitively. An unknown username still costs one Argon2 verification (against
+  matched case-insensitively.
+- Lockout: 5 failed sign-ins per (username, client IP) in 15 min give `429 RATE_LIMITED` with
+  `Retry-After`, even for the right password. The counter lives in the api process (one
+  replica), so a restart clears it; Cloudflare's rate-limit rule is the second layer. Every
+  sign-in, failed sign-in and sign-out is audited.
+- A session also ends when its user is disabled. Signing in issues a new token and deletes the
+  session the browser presented (fixation). An unknown username still costs one Argon2 verification (against
   a dummy hash), so response time does not reveal which usernames exist.
 - Session: a random 256-bit token in cookie `delphi_session`
   (`HttpOnly; Secure; SameSite=Strict; Path=/`). Only the SHA-256 of the token is stored

@@ -32,6 +32,8 @@ ADMIN = Principal(UUID(int=10), frozenset(Permission))
 VIEWER = Principal(UUID(int=11), frozenset({Permission.VIEW}))
 OTHER = Principal(UUID(int=99), frozenset(Permission))
 T0 = datetime(2026, 11, 7, 6, 0, tzinfo=UTC)
+# What the SPA sends with every request (docs/16 §1 CSRF rule).
+BROWSER = {"X-Delphi-Csrf": "1", "Origin": "http://testserver"}
 # Users arrive with #6; the tests only need rows to point at.
 users = Table(
     "users",
@@ -113,7 +115,7 @@ def test_same_key_and_body_replays_the_stored_response(
     env: tuple[FastAPI, Platform, FixedClock],
 ) -> None:
     app, platform, _ = env
-    client = TestClient(app)
+    client = TestClient(app, headers=BROWSER)
     key = str(uuid4())
     first = client.post(
         "/api/v1/test/things", json={"a": 1, "b": 2}, headers={"Idempotency-Key": key}
@@ -134,7 +136,7 @@ def test_same_key_with_a_different_body_is_a_conflict(
     env: tuple[FastAPI, Platform, FixedClock],
 ) -> None:
     app, platform, _ = env
-    client = TestClient(app)
+    client = TestClient(app, headers=BROWSER)
     key = str(uuid4())
     client.post("/api/v1/test/things", json={"a": 1}, headers={"Idempotency-Key": key})
     conflict = client.post("/api/v1/test/things", json={"a": 2}, headers={"Idempotency-Key": key})
@@ -145,7 +147,7 @@ def test_same_key_with_a_different_body_is_a_conflict(
 
 def test_keys_are_per_user_and_expire(env: tuple[FastAPI, Platform, FixedClock]) -> None:
     app, platform, clock = env
-    client = TestClient(app)
+    client = TestClient(app, headers=BROWSER)
     key = str(uuid4())
     client.post("/api/v1/test/things", json={}, headers={"Idempotency-Key": key})
     app.dependency_overrides[current_principal] = lambda: OTHER
@@ -167,7 +169,9 @@ def test_the_key_is_required_and_must_be_a_uuid(
     env: tuple[FastAPI, Platform, FixedClock], headers: dict[str, str]
 ) -> None:
     app, _, _ = env
-    response = TestClient(app).post("/api/v1/test/things", json={}, headers=headers)
+    response = TestClient(app, headers=BROWSER).post(
+        "/api/v1/test/things", json={}, headers=headers
+    )
     assert response.status_code == 422
     assert response.json()["code"] == "VALIDATION_FAILED"
 
@@ -180,7 +184,7 @@ def test_concurrent_requests_with_one_key_run_once(
     statuses: list[int] = []
 
     def call() -> None:
-        response = TestClient(app).post(
+        response = TestClient(app, headers=BROWSER).post(
             "/api/v1/test/things", json={"x": 1}, headers={"Idempotency-Key": key}
         )
         statuses.append(response.status_code)
@@ -210,7 +214,7 @@ def test_read_one_job(env: tuple[FastAPI, Platform, FixedClock]) -> None:
     app, platform, clock = env
     (job_id,) = _add_jobs(platform, clock, 1)
     app.dependency_overrides[current_principal] = lambda: VIEWER  # `view` is enough
-    client = TestClient(app)
+    client = TestClient(app, headers=BROWSER)
     body = client.get(f"/api/v1/jobs/{job_id}").json()
     assert body["status"] == "QUEUED" and body["type"] == "DEMO_RESET" and body["progress"] == 0
     missing = client.get(f"/api/v1/jobs/{uuid4()}")
@@ -222,7 +226,7 @@ def test_listing_jobs_is_admin_only_newest_first_and_paged(
 ) -> None:
     app, platform, clock = env
     ids = _add_jobs(platform, clock, 5)
-    client = TestClient(app)
+    client = TestClient(app, headers=BROWSER)
     first = client.get("/api/v1/jobs", params={"limit": 2}).json()
     assert [j["id"] for j in first["items"]] == [str(i) for i in reversed(ids[-2:])]
     second = client.get("/api/v1/jobs", params={"limit": 2, "cursor": first["next_cursor"]}).json()
@@ -246,7 +250,7 @@ def test_retry_moves_a_failed_job_back_to_queued(env: tuple[FastAPI, Platform, F
         assert job is not None
         queue.fail(job, "w", "boom")
         clock.advance(timedelta(minutes=10))
-    client = TestClient(app)
+    client = TestClient(app, headers=BROWSER)
     assert client.get(f"/api/v1/jobs/{job_id}").json()["status"] == "FAILED"
     retried = client.post(f"/api/v1/jobs/{job_id}/retry")
     assert retried.status_code == 200 and retried.json()["status"] == "QUEUED"

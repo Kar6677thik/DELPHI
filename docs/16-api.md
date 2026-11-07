@@ -12,7 +12,7 @@ documents its error body as a `default` response of `application/problem+json` w
 | Topic | Rule |
 |---|---|
 | Auth | Session cookie `delphi_session` (httpOnly, Secure, SameSite=Strict). Every endpoint except `/health`, `/ready` and `/auth/login` requires a session |
-| CSRF | Mutating requests MUST carry the header `X-Delphi-Csrf: 1` and an `Origin` equal to the configured public origin; otherwise `403 CSRF_REJECTED` |
+| CSRF | Mutating requests (any method but GET/HEAD/OPTIONS under `/api/`) MUST carry the header `X-Delphi-Csrf: 1` and an `Origin` equal to the configured public origin (`DELPHI_PUBLIC_ORIGIN`; the request's own origin when unset); otherwise `403 CSRF_REJECTED`. This includes `/auth/login` (login CSRF). The check runs before routing, so it also answers unknown paths |
 | IDs | UUIDv7 strings |
 | Money | `*_paise` integers. The API never sends float rupees |
 | Probabilities | `{hypothesis_key: float}`, 6 decimals |

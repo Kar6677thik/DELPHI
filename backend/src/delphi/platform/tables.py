@@ -19,7 +19,7 @@ from sqlalchemy import (
     Table,
     Text,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import INET, JSONB, UUID
 
 metadata = MetaData(schema="delphi")
 
@@ -75,6 +75,8 @@ auth_sessions = Table(
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("expires_at", DateTime(timezone=True), nullable=False),
     Column("last_seen_at", DateTime(timezone=True), nullable=False),
+    Column("ip", INET),
+    Column("user_agent", Text),
 )
 
 users = Table(

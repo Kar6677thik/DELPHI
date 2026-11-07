@@ -14,8 +14,10 @@ from delphi.api.problems import (
     install_problem_handlers,
 )
 from delphi.api.request_context import RequestContextMiddleware
-from delphi.api.routers import API_PREFIX, events, jobs, platform
+from delphi.api.routers import API_PREFIX, auth, events, jobs, platform
 from delphi.api.spa import install_spa
+from delphi.api.web_security import WebSecurityMiddleware
+from delphi.platform.auth_sessions import LoginThrottle
 from delphi.platform.events import EventHub
 from delphi.platform.wiring import Platform
 
@@ -46,10 +48,18 @@ def create_app(resources: Platform, *, event_hub: EventHub | None = None) -> Fas
     )
     app.state.platform = resources
     app.state.event_hub = event_hub
+    s = resources.settings
+    app.state.login_throttle = LoginThrottle(
+        resources.clock, max_failures=s.login_max_failures, window=s.login_window
+    )
     install_problem_handlers(app)
     document_problem_media_type(app)
+    # Starlette runs the last-added middleware first: the request id wraps everything, so even
+    # a CSRF rejection carries one.
+    app.add_middleware(WebSecurityMiddleware, public_origin=s.public_origin)
     app.add_middleware(RequestContextMiddleware)
     app.include_router(platform.router)
+    app.include_router(auth.router)
     app.include_router(events.router)
     app.include_router(jobs.router)
     # Last: the SPA catch-all must not shadow any API route.

@@ -152,7 +152,9 @@ def enqueue(
     """Add a job in the caller's transaction. The same idempotency key never makes a second
     job: it returns the existing one (`created=False`), whatever its status."""
     now = clock.now()
-    job_id = uuid7()
+    # The id's timestamp comes from the same clock as created_at, so id order is creation order
+    # (to the millisecond), which GET /jobs relies on for keyset paging.
+    job_id = uuid7(unix_ms=int(now.timestamp() * 1000))
     inserted = session.execute(
         insert(jobs)
         .values(
