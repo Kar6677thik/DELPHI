@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     Column,
     DateTime,
     Float,
@@ -74,4 +75,32 @@ auth_sessions = Table(
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("expires_at", DateTime(timezone=True), nullable=False),
     Column("last_seen_at", DateTime(timezone=True), nullable=False),
+)
+
+users = Table(
+    "users",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("username", Text, nullable=False, unique=True),
+    Column("display_name", Text, nullable=False),
+    Column("password_hash", Text, nullable=False),
+    Column("role", Text, nullable=False),
+    Column("disabled", Boolean, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("version", Integer, nullable=False),
+)
+
+audit_log = Table(
+    "audit_log",
+    metadata,
+    Column("id", BigInteger, primary_key=True),
+    Column("at", DateTime(timezone=True), nullable=False),
+    Column("actor_type", Text, nullable=False),
+    Column("actor_id", Text),
+    Column("action", Text, nullable=False),
+    Column("entity_type", Text, nullable=False),
+    Column("entity_id", Text),
+    Column("payload", JSONB, nullable=False),
+    Column("prev_hash", LargeBinary, nullable=False),
+    Column("hash", LargeBinary, nullable=False),
 )

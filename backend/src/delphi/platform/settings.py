@@ -12,7 +12,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Annotated
 
-from pydantic import Field, ValidationError, field_validator
+from pydantic import Field, SecretStr, ValidationError, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from delphi.platform.jobs import QueueConfig
@@ -76,6 +76,9 @@ class Settings(BaseSettings):
     worker_fast_concurrency: int = Field(default=1, ge=1, le=4)
     worker_poll_interval_s: float = Field(default=1.0, gt=0, le=60)
     worker_heartbeat_max_age_s: int = Field(default=30, ge=5, le=600)
+    # The first ADMIN, created on start when no user exists (docs/19 §2, FR-PLT-03).
+    bootstrap_admin_username: str | None = None
+    bootstrap_admin_password: SecretStr | None = None
     # Retention (docs/17 §6).
     outbox_retention_h: int = Field(default=24, ge=1, le=24 * 30)
     idempotency_retention_h: int = Field(default=24, ge=1, le=24 * 30)

@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import FrameType
 
+from delphi.platform.audit import AuditVerifyJob
 from delphi.platform.jobs import Job, JobContext, JobQueue, JobRegistry, JobType, Lane
 from delphi.platform.logging import bind_context, clear_context, get_logger
 from delphi.platform.retention import RetentionSweep
@@ -152,6 +153,7 @@ def build_registry(platform: Platform) -> JobRegistry:
             idempotency_retention=s.idempotency_retention,
         ),
     )
+    registry.register(JobType.AUDIT_VERIFY, AuditVerifyJob(platform.sessions, platform.clock))
     return registry
 
 

@@ -23,6 +23,7 @@ from delphi.api.contract import OPENAPI_FILE, openapi_document
 from delphi.kb.canonical import content_sha256
 from delphi.kb.issues import KbValidationError
 from delphi.kb.loader import load_and_validate
+from delphi.platform.accounts import BootstrapError, ensure_bootstrap_admin
 from delphi.platform.db import alembic_config
 from delphi.platform.events import EventHub
 from delphi.platform.logging import configure_logging, get_logger
@@ -128,6 +129,18 @@ def _api(settings: Settings) -> int:
     _quiet_alembic()
     platform = build_platform(settings, process="api")
     hub = EventHub(platform.sessions, libpq_url(settings.database_url))
+    try:
+        password = settings.bootstrap_admin_password
+        with platform.sessions.begin() as session:
+            ensure_bootstrap_admin(
+                session,
+                platform.clock,
+                username=settings.bootstrap_admin_username,
+                password=password.get_secret_value() if password else None,
+            )
+    except BootstrapError as exc:
+        platform.close()
+        raise SettingsError(str(exc)) from None
     try:
         uvicorn.run(
             create_app(platform, event_hub=hub),
