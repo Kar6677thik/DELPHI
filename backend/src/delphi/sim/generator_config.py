@@ -136,6 +136,8 @@ class GenuineUnusualConfig(_Frozen):
     amount_inr: LogNormal
     lead_minutes: Range
     channel: str
+    max_balance_share: Probability
+    made_share: float = Field(gt=0, le=1)
 
     @model_validator(mode="after")
     def _kinds(self) -> GenuineUnusualConfig:
@@ -261,6 +263,7 @@ class CollectRefundConfig(_Frozen):
     rate_per_10k: float = Field(gt=0)
     amount_inr: Range
     channel: str
+    max_balance_share: Probability
 
 
 class CrmConfig(_Frozen):

@@ -250,7 +250,9 @@ def test_b1_holds_large_payments_to_new_payees_and_from_new_phones(
     history = long_test.history
     unusual = _by_scenario(long_test)["GENUINE_UNUSUAL"]
     held = [p for p in unusual if p.status == "HELD"]
-    assert len(held) > len(unusual) / 2
+    # About 40%: one-offs take at most 90% of the balance (#55), so poorer customers' ones
+    # stay under B1's ₹50,000 new-payee threshold.
+    assert len(held) > len(unusual) / 3
     assert all(p.amount_paise >= 1_000_000 for p in held)
     labelled = {label.subject_id for label in history.labels}
     assert not any(str(p.id) in labelled for p in held)

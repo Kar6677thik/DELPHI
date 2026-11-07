@@ -396,22 +396,21 @@ class _Planner:
             started_at=at - lead,
         )
         instances.append(instance)
-        intents.append(
-            self._session(
-                rng,
-                ScenarioType.GENUINE_UNUSUAL,
-                customer=customer,
-                payer=account.id,
-                payee=payee,
-                amount_paise=_lognormal_paise(
-                    rng, cfg.amount_inr.median * scale, cfg.amount_inr.sigma
-                ),
-                channel=cfg.channel,
-                at=at,
-                device=device,
-                instance=instance.id,
-            )
+        session = self._session(
+            rng,
+            ScenarioType.GENUINE_UNUSUAL,
+            customer=customer,
+            payer=account.id,
+            payee=payee,
+            amount_paise=_lognormal_paise(rng, cfg.amount_inr.median * scale, cfg.amount_inr.sigma),
+            channel=cfg.channel,
+            at=at,
+            device=device,
+            instance=instance.id,
         )
+        # A one-off takes at most this share of the balance at the time (#55): the customer
+        # pays what they can, so the payment is made in the window as in the history.
+        intents.append(replace(session, max_balance_share=cfg.max_balance_share))
 
     def forward(self, hop: Hop, network: MuleNetwork, instance: UUID) -> _Intent:
         """A forwarding payment: a home-bank mule's app session (MULE_FORWARDING, decided by
@@ -537,7 +536,9 @@ class _Planner:
         instances.append(instance)
         rate = rng.gamma(routine.daily_rate_gamma["shape"], routine.daily_rate_gamma["scale"])
         unusual = self.cfg.genuine_unusual
-        unusual_rate = rate * unusual.rate_per_10k / unusual.routine_rate_per_10k
+        unusual_rate = (
+            rate * unusual.rate_per_10k / unusual.routine_rate_per_10k * unusual.made_share
+        )
         habit = routine.habitual_hour.min + rng.random() * (
             routine.habitual_hour.max - routine.habitual_hour.min
         )
@@ -642,15 +643,20 @@ def generate_history(
     # the sessions that happen (some are never made, for want of funds).
     dry = _Bank(planner, network)
     made = sum(dry.process(i) is not None and i.decided for i in genuine)
+    # Background CRM events run on through the window, so a window SIM-swap report is not
+    # an ATO tell (#55); the history's events are the same either way.
     plan = plan_fraud(
-        config, population, network, genuine_sessions=made, coached_share=coached_share
+        config,
+        population,
+        network,
+        genuine_sessions=made,
+        coached_share=coached_share,
+        crm_until=planner.horizon,
     )
     instances.extend(plan.instances)
     planner.new_devices.extend(plan.devices)
     planner.new_payees.extend(plan.payees)
     fraud = [i for i in planner.fraud(plan) if inside[0] <= i.at < inside[1]]
-    window = _plan_window(planner, network, in_window, plan, coached_share)
-    instances.extend(window.instances)
     # One MULE_FORWARDING instance per ring holds the ring's onward payments.
     rings = {}
     for ring in network.rings:
@@ -672,60 +678,104 @@ def generate_history(
         rings,
     )
     history = _run(planner, [*genuine, *fraud], context=context)
+    # The window comes after the history pass: its payments settle against the balances the
+    # history ends with.
+    window = _plan_window(planner, network, in_window, history.balances, coached_share)
     stream, salaries = _window_stream(planner, window.intents, history.balances)
-    return replace(history, window=stream, schedule=(*history.schedule, *salaries))
+    extra = window.plan
+    return replace(
+        history,
+        window=stream,
+        schedule=(*history.schedule, *salaries),
+        scenario_instances=(*history.scenario_instances, *(extra.instances if extra else ())),
+        devices=(*history.devices, *(extra.devices if extra else ())),
+        payees=(*history.payees, *(extra.payees if extra else ())),
+        crm_events=(*history.crm_events, *(extra.crm_events if extra else ())),
+    )
+
+
+class _WindowBank:
+    """Running balances through the window. Window payments are undecided (docs/22 §1), so
+    each one settles as if made: against the balance at that moment, which starts at the
+    end of the history and moves with the window's salaries and earlier window payments. A
+    payment the payer cannot fund is not made, as in the history (#55)."""
+
+    def __init__(self, balances: Mapping[UUID, int]) -> None:
+        self.balances = dict(balances)
+        self.deposited: dict[UUID, int] = {}  # each investment scam's deposits so far
+
+    def process(self, intent: _Intent) -> int | None:
+        """The amount the payment moves, or None if it is not made."""
+        balance = self.balances[intent.payer]
+        amount = (
+            intent.settle(balance, self.deposited.get(intent.instance, 0))
+            if intent.decided
+            else intent.amount_paise
+        )
+        if amount <= 0 or amount > balance:
+            return None
+        if intent.scenario is ScenarioType.APP_INVESTMENT and intent.fee_share is None:
+            self.deposited[intent.instance] = self.deposited.get(intent.instance, 0) + amount
+        self.balances[intent.payer] -= amount
+        self.balances[intent.payee] += amount
+        return amount
 
 
 @dataclass(frozen=True, slots=True)
 class _WindowPlan:
     intents: list[_Intent]
-    instances: tuple[ScenarioInstance, ...]
+    plan: FraudPlan | None
 
 
 def _plan_window(
     planner: _Planner,
     network: MuleNetwork,
     genuine: list[_Intent],
-    history_plan: FraudPlan,
+    balances: Mapping[UUID, int],
     coached_share: float,
 ) -> _WindowPlan:
     """The window's fraud victims (and UPI_COLLECT_REFUND), at their rates against the
-    window's genuine sessions."""
+    window's genuine sessions made: a dry run settles them against running balances, as the
+    history's dry run does."""
     pop = planner.pop
     if planner.horizon <= pop.history_end:
-        return _WindowPlan([], ())
-    saved = frozenset(
-        (p.customer_id, p.account_id)
-        for p in (*pop.payees, *planner.new_payees, *history_plan.payees)
-    )
+        return _WindowPlan([], None)
+    dry = _WindowBank(balances)
+    made = sum(dry.process(i) is not None and i.decided for i in sorted(genuine, key=_intent_order))
+    saved = frozenset((p.customer_id, p.account_id) for p in (*pop.payees, *planner.new_payees))
     plan = plan_fraud(
         planner.cfg,
         pop,
         network,
-        genuine_sessions=sum(i.decided for i in genuine),
+        genuine_sessions=made,
         coached_share=coached_share,
         window=(pop.history_end, planner.horizon),
         saved=saved,
     )
-    planner.new_devices.extend(plan.devices)
-    planner.new_payees.extend(plan.payees)
     fraud = [i for i in planner.fraud(plan) if i.at < planner.horizon]
-    return _WindowPlan([*genuine, *fraud], plan.instances)
+    return _WindowPlan([*genuine, *fraud], plan)
+
+
+def _intent_order(intent: _Intent) -> tuple[datetime, str]:
+    return intent.at, str(intent.id)
 
 
 def _window_stream(
     planner: _Planner, intents: list[_Intent], balances: Mapping[UUID, int]
 ) -> tuple[WindowStream, list[ScheduledTransfer]]:
     """The window's sessions as undecided payments, and its salaries as scheduled transfers.
-    An amount that depends on a balance uses the balance at the end of the history."""
+    Each payment settles against the payer's running balance in the window (`_WindowBank`)."""
     ids = IdStream(planner.seed, "window_schedule")
+    bank = _WindowBank(balances)
     payments: list[Payment] = []
     telemetry: list[SessionTelemetry] = []
     logins: list[LoginEvent] = []
     truth: list[PaymentTruth] = []
     salaries: list[ScheduledTransfer] = []
-    deposited: dict[UUID, int] = {}
-    for intent in sorted(intents, key=lambda i: (i.at, str(i.id))):
+    for intent in sorted(intents, key=_intent_order):
+        amount = bank.process(intent)
+        if amount is None:
+            continue
         if not intent.decided:
             salaries.append(
                 _transfer(
@@ -733,17 +783,12 @@ def _window_stream(
                     intent.at,
                     payer_account_id=intent.payer,
                     payee_account_id=intent.payee,
-                    amount_paise=intent.amount_paise,
+                    amount_paise=amount,
                     channel=intent.channel,
                     reason="SALARY",
                 )
             )
             continue
-        amount = intent.settle(balances[intent.payer], deposited.get(intent.instance, 0))
-        if amount <= 0:
-            continue
-        if intent.scenario is ScenarioType.APP_INVESTMENT and intent.fee_share is None:
-            deposited[intent.instance] = deposited.get(intent.instance, 0) + amount
         payments.append(
             Payment(
                 id=intent.id,
