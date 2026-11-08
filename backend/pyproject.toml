@@ -13,6 +13,7 @@ dependencies = [
   "pydantic>=2.9",
   "pydantic-settings>=2.6",
   "pyyaml>=6.0.2",
+  "scikit-learn>=1.5",
   "sqlalchemy>=2.0.36",
   "structlog>=24.4",
   "uvicorn>=0.32",
@@ -81,6 +82,11 @@ warn_unused_configs = true
 module = ["delphi.engine.*", "delphi.kb.*"]
 strict = true
 
+[[tool.mypy.overrides]]
+# scikit-learn and joblib ship no type information (docs/13 sensing models)
+module = ["sklearn.*", "joblib.*"]
+ignore_missing_imports = true
+
 # ---------------------------------------------------------------- coverage
 [tool.coverage.run]
 source = ["delphi"]
@@ -125,14 +131,21 @@ forbidden_modules = [
 [[tool.importlinter.contracts]]
 name = "nothing imports the api layer except the CLI (docs/04 §4.1 rule 4)"
 type = "forbidden"
-source_modules = ["delphi.engine", "delphi.kb", "delphi.probes", "delphi.platform", "delphi.sim"]
+source_modules = [
+  "delphi.engine",
+  "delphi.kb",
+  "delphi.probes",
+  "delphi.platform",
+  "delphi.sensing",
+  "delphi.sim",
+]
 forbidden_modules = ["delphi.api", "delphi.cli"]
 
 [[tool.importlinter.contracts]]
 name = "platform holds no business logic: it imports no feature module"
 type = "forbidden"
 source_modules = ["delphi.platform"]
-forbidden_modules = ["delphi.engine", "delphi.kb", "delphi.probes", "delphi.sim"]
+forbidden_modules = ["delphi.engine", "delphi.kb", "delphi.probes", "delphi.sensing", "delphi.sim"]
 
 [[tool.importlinter.contracts]]
 name = "only sim and evaluation import ground truth (docs/04 §4.1 rule 5)"
