@@ -9,17 +9,31 @@ export const CSRF_HEADER = 'X-Delphi-Csrf';
 const PROBLEM_JSON = 'application/problem+json';
 const SAFE_METHODS = new Set(['GET', 'HEAD']);
 
-/** A non-2xx response. `problem` is the parsed body when the server sent problem+json. */
+/**
+ * A non-2xx response. `problem` is the parsed body when the server sent problem+json;
+ * `retryAfterSeconds` is the `Retry-After` header (429 RATE_LIMITED, docs/16 §1), if any.
+ */
 export class ApiError extends Error {
   readonly status: number;
   readonly problem: Problem | null;
+  readonly retryAfterSeconds: number | null;
 
-  constructor(status: number, problem: Problem | null) {
+  constructor(status: number, problem: Problem | null, retryAfterSeconds: number | null = null) {
     super(problem?.detail ?? `HTTP ${String(status)}`);
     this.name = 'ApiError';
     this.status = status;
     this.problem = problem;
+    this.retryAfterSeconds = retryAfterSeconds;
   }
+}
+
+/** `Retry-After` is either a number of seconds or an HTTP date (RFC 9110 §10.2.3). */
+export function parseRetryAfter(value: string | null, now: number = Date.now()): number | null {
+  if (value === null || value.trim() === '') return null;
+  const trimmed = value.trim();
+  if (/^\d+$/.test(trimmed)) return Number(trimmed);
+  const at = Date.parse(trimmed);
+  return Number.isNaN(at) ? null : Math.max(0, Math.ceil((at - now) / 1000));
 }
 
 async function readProblem(response: Response): Promise<Problem | null> {
@@ -39,7 +53,10 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
   if (!SAFE_METHODS.has(method)) headers.set(CSRF_HEADER, '1');
   const url = new URL(`${API_BASE}${path}`, window.location.origin);
   const response = await fetch(url, { ...init, method, headers, credentials: 'same-origin' });
-  if (!response.ok) throw new ApiError(response.status, await readProblem(response));
+  if (!response.ok) {
+    const retryAfter = parseRetryAfter(response.headers.get('retry-after'));
+    throw new ApiError(response.status, await readProblem(response), retryAfter);
+  }
   return response;
 }
 
@@ -63,4 +80,8 @@ export async function postJson(path: string, body?: unknown): Promise<void> {
 
 export function isUnauthenticated(error: unknown): boolean {
   return error instanceof ApiError && error.status === 401;
+}
+
+export function isRateLimited(error: unknown): error is ApiError {
+  return error instanceof ApiError && error.status === 429;
 }

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import { RoleGate } from '../src/components/RoleGate';
 import { SessionContext } from '../src/lib/session';
-import { MOCK_USERS } from '../src/mocks/handlers';
+import { MOCK_USERS } from './mocks/handlers';
 
 function renderAs(username: string | null, ui: React.ReactNode) {
   const me = username === null ? null : (MOCK_USERS[username] ?? null);

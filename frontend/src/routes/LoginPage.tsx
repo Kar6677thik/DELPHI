@@ -4,7 +4,7 @@ import { useNavigate, useSearchParams } from 'react-router';
 import { z } from 'zod';
 
 import { useLogin } from '../api/auth';
-import { isUnauthenticated } from '../api/client';
+import { isRateLimited, isUnauthenticated } from '../api/client';
 import { ProblemAlert } from '../components/ProblemAlert';
 import { safeNext } from '../lib/safeNext';
 
@@ -13,6 +13,13 @@ const credentials = z.object({
   password: z.string().min(1, 'Enter your password.'),
 });
 type Credentials = z.infer<typeof credentials>;
+
+/** The lockout (docs/16 §1: 5 failures in 15 min), with when to try again if the api says. */
+export function lockoutMessage(retryAfterSeconds: number | null): string {
+  if (retryAfterSeconds === null) return 'Too many failed sign-in attempts. Try again later.';
+  const minutes = Math.max(1, Math.ceil(retryAfterSeconds / 60));
+  return `Too many failed sign-in attempts. Try again in ${String(minutes)} minute${minutes === 1 ? '' : 's'}.`;
+}
 
 const inputClass =
   'mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 focus-visible:outline-2 focus-visible:outline-slate-900';
@@ -53,6 +60,10 @@ export function LoginPage() {
             // Generic on purpose: never say which of the two was wrong (docs/19 §1).
             <p role="alert" className="text-sm text-red-800">
               Invalid username or password.
+            </p>
+          ) : isRateLimited(login.error) ? (
+            <p role="alert" className="text-sm text-red-800">
+              {lockoutMessage(login.error.retryAfterSeconds)}
             </p>
           ) : (
             <ProblemAlert error={login.error} title="Sign-in failed" />

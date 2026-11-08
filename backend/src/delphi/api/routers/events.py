@@ -1,8 +1,13 @@
 """GET /api/v1/events/stream: Server-Sent Events (docs/16 §3, ADR-0013, FR-PLT-08).
 
 The stream subscribes to the hub *before* replaying, so nothing committed during the replay
-is lost; events already sent are skipped by id. A heartbeat comment (`: ping`) goes out every
-15 s of silence, which also keeps proxies (Cloudflare) from closing the connection.
+is lost; events already sent are skipped by id. A client resumes with the `Last-Event-ID`
+header (the browser's own reconnects send it) or, when it opens a new EventSource itself and so
+cannot set headers, with `?last_event_id=` (#73). The header wins if both are sent. A
+heartbeat comment (`: ping`) goes out every 15 s of silence, which also keeps proxies
+(Cloudflare) from closing the connection. An `: open` comment goes out first: some proxies (the
+Vite dev proxy among them) hold the response head until the first body bytes, which would
+leave the client waiting for the first heartbeat before it knows the stream is open (#73).
 """
 
 from __future__ import annotations
@@ -24,6 +29,7 @@ router = APIRouter(prefix=API_PREFIX, tags=["events"])
 
 HEARTBEAT_S = 15.0
 HEARTBEAT_FRAME = ": ping\n\n"
+OPEN_FRAME = ": open\n\n"
 ALL_TOPICS = frozenset(TOPIC_PREFIXES)
 
 
@@ -70,17 +76,22 @@ async def stream(
     _principal: Annotated[Principal, Depends(require(Permission.VIEW))],
     topics: Annotated[str | None, Query(description="Comma-separated topics")] = None,
     last_event_id: Annotated[str | None, Header(alias="Last-Event-ID")] = None,
+    last_event_id_param: Annotated[
+        str | None,
+        Query(alias="last_event_id", description="Last-Event-ID for clients that cannot set it"),
+    ] = None,
 ) -> StreamingResponse:
     hub: EventHub | None = request.app.state.event_hub
     if hub is None:
         raise DelphiError("Live updates are not running.", code=ProblemCode.NOT_INITIALISED)
     wanted = _topics(topics)
-    resume_after = _last_event_id(last_event_id)
+    resume_after = _last_event_id(last_event_id if last_event_id else last_event_id_param)
     sub = hub.subscribe(wanted)
 
     async def events() -> AsyncIterator[str]:
         sent = resume_after or 0
         try:
+            yield OPEN_FRAME
             if resume_after is not None:
                 while batch := await asyncio.to_thread(fetch_since, hub.sessions, sent):
                     for event in batch:

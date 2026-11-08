@@ -180,6 +180,10 @@ data: {"type": "...", "entity_id": "...", "at": "...", "payload": {...}}
 Event types: `guardian.session.updated`, `guardian.session.decided`, `case.opened`,
 `case.updated`, `evidence.narrative_ready`, `campaign.updated`, `chase.updated`,
 `chase.lien.updated`, `job.updated`, `scout.cluster.created`, `kb.version.changed`,
-`sim.transfer` (demo feed). A heartbeat comment (`: ping`) is sent every 15 s. Reconnect with
-`Last-Event-ID` replays from `outbox_events` (retained 24 h). SSE payloads are small: clients
+`sim.transfer` (demo feed). An `: open` comment is sent as soon as the stream opens (some
+proxies hold the response head until the first body bytes), and a heartbeat comment (`: ping`)
+every 15 s. Reconnect with
+`Last-Event-ID` replays from `outbox_events` (retained 24 h). A client that cannot set the
+header (a new `EventSource`, opened after the browser gave up on an HTTP error) passes it as
+`?last_event_id=<id>`; the header wins if both are sent. SSE payloads are small: clients
 re-fetch the entity via REST.

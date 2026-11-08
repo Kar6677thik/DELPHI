@@ -628,6 +628,8 @@ export interface operations {
             query?: {
                 /** @description Comma-separated topics */
                 topics?: string | null;
+                /** @description Last-Event-ID for clients that cannot set it */
+                last_event_id?: string | null;
             };
             header?: {
                 "Last-Event-ID"?: string | null;

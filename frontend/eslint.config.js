@@ -5,7 +5,7 @@ import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
 export default defineConfig(
-  { ignores: ['dist', 'coverage', 'mock-public', 'src/api/schema.d.ts'] },
+  { ignores: ['dist', 'coverage', 'src/api/schema.d.ts'] },
   js.configs.recommended,
   {
     files: ['**/*.{ts,tsx}'],

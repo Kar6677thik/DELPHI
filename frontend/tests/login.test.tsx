@@ -3,10 +3,14 @@ import { http, HttpResponse } from 'msw';
 import { describe, expect, it } from 'vitest';
 
 import { ME_QUERY_KEY } from '../src/api/auth';
+import { getJson, postJson } from '../src/api/client';
 import { safeNext } from '../src/lib/safeNext';
-import { MOCK_PASSWORD, setMockSession } from '../src/mocks/handlers';
-import { server } from '../src/mocks/node';
+import { lockoutMessage } from '../src/routes/LoginPage';
+import { MOCK_PASSWORD, problem, setMockSession } from './mocks/handlers';
+import { server } from './mocks/node';
 import { renderApp } from './renderApp';
+
+const LOCKED = 'Too many failed sign-in attempts. Try again later.';
 
 describe('login and session', () => {
   it('sends an unauthenticated user to /login and back after signing in', async () => {
@@ -62,28 +66,80 @@ describe('login and session', () => {
     expect(screen.getByLabelText('Username')).toHaveAttribute('aria-invalid', 'true');
   });
 
-  it('shows the problem for other failures, e.g. rate limiting', async () => {
+  it('says when to try again once sign-in is locked (429 RATE_LIMITED, docs/16 §1)', async () => {
     server.use(
-      http.post('/api/v1/auth/login', () =>
-        HttpResponse.json(
-          {
-            type: 'about:blank',
-            title: 'Too Many Requests',
-            status: 429,
-            detail: 'Too many sign-in attempts.',
-            code: 'RATE_LIMITED',
-            instance: '/api/v1/auth/login',
-            request_id: 'req-429',
-          },
-          { status: 429, headers: { 'Content-Type': 'application/problem+json' } },
-        ),
+      http.post('/api/v1/auth/login', ({ request }) =>
+        problem(429, 'Too Many Requests', 'RATE_LIMITED', LOCKED, request.url, {
+          'Retry-After': '840',
+        }),
+      ),
+    );
+    const { user, router } = renderApp('/login');
+    await user.type(await screen.findByLabelText('Username'), 'admin');
+    await user.type(screen.getByLabelText('Password'), MOCK_PASSWORD);
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Too many failed sign-in attempts. Try again in 14 minutes.',
+    );
+    expect(router.state.location.pathname).toBe('/login');
+  });
+
+  it('words the lockout from Retry-After', () => {
+    expect(lockoutMessage(null)).toBe('Too many failed sign-in attempts. Try again later.');
+    expect(lockoutMessage(1)).toBe('Too many failed sign-in attempts. Try again in 1 minute.');
+    expect(lockoutMessage(61)).toBe('Too many failed sign-in attempts. Try again in 2 minutes.');
+  });
+
+  it('shows the problem for other failures', async () => {
+    server.use(
+      http.post('/api/v1/auth/login', ({ request }) =>
+        problem(500, 'Internal Server Error', 'INTERNAL', 'Something broke.', request.url),
       ),
     );
     const { user } = renderApp('/login');
     await user.type(await screen.findByLabelText('Username'), 'admin');
     await user.type(screen.getByLabelText('Password'), MOCK_PASSWORD);
     await user.click(screen.getByRole('button', { name: 'Sign in' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('Code RATE_LIMITED');
+    expect(await screen.findByRole('alert')).toHaveTextContent('Code INTERNAL');
+  });
+
+  it('sends the user to sign in when any call finds the session ended (401)', async () => {
+    setMockSession('admin');
+    const { router, queryClient } = renderApp('/?view=queues');
+    await screen.findByRole('heading', { name: 'Overview' });
+    setMockSession(null); // the session ends on the server
+    server.use(
+      http.get('/api/v1/jobs', ({ request }) =>
+        problem(401, 'Unauthorized', 'UNAUTHENTICATED', 'Sign in to continue.', request.url),
+      ),
+    );
+    await act(async () => {
+      await queryClient
+        .query({ queryKey: ['jobs'], queryFn: () => getJson('/jobs') })
+        .catch(() => undefined);
+    });
+    await screen.findByRole('heading', { name: 'Sign in to DELPHI' });
+    expect(router.state.location.search).toBe('?next=%2F%3Fview%3Dqueues');
+  });
+
+  it('does the same when a mutation finds the session ended', async () => {
+    setMockSession('admin');
+    const { router, queryClient } = renderApp('/kb');
+    await screen.findByRole('navigation');
+    setMockSession(null);
+    server.use(
+      http.post('/api/v1/jobs/x/retry', ({ request }) =>
+        problem(401, 'Unauthorized', 'UNAUTHENTICATED', 'Sign in to continue.', request.url),
+      ),
+    );
+    const mutation = queryClient
+      .getMutationCache()
+      .build(queryClient, { mutationFn: () => postJson('/jobs/x/retry') });
+    await act(async () => {
+      await mutation.execute(undefined).catch(() => undefined);
+    });
+    await screen.findByRole('heading', { name: 'Sign in to DELPHI' });
+    expect(router.state.location.search).toBe('?next=%2Fkb');
   });
 
   it('only redirects to same-origin paths', () => {

@@ -1,11 +1,12 @@
 import { http, HttpResponse } from 'msw';
 
-import { CSRF_HEADER } from '../api/client';
-import type { LoginRequest, Me, Permission } from '../api/pending-contracts';
+import { CSRF_HEADER } from '../../src/api/client';
+import type { LoginRequest, Me, Permission } from '../../src/api/types';
 
 /**
- * A mocked auth API (docs/16 §2) for `pnpm dev:mock` and the tests, until #6 ships the real
- * one. Every mock user signs in with this password. It guards nothing.
+ * The auth API (docs/16 §2) as the tests see it: the real one's answers, in the real one's
+ * types, so components can be tested without a backend. `pnpm dev` talks to the real api.
+ * Every mock user signs in with this password.
  */
 export const MOCK_PASSWORD = 'mock';
 
@@ -42,7 +43,7 @@ export const MOCK_USERS: Record<string, Me> = {
   },
 };
 
-// Kept in sessionStorage, so a reload in `pnpm dev:mock` stays signed in.
+// Kept in sessionStorage, as a cookie would outlive a re-render.
 const SESSION_KEY = 'delphi.mock.session';
 
 function signedIn(): Me | null {
@@ -56,7 +57,17 @@ export function setMockSession(username: string | null): void {
   else sessionStorage.setItem(SESSION_KEY, username);
 }
 
-function problem(status: number, title: string, code: string, detail: string, url: string) {
+/** The api's own texts (backend/src/delphi/api/routers/auth.py). */
+export const INVALID_LOGIN = 'The username or password is incorrect.';
+
+export function problem(
+  status: number,
+  title: string,
+  code: string,
+  detail: string,
+  url: string,
+  headers: Record<string, string> = {},
+) {
   return HttpResponse.json(
     {
       type: 'about:blank',
@@ -67,7 +78,7 @@ function problem(status: number, title: string, code: string, detail: string, ur
       instance: new URL(url).pathname,
       request_id: crypto.randomUUID(),
     },
-    { status, headers: { 'Content-Type': 'application/problem+json' } },
+    { status, headers: { 'Content-Type': 'application/problem+json', ...headers } },
   );
 }
 
@@ -79,7 +90,7 @@ export const handlers = [
     const body = (await request.json()) as LoginRequest;
     const user = MOCK_USERS[body.username];
     if (!user || body.password !== MOCK_PASSWORD) {
-      return problem(401, 'Unauthorized', 'UNAUTHENTICATED', 'Sign-in failed.', request.url);
+      return problem(401, 'Unauthorized', 'UNAUTHENTICATED', INVALID_LOGIN, request.url);
     }
     setMockSession(user.username);
     return new HttpResponse(null, { status: 204 });
@@ -92,6 +103,6 @@ export const handlers = [
     const me = signedIn();
     return me
       ? HttpResponse.json(me)
-      : problem(401, 'Unauthorized', 'UNAUTHENTICATED', 'Sign in first.', request.url);
+      : problem(401, 'Unauthorized', 'UNAUTHENTICATED', 'Sign in to continue.', request.url);
   }),
 ];
