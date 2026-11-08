@@ -10,3 +10,4 @@ resources:
   - backup.yaml
   - networkpolicies.yaml
   - deployer-rbac.yaml
+  - deployer-guard.yaml # cluster-scoped; bound only to delphi-deployer

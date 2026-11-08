@@ -1,5 +1,6 @@
 # The deploy workflow's identity (docs/23 §4, ADR-0015): it may change Deployments' images and
-# run Jobs in `delphi`, and read their pods and logs. Nothing else: no Secrets, ConfigMaps,
+# run Jobs in `delphi`, and read their pods and logs. deployer-guard.yaml narrows both further at
+# admission (only DELPHI's image by digest; only the migrate and seed Jobs). Nothing else: no Secrets, ConfigMaps,
 # Services, NetworkPolicies, RBAC, namespaces or anything cluster-scoped.
 apiVersion: v1
 kind: ServiceAccount
@@ -31,8 +32,8 @@ rules:
     resources: ["replicasets"] # rollout status and undo
     verbs: ["get", "list", "watch"]
   - apiGroups: ["batch"]
-    resources: ["jobs"]
-    verbs: ["create", "get", "list", "watch", "delete"]
+    resources: ["jobs"] # no delete: names are unique per run attempt; ttlSecondsAfterFinished cleans up
+    verbs: ["create", "get", "list", "watch"]
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list", "watch"]

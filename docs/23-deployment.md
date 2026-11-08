@@ -41,7 +41,7 @@ compose.yaml                       # local development (PostgreSQL; api/worker l
 .github/workflows/deploy.yml       # workflow_dispatch only: guard → ci → publish → deploy → verify
 deploy/k8s/base/                   # what the bootstrap applies (namespace delphi)
   namespace.yaml  config.yaml  postgres.yaml  api.yaml  worker.yaml  backup.yaml
-  networkpolicies.yaml  deployer-rbac.yaml  kustomization.yaml
+  networkpolicies.yaml  deployer-rbac.yaml  deployer-guard.yaml  kustomization.yaml
 deploy/k8s/jobs/                   # templates the deploy workflow fills in with the digest
   migrate.yaml  seed.yaml
 deploy/k8s/overlays/example/       # the overlay the operator copies and fills in locally (§4)
