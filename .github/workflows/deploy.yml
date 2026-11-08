@@ -5,8 +5,8 @@
 # the owner's approval; environment `megatron`) → 4 · Verify.
 #   deploy    build main, publish, migrate, roll out          (the usual release)
 #   redeploy  roll out an image already built (`digest`), with its migration
-#   rollback  undo the last rollout of api and worker: no build, no migration (expand/contract
-#             migrations keep the previous code working, docs/17 §1)
+#   rollback  put api and worker back on the most recent earlier release: no build, no migration
+#             (expand/contract migrations keep the previous code working, docs/17 §1)
 # Everything that describes the server (API address, CA, tailnet tag, token) comes from the
 # `megatron` environment's variables and secrets; none of it is in this public repo, and the
 # deploy job masks it before any step can print it.
@@ -17,7 +17,7 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "deploy = build main and release it; redeploy = release `digest`; rollback = undo the last release"
+        description: "deploy = build main and release it; redeploy = release `digest`; rollback = back to the previous release"
         type: choice
         options: [deploy, redeploy, rollback]
         default: deploy
@@ -203,7 +203,7 @@ jobs:
       - name: Migrate
         if: env.ACTION != 'rollback'
         run: |
-          short="$(printf '%s' "${DIGEST#sha256:}" | cut -c1-7)-${GITHUB_RUN_ATTEMPT}"
+          short="$(printf '%s' "${DIGEST#sha256:}" | cut -c1-7)-$(( GITHUB_RUN_NUMBER * 100 + GITHUB_RUN_ATTEMPT ))"
           name="delphi-migrate-${short}"
           sed -e "s|__NAME__|${name}|" -e "s|__IMAGE__|${IMAGE}@${DIGEST}|" \
             deploy/k8s/jobs/migrate.yaml | kubectl create -f -
@@ -232,17 +232,26 @@ jobs:
       - name: Roll back api and worker
         if: env.ACTION == 'rollback'
         run: |
-          kubectl rollout undo deployment/delphi-api
-          kubectl rollout undo deployment/delphi-worker
+          # The most recent release that differs from what runs now, from api's history, set on
+          # both api and worker: not `rollout undo`, which only toggles to the previous revision
+          # (after a failed deploy that is the broken image) and moves each Deployment on its own.
+          cur="$(kubectl get deployment/delphi-api -o jsonpath='{.spec.template.spec.containers[0].image}')"
+          target="$(kubectl get rs -l app.kubernetes.io/component=api -o json | jq -r --arg cur "$cur" '
+            [.items[] | {rev: (.metadata.annotations["deployment.kubernetes.io/revision"] | tonumber),
+                         img: .spec.template.spec.containers[0].image}
+             | select(.img != $cur)] | sort_by(.rev) | last | .img // empty')"
+          [ -n "$target" ] || { echo "::error::No earlier release to roll back to."; exit 1; }
+          printf '%s' "$target" | grep -Eq '^ghcr\.io/kar6677thik/delphi@sha256:[0-9a-f]{64}$'             || { echo "::error::Unexpected image in history."; exit 1; }
+          kubectl set image deployment/delphi-api "api=$target"
+          kubectl set image deployment/delphi-worker "worker=$target"
           kubectl rollout status deployment/delphi-api --timeout=600s
           kubectl rollout status deployment/delphi-worker --timeout=600s
-          image="$(kubectl get deployment/delphi-api -o jsonpath='{.spec.template.spec.containers[0].image}')"
-          echo "Now running \`$image\`." >> "$GITHUB_STEP_SUMMARY"
+          echo "Rolled back to \`$target\`." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Seed (on request)
         if: env.SEED == 'true' && env.ACTION != 'rollback'
         run: |
-          short="$(printf '%s' "${DIGEST#sha256:}" | cut -c1-7)-${GITHUB_RUN_ATTEMPT}"
+          short="$(printf '%s' "${DIGEST#sha256:}" | cut -c1-7)-$(( GITHUB_RUN_NUMBER * 100 + GITHUB_RUN_ATTEMPT ))"
           name="delphi-seed-${short}"
           sed -e "s|__NAME__|${name}|" -e "s|__IMAGE__|${IMAGE}@${DIGEST}|" \
             deploy/k8s/jobs/seed.yaml | kubectl create -f -

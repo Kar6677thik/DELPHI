@@ -96,8 +96,12 @@ Inputs:
   - `deploy` (default): build `main`, publish, migrate, roll out.
   - `redeploy`: roll out an image that was already built (`digest`, `sha256:` + 64 hex, from an
     earlier run's summary), with its migration.
-  - `rollback`: `kubectl rollout undo` on api and worker, with no build and no migration. This
-    is safe because migrations are expand/contract (doc 17 §1).
+  - `rollback`: set api and worker to the most recent earlier release in api's ReplicaSet
+    history (5 kept), with no build and no migration. This is safe because migrations are
+    expand/contract (doc 17 §1). Not `rollout undo`: after a failed deploy, its automatic undo
+    has made the broken image "previous", and repeated undos only toggle.
+- Job names are `delphi-<migrate|seed>-<7 hex of digest>-<run number × 100 + attempt>`, unique
+  across runs, because the deployer cannot delete Jobs (they expire after 24 h).
 - `seed` (boolean, default false): after the rollout, also run `delphi seed --if-empty
   --profile demo`. Needed once, on the first release.
 
@@ -121,7 +125,7 @@ jobs:
             kubectl set image deploy/delphi-api deploy/delphi-worker → rollout status (10 min)
               → on failure: rollout undo both, fail the run
             if seed: seed Job → wait (5 min; it only enqueues GENERATE_DATASET)
-            rollback: rollout undo api + worker → rollout status (no attestation, no Jobs)
+            rollback: set both to the latest earlier release from api's history (no attestation, no Jobs)
   verify:   needs deploy; poll https://delphi.karthiksurkanti.in/api/v1/health every 15 s
             until .version == the commit SHA (10 min)
 ```
@@ -384,7 +388,7 @@ and the run summary shows its digest.
 |---|---|
 | Deploy run fails at migrate | The run prints the Job's logs. Nothing was rolled out. Fix forward with a new PR, or redeploy the previous digest |
 | Rollout timed out | The run already undid it. Check pod events (image pull, probes, OOM) as the operator |
-| Bad release that passed | Actions → Deploy with **action = rollback** (undoes the last rollout), or **redeploy** a known-good digest from an earlier run's summary. Migrations are expand/contract, so rolling the code back is safe |
+| Bad release that passed | Actions → Deploy with **action = rollback** (back to the previous release), or **redeploy** a known-good digest from an earlier run's summary. Migrations are expand/contract, so rolling the code back is safe |
 | verify timed out, pods healthy | The tunnel or DNS: ask the operator to check the host tunnel service and its rule for the name |
 | Server rebooted | Pods restart on their own. Startup probes allow a cold start; the worker reclaims expired job leases |
 | Jobs stuck | Admin → Jobs; jobs whose `locked_until` has passed are reclaimed automatically; retry failed ones |
