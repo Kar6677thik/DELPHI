@@ -1,22 +1,34 @@
 # Deploy to the home server (docs/23 §3, ADR-0015). Manual only: never on push.
 #
-# Run it from Actions → Deploy → Run workflow, on `main`. The `deploy` job then waits for the
-# owner's approval (environment `megatron`). Everything that describes the server (the API
-# address, the CA, the tailnet tag, the token) comes from that environment's variables and
-# secrets; none of it is in this public repo.
+# Like an Azure DevOps pipeline: Actions → Deploy → Run workflow (on `main`), pick an action,
+# then the stages run as 1 · Build & test → 2 · Publish image → 3 · Approve & deploy (waits for
+# the owner's approval; environment `megatron`) → 4 · Verify.
+#   deploy    build main, publish, migrate, roll out          (the usual release)
+#   redeploy  roll out an image already built (`digest`), with its migration
+#   rollback  undo the last rollout of api and worker: no build, no migration (expand/contract
+#             migrations keep the previous code working, docs/17 §1)
+# Everything that describes the server (API address, CA, tailnet tag, token) comes from the
+# `megatron` environment's variables and secrets; none of it is in this public repo, and the
+# deploy job masks it before any step can print it.
 name: deploy
+run-name: "Deploy · ${{ inputs.action }} · ${{ github.ref_name }} by @${{ github.actor }}"
 
 on:
   workflow_dispatch:
     inputs:
-      seed:
-        description: "Also enqueue the demo dataset (first deploy; idempotent)"
-        type: boolean
-        default: false
+      action:
+        description: "deploy = build main and release it; redeploy = release `digest`; rollback = undo the last release"
+        type: choice
+        options: [deploy, redeploy, rollback]
+        default: deploy
       digest:
-        description: "Redeploy an image already built (sha256:…); skips build. Empty = build main"
+        description: "redeploy only: the image digest to release (sha256:…, from an earlier run's summary)"
         type: string
         default: ""
+      seed:
+        description: "Also enqueue the demo dataset (first release; idempotent)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -31,6 +43,7 @@ env:
 
 jobs:
   guard:
+    name: 0 · Check request
     runs-on: ubuntu-latest
     timeout-minutes: 2
     outputs:
@@ -39,28 +52,35 @@ jobs:
       - id: check
         env:
           REF: ${{ github.ref }}
+          ACTION: ${{ inputs.action }}
           DIGEST: ${{ inputs.digest }}
         run: |
           if [ "$REF" != "refs/heads/main" ]; then
             echo "::error::Deploy runs only on main (got $REF)."
             exit 1
           fi
-          if [ -n "$DIGEST" ]; then
-            if ! printf '%s' "$DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
-              echo "::error::digest must be sha256: followed by 64 hex characters."
-              exit 1
-            fi
-            echo "build=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "build=true" >> "$GITHUB_OUTPUT"
-          fi
+          case "$ACTION" in
+            deploy)
+              [ -z "$DIGEST" ] || { echo "::error::deploy builds main; leave digest empty (or choose redeploy)."; exit 1; }
+              echo "build=true" >> "$GITHUB_OUTPUT" ;;
+            redeploy)
+              printf '%s' "$DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$' \
+                || { echo "::error::redeploy needs digest = sha256: followed by 64 hex characters."; exit 1; }
+              echo "build=false" >> "$GITHUB_OUTPUT" ;;
+            rollback)
+              [ -z "$DIGEST" ] || { echo "::error::rollback takes no digest (it undoes the last release)."; exit 1; }
+              echo "build=false" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::unknown action $ACTION"; exit 1 ;;
+          esac
 
   ci:
+    name: 1 · Build & test
     needs: guard
     if: needs.guard.outputs.build == 'true'
     uses: ./.github/workflows/ci.yml
 
   publish:
+    name: 2 · Publish image
     needs: [guard, ci]
     if: needs.guard.outputs.build == 'true'
     runs-on: ubuntu-latest
@@ -101,27 +121,52 @@ jobs:
       - name: Summary
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
-        run: echo "Built \`$IMAGE@$DIGEST\` from \`$GITHUB_SHA\`." >> "$GITHUB_STEP_SUMMARY"
+        run: |
+          {
+            echo "### Image"
+            echo "\`$IMAGE@$DIGEST\` built from \`$GITHUB_SHA\`."
+            echo "Redeploy it later with **action = redeploy**, **digest = \`$DIGEST\`**."
+          } >> "$GITHUB_STEP_SUMMARY"
 
   deploy:
+    name: 3 · Approve & deploy
     needs: [guard, publish]
-    # Runs after a build, or straight after guard when redeploying a given digest.
+    # After a build, or straight after the check for redeploy and rollback.
     if: >-
       always() && needs.guard.result == 'success' &&
       (needs.publish.result == 'success' || needs.guard.outputs.build == 'false')
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    environment: megatron # owner approval required; main only
+    environment:
+      name: megatron # owner approval required; main only
+      url: https://delphi.karthiksurkanti.in
     permissions:
       contents: read
       id-token: write # Tailscale OIDC
     env:
+      ACTION: ${{ inputs.action }}
       DIGEST: ${{ needs.publish.outputs.digest || inputs.digest }}
       SEED: ${{ inputs.seed }}
     steps:
+      - name: Mask server details
+        env:
+          KUBE_SERVER: ${{ vars.KUBE_SERVER }}
+          KUBE_TLS_SERVER_NAME: ${{ vars.KUBE_TLS_SERVER_NAME }}
+          TS_CI_TAG: ${{ vars.TS_CI_TAG }}
+        run: |
+          # Variables are not masked like secrets; the run log is public.
+          for value in "$KUBE_SERVER" "$KUBE_TLS_SERVER_NAME" "$TS_CI_TAG"; do
+            [ -n "$value" ] && echo "::add-mask::$value"
+          done
+          host="${KUBE_SERVER#*://}"; host="${host%%/*}"
+          [ -n "$host" ] && echo "::add-mask::$host"
+          [ -n "${host%:*}" ] && echo "::add-mask::${host%:*}"
+          true
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Verify the image's build provenance
+        if: env.ACTION != 'rollback'
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh attestation verify "oci://$IMAGE@$DIGEST" --owner Kar6677thik
@@ -156,6 +201,7 @@ jobs:
           kubectl auth can-i patch deployments >/dev/null
 
       - name: Migrate
+        if: env.ACTION != 'rollback'
         run: |
           short="$(printf '%s' "${DIGEST#sha256:}" | cut -c1-7)-${GITHUB_RUN_ATTEMPT}"
           name="delphi-migrate-${short}"
@@ -169,7 +215,7 @@ jobs:
           kubectl logs "job/${name}" --tail=20
 
       - name: Roll out api and worker
-        id: rollout
+        if: env.ACTION != 'rollback'
         run: |
           kubectl set image deployment/delphi-api "api=${IMAGE}@${DIGEST}"
           kubectl set image deployment/delphi-worker "worker=${IMAGE}@${DIGEST}"
@@ -183,8 +229,18 @@ jobs:
             exit 1
           fi
 
+      - name: Roll back api and worker
+        if: env.ACTION == 'rollback'
+        run: |
+          kubectl rollout undo deployment/delphi-api
+          kubectl rollout undo deployment/delphi-worker
+          kubectl rollout status deployment/delphi-api --timeout=600s
+          kubectl rollout status deployment/delphi-worker --timeout=600s
+          image="$(kubectl get deployment/delphi-api -o jsonpath='{.spec.template.spec.containers[0].image}')"
+          echo "Now running \`$image\`." >> "$GITHUB_STEP_SUMMARY"
+
       - name: Seed (on request)
-        if: env.SEED == 'true'
+        if: env.SEED == 'true' && env.ACTION != 'rollback'
         run: |
           short="$(printf '%s' "${DIGEST#sha256:}" | cut -c1-7)-${GITHUB_RUN_ATTEMPT}"
           name="delphi-seed-${short}"
@@ -196,23 +252,24 @@ jobs:
           [ "$ok" = true ] || { echo "::error::The seed Job did not complete."; exit 1; }
 
       - name: Summary
-        if: always()
-        run: echo "Deployed \`$IMAGE@$DIGEST\` (seed=$SEED). Rollback = rerun with this field set to the previous digest." >> "$GITHUB_STEP_SUMMARY"
+        if: always() && env.ACTION != 'rollback'
+        run: echo "Released \`$IMAGE@$DIGEST\` (seed=$SEED). To go back, run Deploy with **action = rollback**." >> "$GITHUB_STEP_SUMMARY"
 
   verify:
+    name: 4 · Verify
     needs: [deploy]
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
-      - name: Wait for the public site to serve this build
+      - name: Wait for the public site to serve this release
         env:
-          WANT: ${{ inputs.digest == '' && github.sha || '' }}
+          WANT: ${{ inputs.action == 'deploy' && github.sha || '' }}
         run: |
           for _ in $(seq 1 40); do
             body="$(curl -fsS --max-time 10 "$PUBLIC_URL/api/v1/health" || true)"
             version="$(printf '%s' "$body" | jq -r '.version // empty' 2>/dev/null || true)"
             if [ -n "$version" ] && { [ -z "$WANT" ] || [ "$version" = "$WANT" ]; }; then
-              echo "Live: $PUBLIC_URL serves version $version"
+              echo "Live: $PUBLIC_URL serves version $version" | tee -a "$GITHUB_STEP_SUMMARY"
               exit 0
             fi
             sleep 15

@@ -31,7 +31,7 @@ spec:
           args: ["seed", "--if-empty", "--profile", "demo"]
           envFrom:
             - configMapRef: { name: delphi-config }
-            - secretRef: { name: delphi-app }
+            - secretRef: { name: delphi-seed } # only the app's database URL
           resources:
             requests: { cpu: 50m, memory: 256Mi }
             limits: { cpu: "1", memory: 768Mi }

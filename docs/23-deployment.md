@@ -85,24 +85,34 @@ default.
 
 ### `deploy.yml` (on: workflow_dispatch only)
 
+It works like an Azure DevOps pipeline. Run it from Actions → Deploy → Run workflow on `main`.
+The run graph shows the stages `0 · Check request`, `1 · Build & test`, `2 · Publish image`,
+`3 · Approve & deploy` (waits for the owner) and `4 · Verify`. The run is named
+`Deploy · <action> · main by @<actor>`. The environment `megatron` links each deployment to the
+public URL, so its history shows what is live, and approvals also work from the GitHub mobile app.
+
 Inputs:
-- `seed` (boolean, default false): also run `delphi seed --if-empty --profile demo` after the
-  rollout. Needed once, on the first deploy.
-- `digest` (string, optional): redeploy an image that was already built (`sha256:` + 64 hex,
-  validated). This skips `ci` and `publish`, which makes a rollback to a known-good digest a
-  one-click run.
+- `action`:
+  - `deploy` (default): build `main`, publish, migrate, roll out.
+  - `redeploy`: roll out an image that was already built (`digest`, `sha256:` + 64 hex, from an
+    earlier run's summary), with its migration.
+  - `rollback`: `kubectl rollout undo` on api and worker, with no build and no migration. This
+    is safe because migrations are expand/contract (doc 17 §1).
+- `seed` (boolean, default false): after the rollout, also run `delphi seed --if-empty
+  --profile demo`. Needed once, on the first release.
 
 ```yaml
 concurrency: { group: deploy-megatron, cancel-in-progress: false }
 jobs:
-  guard:    fail unless github.ref == refs/heads/main; validate `digest` if given
-  ci:       uses ./.github/workflows/ci.yml                   (skipped when `digest` is given)
+  guard:    fail unless github.ref == refs/heads/main; validate action + digest
+  ci:       uses ./.github/workflows/ci.yml                   (action = deploy only)
   publish:  needs ci; environment: production
             permissions: { contents: read, id-token: write, attestations: write }
             login ghcr with secrets.GHCR_PUSH_TOKEN → build-push tag sha-<sha>
             → actions/attest-build-provenance (subject-digest)  → outputs: digest
-  deploy:   needs publish (or guard); environment: megatron (owner approval; main only)
+  deploy:   needs publish (or guard); environment: megatron (owner approval; main only; url: the public site)
             permissions: { contents: read, id-token: write }
+            ::add-mask:: the server address, TLS name and CI tag first (the run log is public)
             tailscale/github-action (OIDC; vars.TS_OIDC_CLIENT_ID, vars.TS_OIDC_AUDIENCE; tag from vars)
             gh attestation verify oci://ghcr.io/kar6677thik/delphi@<digest> --owner Kar6677thik
             kubeconfig from vars.KUBE_SERVER, secrets.KUBE_CA, secrets.KUBE_DEPLOYER_TOKEN
@@ -111,12 +121,15 @@ jobs:
             kubectl set image deploy/delphi-api deploy/delphi-worker → rollout status (10 min)
               → on failure: rollout undo both, fail the run
             if seed: seed Job → wait (5 min; it only enqueues GENERATE_DATASET)
+            rollback: rollout undo api + worker → rollout status (no attestation, no Jobs)
   verify:   needs deploy; poll https://delphi.karthiksurkanti.in/api/v1/health every 15 s
             until .version == the commit SHA (10 min)
 ```
 
 - No step creates commits, tags or releases in the repo.
 - A rejected or expired approval ends the run with nothing changed on the server.
+- Jobs are decided from their `Complete`/`Failed` conditions (`deploy/scripts/wait-job.sh`),
+  so a failed first attempt with a retry pending is not taken for the end.
 - The ephemeral tailnet node disappears when the job ends.
 
 ### Secrets and variables (GitHub; never in the repo)
@@ -177,10 +190,11 @@ node address range allowed to reach it, and the optional monitoring scrape rule.
   - `DELPHI_LOG_LEVEL=INFO`
 - Secrets are created by the bootstrap from values generated on the operator's machine, and
   mounted with `envFrom: secretRef`. Manifests never name keys and never inline a value.
-  - **Secret `delphi-app`**, for the api and Jobs: the app's database URL and the bootstrap
-    admin. Later also the LLM key.
+  - **Secret `delphi-app`**, for the api: the app's database URL and the bootstrap admin. Later
+    also the LLM key.
   - **Secret `delphi-worker`**, for the worker only: the app and sim database URLs.
   - **Secret `delphi-migrate`**, for the migrate Job: the owner database URL.
+  - **Secret `delphi-seed`**, for the seed Job: the app's database URL only.
   - **Secret `delphi-postgres`**, for Postgres and the backup: the superuser and role passwords.
 - **The api never receives the sim URL** (doc 17 §2).
 - Postgres creates the `delphi_app` and `delphi_sim` LOGIN roles on first start, from an init
@@ -206,11 +220,27 @@ node address range allowed to reach it, and the optional monitoring scrape rule.
 a Role bound to it in `delphi`:
 - `apps/deployments`: get, list, watch, patch;
 - `apps/replicasets`: get, list, watch (`rollout status` and `undo`);
-- `batch/jobs`: create, get, list, watch, delete;
+- `batch/jobs`: create, get, list, watch (no delete: names are unique per run attempt, and
+  `ttlSecondsAfterFinished` cleans up);
 - `pods`: get, list, watch; `pods/log`: get.
 
 Nothing else: no Secrets, ConfigMaps, Services, NetworkPolicies, RBAC, namespaces or cluster
 scope.
+
+**Admission guard (`deployer-guard.yaml`).** RBAC alone is not enough: permission to create a
+Job, or to patch a Deployment, lets the holder mount any Secret in the namespace, such as the
+superuser password or the deployer's own token. So a `ValidatingAdmissionPolicy`, bound only to
+`delphi-deployer`, enforces exactly what the workflow does:
+- **Jobs:** it may only create Jobs named `delphi-(migrate|seed)-<7 hex>-<n>`, running DELPHI's
+  image by digest, with no `env`, only `delphi-config` plus that Job's own Secret, no service
+  account token, and `emptyDir` volumes only. It may never change a Job.
+- **Deployments:** on `delphi-api` and `delphi-worker` it may change only the container image,
+  and only to DELPHI's image by digest.
+
+`rollout undo` passes, because it restores a previous template that differs only in the image.
+If the bootstrap ever changes a pod template structurally, rolling back past that change is
+denied, and the operator re-applies the bootstrap. The server's operator tested 11 cases on the
+same k3s release, including the exfiltration case, which is now denied.
 
 **Jobs (`deploy/k8s/jobs/`), filled in by the deploy workflow with the digest:**
 - **`delphi-migrate-<sha7>`** runs `delphi migrate`: `alembic upgrade head`, then **load KB v1**
@@ -300,7 +330,7 @@ and the run summary shows its digest.
 
 **Cluster (operator):**
 
-6. Generate the secret values locally (e.g. `openssl rand -hex 32`) and create the four
+6. Generate the secret values locally (e.g. `openssl rand -hex 32`) and create the five
    Secrets (§4).
 7. Copy `deploy/k8s/overlays/example` to `deploy/k8s/overlays/local/` (git-ignored) and fill in:
    - the first image's digest;
@@ -354,7 +384,7 @@ and the run summary shows its digest.
 |---|---|
 | Deploy run fails at migrate | The run prints the Job's logs. Nothing was rolled out. Fix forward with a new PR, or redeploy the previous digest |
 | Rollout timed out | The run already undid it. Check pod events (image pull, probes, OOM) as the operator |
-| Bad release that passed | Actions → Deploy with `digest` = the previous good digest (from the last successful run's summary). Migrations are expand/contract, so rolling the code back is safe |
+| Bad release that passed | Actions → Deploy with **action = rollback** (undoes the last rollout), or **redeploy** a known-good digest from an earlier run's summary. Migrations are expand/contract, so rolling the code back is safe |
 | verify timed out, pods healthy | The tunnel or DNS: ask the operator to check the host tunnel service and its rule for the name |
 | Server rebooted | Pods restart on their own. Startup probes allow a cold start; the worker reclaims expired job leases |
 | Jobs stuck | Admin → Jobs; jobs whose `locked_until` has passed are reclaimed automatically; retry failed ones |
