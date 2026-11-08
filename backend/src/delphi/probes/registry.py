@@ -1,28 +1,18 @@
 """Registry of outcome classifiers that exist in code (docs/07 §3 rule 8).
 
 A KB can only enable sources whose classifier is registered here: probes are code, typologies
-are configuration (ADR-0006). The implementations arrive with M4 (Guardian) and M5 (Navigator);
-until then this lists the names they will be registered under (docs/tech-debt.md TD-2).
+are configuration (ADR-0006). The Guardian probes' classifiers live in
+``delphi.probes.classifiers`` (docs/08 §5). The Navigator evidence rules arrive with #102
+(docs/09 §4); until then their names are listed so KB v1 validates (docs/tech-debt.md TD-2).
 """
 
 from __future__ import annotations
 
-CLASSIFIER_NAMES: frozenset[str] = frozenset(
+from delphi.probes.classifiers import GUARDIAN_CLASSIFIERS
+
+# Navigator evidence (docs/09 §4): names only until #102 implements their rules.
+NAVIGATOR_EVIDENCE_NAMES: frozenset[str] = frozenset(
     {
-        # Guardian probes (docs/08 §5)
-        "BENEFICIARY_INTEL",
-        "COUNTERPARTY_PHONE_RISK",
-        "DEVICE_POSTURE",
-        "SESSION_BEHAVIOUR",
-        "CALL_STATUS",
-        "OTP_STEP_UP",
-        "BIOMETRIC_STEP_UP",
-        "PURPOSE_QUESTION",
-        "SPELL_BREAKER_DIGITAL_ARREST",
-        "SPELL_BREAKER_INVESTMENT",
-        "COOLING_OFF",
-        "COLLECT_INTENT_CHECK",
-        # Navigator evidence (docs/09 §4)
         "BENEFICIARY_DEVICE_SHARING",
         "INBOUND_FAN_IN",
         "PASS_THROUGH_DWELL",
@@ -34,3 +24,5 @@ CLASSIFIER_NAMES: frozenset[str] = frozenset(
         "CUSTOMER_OUTREACH_CALL",
     }
 )
+
+CLASSIFIER_NAMES: frozenset[str] = frozenset(GUARDIAN_CLASSIFIERS) | NAVIGATOR_EVIDENCE_NAMES
