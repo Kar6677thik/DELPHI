@@ -1,42 +1,51 @@
 # 23 — Deployment and operations
 
-ADR-0009 (GitOps on k3s) and ADR-0010 (Cloudflare Tunnel).
+ADR-0015 (manual, approved deploys; shared host tunnel), which supersedes ADR-0009, and
+ADR-0010 (public access through Cloudflare Tunnel, protected by the app login).
 
-**Rule:** GitHub Actions builds, tests and publishes the image. It never holds cluster
-credentials and never commits to the repo. The cluster pulls everything it needs (Argo CD pulls
-manifests from git, Image Updater watches GHCR, kubelet pulls images, cloudflared dials out).
+**Rules:**
+- A deploy happens only when the owner runs **Deploy** (`workflow_dispatch`) and approves it.
+  Merging to `main` never deploys.
+- CI holds a cluster credential only for namespace `delphi`, and can only change images and run
+  Jobs there.
+- This repo is public. It never contains the server's addresses, tailnet names or tags, ports,
+  account IDs or secret values. Those live in GitHub environment variables and secrets, or in
+  the operator's local bootstrap overlay (§4).
 
 ```
-push to main / workflow_dispatch
+owner: Actions → Deploy → Run workflow (on main) [seed: no]
    │
    ▼
-GitHub Actions: ci (lint, test, e2e) ─► build image ─► push ghcr.io/kar6677thik/delphi:sha-<40-hex> (+ :main)
-                                                          │
-                     home server (k3s)                    │ polls registry (2 min)
-   Argo CD Image Updater ◄────────────────────────────────┘
-        │ sets the image override on Application "delphi" (write-back method: argocd; no git commit)
-        ▼
-   Argo CD sync: PreSync Job delphi-migrate → Deployments roll (api, worker) → PostSync Job delphi-seed (idempotent)
-        ▼
-   cloudflared ─► https://delphi.<domain>
+guard (ref is main) ─► ci (full CI on that commit) ─► publish
+   publish: build the image → push ghcr.io/kar6677thik/delphi:sha-<40-hex> → attest build provenance
+   │                                                     (environment `production`, main only)
+   ▼
+deploy  (environment `megatron`: waits for the owner's approval; main only)
+   join the tailnet (Tailscale OIDC, ephemeral CI tag; ACL: the Kubernetes API only)
+   verify the attestation for the digest
+   kubectl as ServiceAccount delphi-deployer (namespace `delphi` only):
+     Job delphi-migrate-<sha7> (image@digest) ─ wait ─► set image api + worker (image@digest)
+     ─► rollout status ─(fail)─► rollout undo
+     [seed: yes] Job delphi-seed-<sha7> ─ wait
    │
-GitHub Actions verify job: polls https://delphi.<domain>/api/v1/health until version == commit SHA (≤ 15 min)
+   ▼
+verify: poll https://delphi.karthiksurkanti.in/api/v1/health until .version == the commit SHA
 ```
 
 ## 1. Repository layout for deployment
 
 ```
-.github/workflows/ci.yml            # reusable + PR/push CI
-.github/workflows/deploy.yml        # main + workflow_dispatch: ci → build/push → verify
-Dockerfile                          # multi-stage: frontend build → python runtime
-compose.yaml                        # local dev + CI e2e stack
-deploy/k8s/base/                    # kustomize base (namespace delphi)
-  namespace.yaml  api.yaml  worker.yaml  postgres.yaml  migrate-job.yaml  seed-job.yaml
-  backup-cronjob.yaml  cloudflared.yaml  networkpolicies.yaml  kustomization.yaml
-deploy/k8s/overlays/home/           # replicas, resources, public host, images: newName/newTag
-deploy/argocd/application.yaml      # Argo CD Application "delphi" (applied once, manually)
-deploy/argocd/image-updater.yaml    # ImageUpdater CR (applied once, manually)
-deploy/bootstrap/README.md          # the runbook in §6, copied as executable steps
+Dockerfile                         # multi-stage: frontend build → python runtime
+compose.yaml                       # local development (PostgreSQL; api/worker later)
+.github/workflows/ci.yml           # PR CI, and reused by deploy.yml (workflow_call)
+.github/workflows/deploy.yml       # workflow_dispatch only: guard → ci → publish → deploy → verify
+deploy/k8s/base/                   # what the bootstrap applies (namespace delphi)
+  namespace.yaml  config.yaml  postgres.yaml  api.yaml  worker.yaml  backup.yaml
+  networkpolicies.yaml  deployer-rbac.yaml  kustomization.yaml
+deploy/k8s/jobs/                   # templates the deploy workflow fills in with the digest
+  migrate.yaml  seed.yaml
+deploy/k8s/overlays/example/       # the overlay the operator copies and fills in locally (§4)
+deploy/README.md                   # the bootstrap runbook (§6)
 ```
 
 ## 2. Container image
@@ -49,93 +58,172 @@ deploy/bootstrap/README.md          # the runbook in §6, copied as executable s
 - Runs as user `10001:10001`, `WORKDIR /app`, `ENTRYPOINT ["delphi"]`, default `CMD ["api"]`.
 - Build arg and env `DELPHI_VERSION=<git sha>` (returned by `/health`). OCI labels: source,
   revision, created.
-- Platforms: `${{ vars.IMAGE_PLATFORMS || 'linux/amd64' }}` (A-02).
+- Platform: `linux/amd64` (A-02).
 - The image must start with a read-only root filesystem. Writable `/tmp` is an `emptyDir`.
+- Deployed **by digest** (`ghcr.io/kar6677thik/delphi@sha256:…`), never by tag. The
+  `sha-<40-hex>` tag only names the build.
 
 ## 3. Workflows
 
-### `ci.yml` (on: pull_request, push to non-main branches, workflow_call)
+### `ci.yml` (on: pull_request, workflow_call)
 
-Jobs run in parallel where possible:
+1. `backend`: uv sync → ruff → mypy → import-linter → `delphi kb validate kb/` → pytest (unit,
+   property, golden, integration with a `postgres:16` service) → coverage gate.
+2. `frontend`: pnpm install → eslint → tsc → prettier check → vitest (coverage) →
+   `pnpm audit --prod` → build.
+3. `contract`: the generated TS types match `backend/openapi.json` (the backend checks the file
+   against the code).
+4. Later in M0: `secrets` (gitleaks), `image-scan` (Trivy on a no-push build), and `e2e`
+   (compose + Playwright).
 
-1. `backend`: uv sync → ruff → mypy → import-linter → `delphi kb validate kb/` → pytest
-   (unit, property, golden, integration with `postgres:16` service) → coverage gate →
-   pip-audit → bandit.
-2. `frontend`: pnpm install → eslint → tsc → prettier check → vitest (coverage) → pnpm audit →
-   build.
-3. `contract`: regenerate `openapi.json` and the TS types; `git diff --exit-code`.
-4. `secrets`: gitleaks.
-5. `e2e` (only for PRs targeting `main` and for `workflow_call` from deploy): `docker compose up`
-   with the `test` profile and the template LLM → Playwright → upload the report as an artifact.
-6. `image-scan`: docker build (no push) → Trivy (fail on HIGH/CRITICAL without a waiver).
-
+`policy.yml` (`commit-policy`) checks every PR's commits and description for AI attribution.
 All third-party actions are pinned to a full commit SHA. `permissions: contents: read` by
 default.
 
-### `deploy.yml` (on: push to `main`, workflow_dispatch)
+### `deploy.yml` (on: workflow_dispatch only)
+
+Inputs:
+- `seed` (boolean, default false): also run `delphi seed --if-empty --profile demo` after the
+  rollout. Needed once, on the first deploy.
+- `digest` (string, optional): redeploy an image that was already built (`sha256:` + 64 hex,
+  validated). This skips `ci` and `publish`, which makes a rollback to a known-good digest a
+  one-click run.
 
 ```yaml
-concurrency: { group: deploy-main, cancel-in-progress: false }
+concurrency: { group: deploy-megatron, cancel-in-progress: false }
 jobs:
-  guard:       # workflow_dispatch is allowed only on refs/heads/main
-  ci:          uses: ./.github/workflows/ci.yml
-  publish:     needs ci; environment: production; permissions: { contents: read }
-               docker/setup-buildx → login ghcr with secrets.GHCR_PUSH_TOKEN (environment secret) → build-push
-               tags: ghcr.io/kar6677thik/delphi:sha-${{ github.sha }}, ghcr.io/kar6677thik/delphi:main
-               cache: type=gha
-  verify:      needs publish; runs-on ubuntu-latest; timeout-minutes 20
-               poll ${{ vars.DELPHI_PUBLIC_URL }}/api/v1/health every 20 s until .version == github.sha
-               fail after 15 min with a message linking to the runbook §8
+  guard:    fail unless github.ref == refs/heads/main; validate `digest` if given
+  ci:       uses ./.github/workflows/ci.yml                   (skipped when `digest` is given)
+  publish:  needs ci; environment: production
+            permissions: { contents: read, id-token: write, attestations: write }
+            login ghcr with secrets.GHCR_PUSH_TOKEN → build-push tag sha-<sha>
+            → actions/attest-build-provenance (subject-digest)  → outputs: digest
+  deploy:   needs publish (or guard); environment: megatron (owner approval; main only)
+            permissions: { contents: read, id-token: write }
+            tailscale/github-action (OIDC; vars.TS_OIDC_CLIENT_ID, vars.TS_OIDC_AUDIENCE; tag from vars)
+            gh attestation verify oci://ghcr.io/kar6677thik/delphi@<digest> --owner Kar6677thik
+            kubeconfig from vars.KUBE_SERVER, secrets.KUBE_CA, secrets.KUBE_DEPLOYER_TOKEN
+              (tls-server-name from vars.KUBE_TLS_SERVER_NAME)
+            migrate Job → wait (timeout 10 min; on failure print its logs and stop)
+            kubectl set image deploy/delphi-api deploy/delphi-worker → rollout status (10 min)
+              → on failure: rollout undo both, fail the run
+            if seed: seed Job → wait (5 min; it only enqueues GENERATE_DATASET)
+  verify:   needs deploy; poll https://delphi.karthiksurkanti.in/api/v1/health every 15 s
+            until .version == the commit SHA (10 min)
 ```
 
 - No step creates commits, tags or releases in the repo.
-- Re-running `workflow_dispatch` on the same SHA rebuilds and pushes the same tag. The cluster
-  is unaffected, because the image is identical, and verify passes at once.
-- GitHub repo settings: branch protection on `main` (PR + 1 CODEOWNER approval, required
-  checks: backend, frontend, contract, secrets, e2e, image-scan; linear history; squash merge
-  only). Repo variable `DELPHI_PUBLIC_URL` (e.g. `https://delphi.example.com`) and optional
-  `IMAGE_PLATFORMS`.
+- A rejected or expired approval ends the run with nothing changed on the server.
+- The ephemeral tailnet node disappears when the job ends.
+
+### Secrets and variables (GitHub; never in the repo)
+
+| Name | Kind | Environment | What |
+|---|---|---|---|
+| `GHCR_PUSH_TOKEN` | secret | `production` | Classic PAT, `write:packages` only, with an expiry |
+| `TS_OIDC_CLIENT_ID`, `TS_OIDC_AUDIENCE` | variables | `megatron` | Tailscale OIDC trust credential bound to this repo and environment |
+| `TS_CI_TAG` | variable | `megatron` | The ephemeral CI tag the runner joins as |
+| `KUBE_SERVER`, `KUBE_TLS_SERVER_NAME` | variables | `megatron` | The API server address on the tailnet, and the name its certificate carries |
+| `KUBE_CA`, `KUBE_DEPLOYER_TOKEN` | secrets | `megatron` | Cluster CA, and the `delphi-deployer` ServiceAccount token |
 
 ### Image publishing trust boundary
 
-Image Updater deploys **any** tag matching `^sha-[0-9a-f]{40}$` (§5). Whoever can push such a
-tag can run code on the home server. With collaborators holding write access, the default
-`GITHUB_TOKEN` would let a workflow on *any branch* push to the package. So:
-
-1. **The package is linked to the repo with Read access only.** In package settings →
-   "Manage Actions access", set `Kar6677thik/DELPHI` to **Read**. No repo workflow's
+1. **The package is linked to the repo with Read access only.** No repo workflow's
    `GITHUB_TOKEN` can push. Workflows never request `packages: write`.
-2. **Only the `production` environment can publish.** The repo has an environment `production`
-   with deployment branches limited to `main`. Its secret `GHCR_PUSH_TOKEN` is a classic PAT of
-   the owner with only `write:packages` (classic PATs are required for GHCR pushes; set an
-   expiry and a calendar reminder). A job on any other branch that names this environment is
-   rejected by GitHub before it can read the secret.
-3. **`main` only changes through reviewed PRs** (branch protection), so changing
-   `deploy.yml` itself also needs owner approval.
-4. **Bootstrap order:** the first push creates the package. Do it from `main` with the PAT, then
-   immediately set the repo's package access to Read and the package visibility to public
-   (A-05).
+2. **Only the `production` environment can publish.** It allows only `main`, and its secret
+   `GHCR_PUSH_TOKEN` is a classic PAT of the owner with only `write:packages` (classic PATs are
+   required for GHCR pushes; set an expiry and a reminder).
+3. **Nothing deploys a tag.** The deploy job rolls out the digest that the same run built (or
+   that the owner typed in), after verifying its provenance attestation. So an image pushed by
+   anything else is never deployed.
+4. **`main` changes only through reviewed PRs**, so changing `deploy.yml` itself needs the
+   owner's approval.
 
-Residual risk: someone with admin on the repo or the owner's PAT can still publish. This is
-accepted, because only the owner holds either.
+## 4. Kubernetes (namespace `delphi`)
 
-## 4. Kubernetes manifests (kustomize base, namespace `delphi`)
+The bootstrap (§6) applies `deploy/k8s/base` through the operator's local overlay. The overlay
+fills in what must not be public: the api Service's fixed ClusterIP (the tunnel's target), the
+node address range allowed to reach it, and the optional monitoring scrape rule.
+`deploy/k8s/overlays/example` shows its shape with placeholders.
 
-| Resource | Key settings |
-|---|---|
-| `Deployment delphi-api` | 1 replica; RollingUpdate maxSurge 1 / maxUnavailable 0; no image pull secret (public package, A-05); env from Secret `delphi-app` + ConfigMap `delphi-config`; ports 8000 and 9000; startupProbe `/api/v1/health` (failureThreshold 30, period 2 s); livenessProbe `/api/v1/health` (period 10 s); readinessProbe `/api/v1/ready` (period 5 s); requests 250m/512Mi, limits 2 CPU/1.5Gi; securityContext runAsNonRoot, readOnlyRootFilesystem, allowPrivilegeEscalation false, capabilities drop ALL, seccomp RuntimeDefault |
-| `Deployment delphi-worker` | 1 replica; same image, `args: ["worker"]`; requests 500m/1Gi, limits 3 CPU/5Gi (the `eval` profile peaks at about 3.8 GiB while it is generated and written; budget < 4.5 GiB, doc 22 §1); liveness on worker `:9000/health`; `terminationGracePeriodSeconds: 60` (finish or release the current job) |
-| `StatefulSet delphi-postgres` | `postgres:16` pinned; PVC 10Gi `local-path`; requests 250m/512Mi; init script creates the `delphi_app` / `delphi_sim` roles from Secret `delphi-db`; liveness `pg_isready` |
-| `Service delphi-api` (ClusterIP 8000), `delphi-postgres` (headless 5432) | |
-| `Job delphi-migrate` | annotation `argocd.argoproj.io/hook: PreSync`, `hook-delete-policy: BeforeHookCreation`; `args: ["migrate"]`; backoffLimit 2. `delphi migrate` = `alembic upgrade head`, then **load KB v1** from the image's `kb/` if no KB version exists (idempotent). So `/ready` can pass on the very first sync |
-| `Job delphi-seed` | `argocd.argoproj.io/hook: PostSync`; `args: ["seed", "--if-empty", "--profile", "demo"]`; idempotent (the job key names the profile and seed, and `--if-empty` does nothing once a dataset exists); it enqueues `GENERATE_DATASET` (and `TRAIN_SENSING` once sensing exists, M3) and exits; the worker does the work. Ordering on the first deploy: PreSync migrate (schema + KB v1) → api/worker become Ready (readiness does not need data or models) → PostSync seed enqueues jobs → the worker generates and trains (≈ 10–20 min) → `/status` flips to ready |
-| `CronJob delphi-pg-backup` | `30 21 * * *` UTC (= 03:00 IST); `pg_dump -Fc` to PVC `delphi-backups` (5Gi); keep 7 most recent; insert a row into `delphi.ops_backup_runs` |
-| `Deployment cloudflared` | `cloudflare/cloudflared` pinned; `tunnel --no-autoupdate run --token $(TUNNEL_TOKEN)` from Secret `cloudflared-token`; 1 replica; metrics port for liveness |
-| `NetworkPolicy` | **ingress only** (egress is not restricted: plain NetworkPolicy cannot filter by FQDN): default-deny ingress for the namespace; allow pods labelled `app=cloudflared` → `delphi-api:8000`; allow pods labelled `delphi.io/db-client: "true"` → `delphi-postgres:5432`. The api, worker, migrate, seed, backup and restore-test pods carry that label. Port 9000 (metrics) gets no ingress rule from outside the namespace, except an optional rule for the owner's Prometheus namespace |
-| `ConfigMap delphi-config` | `DELPHI_ENV=demo`, `DELPHI_PUBLIC_ORIGIN`, `DELPHI_CLIENT_IP_HEADER=CF-Connecting-IP`, `DELPHI_LLM_PROVIDER=anthropic`, `DELPHI_LLM_MODEL=claude-opus-5-5`, `DELPHI_TIME_MODE=DEMO`, `DELPHI_LOG_LEVEL=INFO` |
+**Namespace:** labelled `pod-security.kubernetes.io/enforce: restricted`. Every pod:
+- runs non-root, with a read-only root filesystem and an `emptyDir` `/tmp`;
+- `allowPrivilegeEscalation: false`, capabilities `drop: [ALL]`, `seccompProfile: RuntimeDefault`;
+- `automountServiceAccountToken: false`;
+- digest-pinned images, and requests and limits on every container, including Jobs.
 
-Overlay `home` sets the image `ghcr.io/kar6677thik/delphi` with the initial `newTag:
-sha-<first deployed sha>` (Image Updater overrides it afterwards), and the public host.
+**Budget** (the node is shared and small; ADR-0015):
+
+| Workload | Requests | Limits | Notes |
+|---|---|---|---|
+| `Deployment delphi-api` | 100m / 384Mi | 1 CPU / 768Mi | 1 replica, RollingUpdate maxSurge 1 / maxUnavailable 0; ports 8000 (app) and 9000 (metrics) |
+| `Deployment delphi-worker` | 100m / 768Mi | 1.5 CPU / 1.5Gi | 1 replica, `Recreate`; `terminationGracePeriodSeconds: 60`; liveness on `:9000/health` |
+| `StatefulSet delphi-postgres` | 100m / 384Mi | 1 CPU / 1Gi | `postgres:16` by digest; PVC 10Gi `local-path`; liveness `pg_isready` |
+| Jobs (migrate, seed, backup) | 50m / 256Mi | 1 CPU / 768Mi | `backoffLimit: 1`; `ttlSecondsAfterFinished: 86400` |
+
+- **`eval` is off on this server.** The `eval` dataset peaks at about 3.8 GiB (doc 22 §1), more
+  than the node can spare. `DELPHI_DATASET_PROFILES=test,demo` makes the api and the worker
+  refuse it, and evaluation runs elsewhere (a laptop or CI).
+- **Single node.** One replica each; Postgres in a StatefulSet; startup probes that tolerate a
+  cold start after the node reboots (`/api/v1/health`: period 5 s, failureThreshold 60).
+
+**Configuration and secrets:**
+- Non-secret settings: ConfigMap `delphi-config`:
+  - `DELPHI_ENV=demo`, `DELPHI_PUBLIC_ORIGIN=https://delphi.karthiksurkanti.in`
+  - `DELPHI_CLIENT_IP_HEADER=CF-Connecting-IP`, `DELPHI_DATASET_PROFILES=test,demo`
+  - `DELPHI_LOG_LEVEL=INFO`, `DELPHI_MIGRATIONS_DIR=/app/migrations`, `DELPHI_STATIC_DIR=/app/static`
+- Secrets are created by the bootstrap from values generated on the operator's machine, and
+  mounted with `envFrom: secretRef`. Manifests never name keys and never inline a value.
+  - **Secret `delphi-app`**, for the api and Jobs: the app's database URL and the bootstrap
+    admin. Later also the LLM key.
+  - **Secret `delphi-worker`**, for the worker only: the app and sim database URLs.
+  - **Secret `delphi-migrate`**, for the migrate Job: the owner database URL.
+  - **Secret `delphi-postgres`**, for Postgres and the backup: the superuser and role passwords.
+- **The api never receives the sim URL** (doc 17 §2).
+- Postgres creates the `delphi_app` and `delphi_sim` LOGIN roles on first start, from an init
+  script in ConfigMap `delphi-postgres-init`, which reads the passwords from its environment.
+
+**Services:**
+- **`delphi-api`:** ClusterIP 8000, with the fixed address set in the overlay. It is the tunnel's
+  target. Port 9000 is not in the Service.
+- **`delphi-postgres`:** headless, 5432.
+
+**NetworkPolicies:** default-deny ingress and egress for the namespace, then:
+- **into `delphi-api:8000`:** from the node only (the host tunnel), with the address range set in
+  the overlay;
+- **into `delphi-postgres:5432`:** from pods labelled `delphi.io/db-client: "true"`, which are
+  the api, the worker, the Jobs and the backup;
+- **egress, all pods:** DNS to kube-dns;
+- **egress from db clients:** to Postgres;
+- **egress, api and worker:** HTTPS (443) to public addresses only, that is everything except
+  the RFC 1918 and 100.64/10 ranges. The LLM provider needs this from M7;
+- **optional:** into `:9000` from the operator's metrics scraper, set in the overlay.
+
+**RBAC for CI (`deployer-rbac.yaml`):** ServiceAccount `delphi-deployer`, its token Secret, and
+a Role bound to it in `delphi`:
+- `apps/deployments`: get, list, watch, patch;
+- `apps/replicasets`: get, list, watch (`rollout status` and `undo`);
+- `batch/jobs`: create, get, list, watch, delete;
+- `pods`: get, list, watch; `pods/log`: get.
+
+Nothing else: no Secrets, ConfigMaps, Services, NetworkPolicies, RBAC, namespaces or cluster
+scope.
+
+**Jobs (`deploy/k8s/jobs/`), filled in by the deploy workflow with the digest:**
+- **`delphi-migrate-<sha7>`** runs `delphi migrate`: `alembic upgrade head`, then **load KB v1**
+  from the image's `kb/` if no KB version exists (idempotent, from #15). So `/ready` can pass on
+  the very first deploy.
+- **`delphi-seed-<sha7>`** runs `delphi seed --if-empty --profile demo`. It is idempotent: the
+  job key names the profile and seed, and `--if-empty` does nothing once a dataset exists. It
+  enqueues `GENERATE_DATASET` (and `TRAIN_SENSING` once sensing exists, M3) and exits; the
+  worker does the work.
+
+**First deploy order:**
+1. migrate (schema + KB v1);
+2. api and worker become Ready (readiness needs no data or models);
+3. seed enqueues the jobs;
+4. the worker generates and trains (≈ 10–20 min);
+5. `/status` flips to ready.
 
 ### 4.1 Process settings
 
@@ -144,9 +232,9 @@ to start, exit code 2, naming the variable, if one is missing or invalid.
 
 | Variable | Default | Used by | Source |
 |---|---|---|---|
-| `DELPHI_DATABASE_URL` | required | api, worker, migrate | Secret `delphi-db`, key `app-url` (role `delphi_app`) |
-| `DELPHI_SIM_DATABASE_URL` | unset | worker only | Secret `delphi-db`, key `sim-url` (role `delphi_sim`). **Never mounted into the api pod**, so the api cannot read `sim_truth` even by mistake (doc 17 §2) |
-| `DELPHI_MIGRATE_DATABASE_URL` | `DELPHI_DATABASE_URL` | migrate Job only | Secret `delphi-db`, key `owner-url` (the schema owner) |
+| `DELPHI_DATABASE_URL` | required | api, worker, migrate | Secrets `delphi-app` / `delphi-worker` / `delphi-migrate` (role `delphi_app`) |
+| `DELPHI_SIM_DATABASE_URL` | unset | worker only | Secret `delphi-worker` (role `delphi_sim`). **Never mounted into the api pod**, so the api cannot read `sim_truth` even by mistake (doc 17 §2) |
+| `DELPHI_MIGRATE_DATABASE_URL` | `DELPHI_DATABASE_URL` | migrate Job only | Secret `delphi-migrate` (the schema owner) |
 | `DELPHI_MIGRATIONS_DIR` | `backend/migrations` in a checkout | migrate, api, worker | The image sets `/app/migrations` |
 | `DELPHI_STATIC_DIR` | `frontend/dist` in a checkout | api | The image sets `/app/static`. Without an `index.html` there, the api serves no SPA and `/` is a 404 problem |
 | `DELPHI_VERSION` | `dev` | all | Image build arg (§2) |
@@ -161,120 +249,108 @@ to start, exit code 2, naming the variable, if one is missing or invalid.
 | `DELPHI_WORKER_DEFAULT_CONCURRENCY` / `DELPHI_WORKER_FAST_CONCURRENCY` | `2` / `1` | worker | doc 04 §5.4 |
 | `DELPHI_WORKER_POLL_INTERVAL_S` / `DELPHI_WORKER_HEARTBEAT_MAX_AGE_S` | `1.0` / `30` | worker | doc 20 §3 |
 | `DELPHI_OUTBOX_RETENTION_H` / `DELPHI_IDEMPOTENCY_RETENTION_H` | `24` / `24` | worker | doc 17 §6 |
-| `DELPHI_PUBLIC_ORIGIN` | unset | api | ConfigMap, e.g. `https://delphi.<domain>`. The Origin that mutating requests must carry (CSRF, doc 19 §4). Unset in development: the request's own origin |
-| `DELPHI_CLIENT_IP_HEADER` | unset | api | ConfigMap: `CF-Connecting-IP`. The header with the real client IP behind the tunnel, used for the login lockout and audit. Safe because only cloudflared can reach the api pod (§4 NetworkPolicy) |
+| `DELPHI_PUBLIC_ORIGIN` | unset | api | ConfigMap: `https://delphi.karthiksurkanti.in`. The Origin that mutating requests must carry (CSRF, doc 19 §4). Unset in development: the request's own origin |
+| `DELPHI_CLIENT_IP_HEADER` | unset | api | ConfigMap: `CF-Connecting-IP`. The header with the real client IP behind the tunnel, used for the login lockout and audit. Safe because only the node (the host tunnel) can reach the api pod (§4 NetworkPolicies) |
 | `DELPHI_SESSION_IDLE_H` / `DELPHI_SESSION_ABSOLUTE_DAYS` | `12` / `7` | api | doc 19 §2 |
 | `DELPHI_LOGIN_MAX_FAILURES` / `DELPHI_LOGIN_WINDOW_MIN` | `5` / `15` | api | doc 16 §1 |
+| `DELPHI_DATASET_PROFILES` | `test,demo,eval` | api, worker | ConfigMap: `test,demo` on the home server (the `eval` dataset needs about 3.8 GiB; §4). `POST /admin/datasets`, `delphi seed` and `GENERATE_DATASET` refuse other profiles |
 | `DELPHI_BOOTSTRAP_ADMIN_USERNAME` / `DELPHI_BOOTSTRAP_ADMIN_PASSWORD` | unset | api | Secret `delphi-app`. Required only while `users` is empty: the api then creates this ADMIN, or exits with code 2 if they are unset (doc 19 §2) |
 
-Later milestones add their settings to this table (`DELPHI_SECRET_KEY`, `DELPHI_PUBLIC_ORIGIN`,
-`DELPHI_LLM_*`, `DELPHI_TIME_MODE`, the bootstrap admin) together with the code that reads them.
+Later milestones add their settings to this table (`DELPHI_LLM_*`, `DELPHI_TIME_MODE`) together
+with the code that reads them.
 
-## 5. Argo CD and Image Updater
+## 5. Public exposure
 
-`deploy/argocd/application.yaml`:
+- `https://delphi.karthiksurkanti.in` is a proxied Cloudflare DNS name for the server's
+  **shared, host-level Cloudflare Tunnel** (ADR-0010 as amended by ADR-0015). TLS ends at
+  Cloudflare. The tunnel forwards plain HTTP on the node to the api Service's fixed ClusterIP,
+  port 8000.
+- Only the api's app port is routed. Metrics (`:9000`), Postgres and the worker are never
+  routed.
+- The server's operator adds the ingress rule and the DNS route (§6). There is no tunnel token
+  in the namespace and no `cloudflared` in the cluster.
+- Every page and API except `/api/v1/health` and `/api/v1/ready` needs a sign-in (doc 19).
+  Optional, in the Cloudflare dashboard: a rate-limiting rule on `/api/v1/auth/login` (10
+  requests per minute per IP).
 
-```yaml
-apiVersion: argoproj.io/v1alpha1
-kind: Application
-metadata: { name: delphi, namespace: argocd }
-spec:
-  project: default
-  source:
-    repoURL: https://github.com/Kar6677thik/DELPHI.git
-    targetRevision: main
-    path: deploy/k8s/overlays/home
-  destination: { server: https://kubernetes.default.svc, namespace: delphi }
-  syncPolicy:
-    automated: { prune: true, selfHeal: true }
-    syncOptions: [CreateNamespace=true]
-    retry: { limit: 3, backoff: { duration: 30s, factor: 2, maxDuration: 5m } }
-```
+## 6. Bootstrap runbook (once, and whenever `deploy/k8s/base` changes)
 
-`deploy/argocd/image-updater.yaml` (CRD form, Image Updater v1.x. Field names MUST be checked
-against the docs of the pinned version during M0, and this file corrected if needed):
+The server's operator (the owner, or the operations thread acting for the owner) runs this with
+admin rights. Exact commands, addresses and names stay in the operator's private notes, not in
+this repo.
 
-```yaml
-apiVersion: argocd-image-updater.argoproj.io/v1alpha1
-kind: ImageUpdater
-metadata: { name: delphi, namespace: argocd }
-spec:
-  writeBackConfig: { method: argocd }          # no git write-back → no bot commits
-  applicationRefs:
-    - namePattern: delphi
-      images:
-        - alias: delphi
-          imageName: ghcr.io/kar6677thik/delphi
-          commonUpdateSettings:
-            updateStrategy: newest-build
-            allowTags: "regexp:^sha-[0-9a-f]{40}$"
-```
+**GitHub (owner):**
+1. Create environment `megatron` with required reviewer = owner and deployment branches = `main`.
+2. Fill in the §3 variables and secrets. The ServiceAccount token comes from step 8 below.
+3. Package settings: link the package to the repo with **Read** access, and make it public (A-05).
 
-Notes:
+**Tailscale (owner, admin console):**
 
-- `newest-build` relies on image creation time. We never rebuild an *older* SHA (deploy is
-  guarded to `main` HEAD), so the newest build is always the newest commit.
-- The `argocd` write-back stores the override in the Application. If the Application is
-  recreated, Image Updater re-applies the newest tag within one polling interval. Until then,
-  the overlay's pinned tag runs. This is acceptable.
-- Image Updater and kubelet pull anonymously from the public package (A-05). If the repo is
-  ever made private, add read credentials (Secret `ghcr-creds` in `argocd`, plus `ghcr-pull`
-  in `delphi`).
-- If the repo is private, Argo CD needs a read-only deploy key (`argocd repo add`).
+4. Create the CI tag, owned by the owner, and an ACL grant that lets it reach only the cluster's
+   Kubernetes API.
+5. Create the OIDC trust credential for this repo and environment `megatron`, limited to that tag.
 
-## 6. One-time bootstrap runbook (owner, on the server)
+**Cluster (operator):**
 
-Prerequisites: k3s running; `kubectl` access; a Cloudflare account with the domain; in GitHub,
-the `production` environment with its `GHCR_PUSH_TOKEN` secret (§3, "Image publishing trust
-boundary").
+6. Generate the secret values locally (e.g. `openssl rand -hex 32`) and create the four
+   Secrets (§4).
+7. Copy `deploy/k8s/overlays/example` to a private location and fill in:
+   - a free fixed ClusterIP for `delphi-api`;
+   - the node address range;
+   - optionally, the scrape rule.
+8. `kubectl apply -k <private overlay>`, then read the `delphi-deployer` token and the cluster
+   CA into the GitHub secrets.
+9. Add the tunnel ingress rule `delphi.karthiksurkanti.in → http://<api ClusterIP>:8000`,
+   validate it, restart the tunnel service, and route the DNS name.
+10. Add `delphi` to the operations console's namespace allowlist, after it checks for inline
+    secrets.
 
-1. Install Argo CD (pinned version) into namespace `argocd` (upstream install manifest).
-2. Install Argo CD Image Updater (pinned v1.x) into `argocd`. No registry credentials are
-   needed (public package).
-3. If the repo is private: add the repo to Argo CD with a read-only deploy key.
-4. Create namespace `delphi` and the secrets (values generated locally, e.g. `openssl rand -hex 32`):
-   - `delphi-db`: `POSTGRES_PASSWORD`, `DELPHI_APP_DB_PASSWORD`, `DELPHI_SIM_DB_PASSWORD`, and the
-     URLs built from them (§4.1): `app-url`, `sim-url`, `owner-url`
-     (`postgresql://<role>:<password>@delphi-postgres:5432/delphi`)
-   - `delphi-app`: `DELPHI_SECRET_KEY`, `ANTHROPIC_API_KEY`, `DELPHI_BOOTSTRAP_ADMIN_USERNAME`,
-     `DELPHI_BOOTSTRAP_ADMIN_PASSWORD`
-   - `cloudflared-token`: `TUNNEL_TOKEN`
-5. In Cloudflare Zero Trust: create a remotely-managed tunnel; add the public hostname
-   `delphi.<domain>` → service `http://delphi-api.delphi.svc.cluster.local:8000`. Optional: a
-   rate-limiting rule on `/api/v1/auth/login` (10 req/min/IP).
-6. Push the first commit to `main` so an image exists, and set `newTag` in the overlay to it.
-7. `kubectl apply -f deploy/argocd/application.yaml -f deploy/argocd/image-updater.yaml`.
-8. Watch the sync: `kubectl -n delphi get pods -w`. Wait for the seed jobs (Admin → Jobs page).
-9. Set the GitHub repo variable `DELPHI_PUBLIC_URL`. Log in with the bootstrap admin, rotate the
-   password, and create the other users (an FDE engineer, an investigator, a guest viewer).
+**First release (owner):**
 
-## 7. Backups and restore
+11. Actions → Deploy → Run workflow on `main` with **seed = yes**, and approve the `megatron`
+    gate.
+12. Sign in with the bootstrap admin, rotate the password, and create the other users (an FDE
+    engineer, an investigator, a guest viewer).
 
-- Nightly `pg_dump -Fc`, 7 retained, on the PVC `delphi-backups`.
-- **Restore drill** (M9, then monthly), to prove backups work (EFG §34 "Backup Without Restore
-  Testing"):
-  1. `kubectl apply -f deploy/k8s/ops/restore-test-job.yaml`. This file is not part of the Argo
-     CD path. The Job (postgres image) restores the latest dump into a temporary database
-     `delphi_restore_test`, then runs a second container (DELPHI image, `args:
-     ["verify-restore", "--db", "delphi_restore_test"]`). That container checks table counts,
-     that there is exactly one ACTIVE KB, and that the audit chain verifies. Then it drops the
-     temporary database.
-  2. Record the result in `docs/reports/restore-drill-<date>.md`, and delete the Job.
-- Disaster recovery: re-run the bootstrap §6 on a new k3s node, then restore the latest dump
-  instead of seeding (`delphi seed` is skipped because the DB is not empty).
+## 7. Credential rotation
 
-## 8. Runbooks (short form)
+| Credential | Rotate | How |
+|---|---|---|
+| `delphi-deployer` token | every 90 days, and at once if leaked | Delete its token Secret, re-apply the bootstrap, and update `KUBE_DEPLOYER_TOKEN` |
+| `GHCR_PUSH_TOKEN` | on PAT expiry | New classic PAT, `write:packages` only |
+| Tailscale OIDC credential | if the repo or environment changes | Admin console |
+| Database and app secrets | if leaked | Recreate the Secret, then restart the pods with `kubectl rollout restart` as the operator |
+
+## 8. Backups and restore
+
+- `CronJob delphi-pg-backup` runs `30 21 * * *` UTC (= 03:00 IST). It writes `pg_dump -Fc` to
+  PVC `delphi-backups` (5Gi, `local-path`), keeps the 7 most recent, and inserts a row into
+  `delphi.ops_backup_runs`.
+- **The backups live on the same disk as the database**, so they protect against mistakes, not
+  against losing the disk. An off-host copy is the owner's decision (not in scope).
+- **Restore drill** (M9, then monthly), to prove backups work (EFG §34):
+  1. As the operator, apply `deploy/k8s/ops/restore-test-job.yaml`. The Job restores the latest
+     dump into a temporary database `delphi_restore_test`.
+  2. A second container runs `verify-restore`, which checks table counts, that exactly one
+     ACTIVE KB exists, and that the audit chain verifies. Then it drops the database.
+  3. Record the result in `docs/reports/restore-drill-<date>.md`.
+- **Disaster recovery:** re-run the bootstrap (§6) on a new node, then restore the latest dump
+  instead of seeding. `delphi seed --if-empty` skips a non-empty database.
+
+## 9. Runbooks (short form)
 
 | Symptom | Steps |
 |---|---|
-| Deploy verify job timed out | `kubectl -n argocd get applications delphi -o yaml` (sync status, image override); Image Updater logs (did it see the tag? registry auth?); `kubectl -n delphi get pods` (ImagePullBackOff → package visibility/tag; CrashLoop → logs; migrate hook failed → `kubectl logs job/delphi-migrate`) |
-| Rollback | Fast: in the Argo CD UI, roll back the `delphi` Application to the previous revision (the image override is part of the history), *or* revert the commit on `main` (a new image deploys). A migration that is not backward-compatible must never ship (expand/contract), so rollbacks are safe |
-| Site down but pods healthy | `kubectl -n delphi logs deploy/cloudflared`; Cloudflare tunnel status page |
-| LLM failing | Overview alert shows the fallback rate; check `llm_calls` errors; set `DELPHI_LLM_PROVIDER=template` in the ConfigMap via git to kill it |
-| Jobs stuck | Admin → Jobs; jobs with `locked_until` in the past are re-claimed automatically; failed jobs show errors; retry from the UI |
-| Disk filling | `local-path` volumes in `/var/lib/rancher/k3s/storage`; prune backups; run `RETENTION_SWEEP` |
+| Deploy run fails at migrate | The run prints the Job's logs. Nothing was rolled out. Fix forward with a new PR, or redeploy the previous digest |
+| Rollout timed out | The run already undid it. Check pod events (image pull, probes, OOM) as the operator |
+| Bad release that passed | Actions → Deploy with `digest` = the previous good digest (from the last successful run's summary). Migrations are expand/contract, so rolling the code back is safe |
+| verify timed out, pods healthy | The tunnel or DNS: ask the operator to check the host tunnel service and its rule for the name |
+| Server rebooted | Pods restart on their own. Startup probes allow a cold start; the worker reclaims expired job leases |
+| Jobs stuck | Admin → Jobs; jobs whose `locked_until` has passed are reclaimed automatically; retry failed ones |
+| LLM failing | Overview shows the fallback rate; check `llm_calls`; set `DELPHI_LLM_PROVIDER=template` in `delphi-config` (operator) and restart the api |
+| Disk filling | Prune old backups; run `RETENTION_SWEEP`; check the node's free disk with the operator |
 
-## 9. Local development
+## 10. Local development
 
 `compose.yaml` services: `postgres`, `api` (hot reload, `uv run delphi api --reload`),
 `worker`, `frontend` (Vite dev server with a proxy to `api`). `just dev` starts them;

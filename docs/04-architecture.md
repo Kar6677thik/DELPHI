@@ -32,15 +32,17 @@ with simulated adapters (hexagonal, EFG §5).
 
 ## 3. C4 — containers (k3s namespace `delphi`)
 
+The home server's shared, host-level Cloudflare Tunnel routes `delphi.karthiksurkanti.in` to
+`delphi-api:8000` (ADR-0015, doc 23 §5). Deploys are manual and approved (doc 23 §3).
+
 | Container | Image | Purpose | Port |
 |---|---|---|---|
-| `delphi-api` (Deployment, 1 replica) | `ghcr.io/kar6677thik/delphi:sha-<git sha>` cmd `delphi api` | HTTP API + SSE + static SPA | 8000 (app), 9000 (metrics, cluster-internal) |
+| `delphi-api` (Deployment, 1 replica) | `ghcr.io/kar6677thik/delphi@sha256:…` cmd `delphi api` | HTTP API + SSE + static SPA | 8000 (app), 9000 (metrics, cluster-internal) |
 | `delphi-worker` (Deployment, 1 replica) | same image, cmd `delphi worker` | Jobs and simulation clock tasks | 9000 (metrics) |
 | `delphi-postgres` (StatefulSet, 1) | `postgres:16` (pinned digest) | All persistent state | 5432 |
-| `delphi-migrate` (Job, Argo CD PreSync hook) | same image, cmd `delphi migrate` | `alembic upgrade head`, then load KB v1 if no KB version exists | — |
-| `delphi-seed` (Job, Argo CD PostSync hook) | same image, cmd `delphi seed --if-empty --profile demo` | Seeds KB v1, demo dataset, trains models (idempotent) | — |
+| `delphi-migrate-<sha7>` (Job, run by the deploy workflow before the rollout) | same image, cmd `delphi migrate` | `alembic upgrade head`, then load KB v1 if no KB version exists | — |
+| `delphi-seed-<sha7>` (Job, deploy workflow, on request) | same image, cmd `delphi seed --if-empty --profile demo` | Enqueues the demo dataset (and model training from M3); idempotent | — |
 | `delphi-pg-backup` (CronJob) | `postgres:16` | Nightly `pg_dump` to a PVC | — |
-| `cloudflared` (Deployment, 1) | `cloudflare/cloudflared` (pinned) | Tunnel from `delphi.<domain>` to `delphi-api:8000` | — |
 
 ## 4. Python package and modules (bounded contexts)
 
