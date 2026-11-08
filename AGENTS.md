@@ -120,4 +120,5 @@ cause, or stop and explain it to the human.
 | Testing rules | `docs/21-testing.md` |
 | Conventions | `docs/24-engineering-conventions.md` |
 | Plan | `docs/25-milestones.md` and the GitHub milestones |
+| Deploying (collaborators and owner) | `deploy/README.md` |
 | Tech debt | `docs/tech-debt.md` |
