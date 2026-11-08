@@ -1,0 +1,221 @@
+# Deploy to the home server (docs/23 §3, ADR-0015). Manual only: never on push.
+#
+# Run it from Actions → Deploy → Run workflow, on `main`. The `deploy` job then waits for the
+# owner's approval (environment `megatron`). Everything that describes the server (the API
+# address, the CA, the tailnet tag, the token) comes from that environment's variables and
+# secrets; none of it is in this public repo.
+name: deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: "Also enqueue the demo dataset (first deploy; idempotent)"
+        type: boolean
+        default: false
+      digest:
+        description: "Redeploy an image already built (sha256:…); skips build. Empty = build main"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-megatron
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/kar6677thik/delphi
+  PUBLIC_URL: https://delphi.karthiksurkanti.in
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      build: ${{ steps.check.outputs.build }}
+    steps:
+      - id: check
+        env:
+          REF: ${{ github.ref }}
+          DIGEST: ${{ inputs.digest }}
+        run: |
+          if [ "$REF" != "refs/heads/main" ]; then
+            echo "::error::Deploy runs only on main (got $REF)."
+            exit 1
+          fi
+          if [ -n "$DIGEST" ]; then
+            if ! printf '%s' "$DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+              echo "::error::digest must be sha256: followed by 64 hex characters."
+              exit 1
+            fi
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  ci:
+    needs: guard
+    if: needs.guard.outputs.build == 'true'
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    needs: [guard, ci]
+    if: needs.guard.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production # main only; holds GHCR_PUSH_TOKEN (docs/23 §3 trust boundary)
+    permissions:
+      contents: read
+      id-token: write # build-provenance attestation
+      attestations: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GHCR_PUSH_TOKEN }}
+      - id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          provenance: false # the signed attestation below is the provenance record
+          tags: ${{ env.IMAGE }}:sha-${{ github.sha }}
+          build-args: DELPHI_VERSION=${{ github.sha }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: false
+      - name: Summary
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: echo "Built \`$IMAGE@$DIGEST\` from \`$GITHUB_SHA\`." >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    needs: [guard, publish]
+    # Runs after a build, or straight after guard when redeploying a given digest.
+    if: >-
+      always() && needs.guard.result == 'success' &&
+      (needs.publish.result == 'success' || needs.guard.outputs.build == 'false')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: megatron # owner approval required; main only
+    permissions:
+      contents: read
+      id-token: write # Tailscale OIDC
+    env:
+      DIGEST: ${{ needs.publish.outputs.digest || inputs.digest }}
+      SEED: ${{ inputs.seed }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Verify the image's build provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh attestation verify "oci://$IMAGE@$DIGEST" --owner Kar6677thik
+
+      - name: Join the tailnet (ephemeral, OIDC)
+        uses: tailscale/github-action@064b10558093f38325e838ddea35486bdc6b1d5c # v4.4.0
+        with:
+          oauth-client-id: ${{ vars.TS_OIDC_CLIENT_ID }}
+          audience: ${{ vars.TS_OIDC_AUDIENCE }}
+          tags: ${{ vars.TS_CI_TAG }}
+          log-mode: quiet
+
+      - name: Configure kubectl (namespace-scoped deployer)
+        env:
+          KUBE_SERVER: ${{ vars.KUBE_SERVER }}
+          KUBE_TLS_SERVER_NAME: ${{ vars.KUBE_TLS_SERVER_NAME }}
+          KUBE_CA: ${{ secrets.KUBE_CA }}
+          KUBE_TOKEN: ${{ secrets.KUBE_DEPLOYER_TOKEN }}
+        run: |
+          umask 077
+          mkdir -p "$RUNNER_TEMP/kube"
+          printf '%s' "$KUBE_CA" > "$RUNNER_TEMP/kube/ca.crt"
+          export KUBECONFIG="$RUNNER_TEMP/kube/config"
+          kubectl config set-cluster home --server="$KUBE_SERVER" \
+            --certificate-authority="$RUNNER_TEMP/kube/ca.crt" --embed-certs=true \
+            --tls-server-name="$KUBE_TLS_SERVER_NAME" >/dev/null
+          kubectl config set-credentials deployer --token="$KUBE_TOKEN" >/dev/null
+          kubectl config set-context home --cluster=home --user=deployer --namespace=delphi >/dev/null
+          kubectl config use-context home >/dev/null
+          rm "$RUNNER_TEMP/kube/ca.crt"
+          echo "KUBECONFIG=$KUBECONFIG" >> "$GITHUB_ENV"
+          kubectl auth can-i patch deployments >/dev/null
+
+      - name: Migrate
+        run: |
+          short="$(printf '%s' "${DIGEST#sha256:}" | cut -c1-7)-${GITHUB_RUN_ATTEMPT}"
+          name="delphi-migrate-${short}"
+          sed -e "s|__NAME__|${name}|" -e "s|__IMAGE__|${IMAGE}@${DIGEST}|" \
+            deploy/k8s/jobs/migrate.yaml | kubectl create -f -
+          if ! deploy/scripts/wait-job.sh "${name}" 600; then
+            echo "::error::The migrate Job did not complete. Nothing was rolled out."
+            kubectl logs "job/${name}" --tail=200 || true
+            exit 1
+          fi
+          kubectl logs "job/${name}" --tail=20
+
+      - name: Roll out api and worker
+        id: rollout
+        run: |
+          kubectl set image deployment/delphi-api "api=${IMAGE}@${DIGEST}"
+          kubectl set image deployment/delphi-worker "worker=${IMAGE}@${DIGEST}"
+          ok=true
+          kubectl rollout status deployment/delphi-api --timeout=600s || ok=false
+          kubectl rollout status deployment/delphi-worker --timeout=600s || ok=false
+          if [ "$ok" != true ]; then
+            echo "::error::The rollout did not become ready; undoing it."
+            kubectl rollout undo deployment/delphi-api || true
+            kubectl rollout undo deployment/delphi-worker || true
+            exit 1
+          fi
+
+      - name: Seed (on request)
+        if: env.SEED == 'true'
+        run: |
+          short="$(printf '%s' "${DIGEST#sha256:}" | cut -c1-7)-${GITHUB_RUN_ATTEMPT}"
+          name="delphi-seed-${short}"
+          sed -e "s|__NAME__|${name}|" -e "s|__IMAGE__|${IMAGE}@${DIGEST}|" \
+            deploy/k8s/jobs/seed.yaml | kubectl create -f -
+          ok=true
+          deploy/scripts/wait-job.sh "${name}" 300 || ok=false
+          kubectl logs "job/${name}" --tail=40 || true
+          [ "$ok" = true ] || { echo "::error::The seed Job did not complete."; exit 1; }
+
+      - name: Summary
+        if: always()
+        run: echo "Deployed \`$IMAGE@$DIGEST\` (seed=$SEED). Rollback = rerun with this field set to the previous digest." >> "$GITHUB_STEP_SUMMARY"
+
+  verify:
+    needs: [deploy]
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Wait for the public site to serve this build
+        env:
+          WANT: ${{ inputs.digest == '' && github.sha || '' }}
+        run: |
+          for _ in $(seq 1 40); do
+            body="$(curl -fsS --max-time 10 "$PUBLIC_URL/api/v1/health" || true)"
+            version="$(printf '%s' "$body" | jq -r '.version // empty' 2>/dev/null || true)"
+            if [ -n "$version" ] && { [ -z "$WANT" ] || [ "$version" = "$WANT" ]; }; then
+              echo "Live: $PUBLIC_URL serves version $version"
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "::error::$PUBLIC_URL did not serve the expected version within 10 minutes (docs/23 §9)."
+          exit 1

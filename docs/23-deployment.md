@@ -45,6 +45,7 @@ deploy/k8s/base/                   # what the bootstrap applies (namespace delph
 deploy/k8s/jobs/                   # templates the deploy workflow fills in with the digest
   migrate.yaml  seed.yaml
 deploy/k8s/overlays/example/       # the overlay the operator copies and fills in locally (§4)
+deploy/scripts/wait-job.sh         # waits for a Job to succeed or fail (used by deploy.yml)
 deploy/README.md                   # the bootstrap runbook (§6)
 ```
 
@@ -53,8 +54,10 @@ deploy/README.md                   # the bootstrap runbook (§6)
 - Stage 1 `node:22-alpine` (pinned digest): `pnpm install --frozen-lockfile`, `pnpm build` →
   `frontend/dist`.
 - Stage 2 `python:3.12-slim` (pinned digest): install `libgomp1` (LightGBM), copy `uv`,
-  `uv sync --frozen --no-dev`, copy `backend/src`, `backend/migrations`, `kb/` and
-  `frontend/dist` → `/app/static`.
+  `uv sync --frozen --no-dev` (then remove `uv`), copy `backend/src`, `backend/migrations`, `kb/`
+  and `frontend/dist`. The repo layout is kept under `/app` (`/app/backend`, `/app/kb`,
+  `/app/frontend/dist`), so the code finds migrations, the KB and the built SPA at the same
+  relative paths as in a checkout, and no path settings are needed.
 - Runs as user `10001:10001`, `WORKDIR /app`, `ENTRYPOINT ["delphi"]`, default `CMD ["api"]`.
 - Build arg and env `DELPHI_VERSION=<git sha>` (returned by `/health`). OCI labels: source,
   revision, created.
@@ -171,7 +174,7 @@ node address range allowed to reach it, and the optional monitoring scrape rule.
 - Non-secret settings: ConfigMap `delphi-config`:
   - `DELPHI_ENV=demo`, `DELPHI_PUBLIC_ORIGIN=https://delphi.karthiksurkanti.in`
   - `DELPHI_CLIENT_IP_HEADER=CF-Connecting-IP`, `DELPHI_DATASET_PROFILES=test,demo`
-  - `DELPHI_LOG_LEVEL=INFO`, `DELPHI_MIGRATIONS_DIR=/app/migrations`, `DELPHI_STATIC_DIR=/app/static`
+  - `DELPHI_LOG_LEVEL=INFO`
 - Secrets are created by the bootstrap from values generated on the operator's machine, and
   mounted with `envFrom: secretRef`. Manifests never name keys and never inline a value.
   - **Secret `delphi-app`**, for the api and Jobs: the app's database URL and the bootstrap
@@ -235,8 +238,8 @@ to start, exit code 2, naming the variable, if one is missing or invalid.
 | `DELPHI_DATABASE_URL` | required | api, worker, migrate | Secrets `delphi-app` / `delphi-worker` / `delphi-migrate` (role `delphi_app`) |
 | `DELPHI_SIM_DATABASE_URL` | unset | worker only | Secret `delphi-worker` (role `delphi_sim`). **Never mounted into the api pod**, so the api cannot read `sim_truth` even by mistake (doc 17 §2) |
 | `DELPHI_MIGRATE_DATABASE_URL` | `DELPHI_DATABASE_URL` | migrate Job only | Secret `delphi-migrate` (the schema owner) |
-| `DELPHI_MIGRATIONS_DIR` | `backend/migrations` in a checkout | migrate, api, worker | The image sets `/app/migrations` |
-| `DELPHI_STATIC_DIR` | `frontend/dist` in a checkout | api | The image sets `/app/static`. Without an `index.html` there, the api serves no SPA and `/` is a 404 problem |
+| `DELPHI_MIGRATIONS_DIR` | `backend/migrations` | migrate, api, worker | The image keeps the repo layout, so the default works there too |
+| `DELPHI_STATIC_DIR` | `frontend/dist` | api | The image keeps the repo layout, so the default works there too. Without an `index.html` there, the api serves no SPA and `/` is a 404 problem |
 | `DELPHI_VERSION` | `dev` | all | Image build arg (§2) |
 | `DELPHI_ENV` | `dev` | all | ConfigMap (`dev`, `test` or `demo`) |
 | `DELPHI_LOG_LEVEL` | `INFO` | all | ConfigMap |

@@ -1,0 +1,24 @@
+# Only what the Dockerfile copies is needed; keep secrets, caches and local state out.
+**/.git
+**/.venv
+**/node_modules
+**/__pycache__
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/.hypothesis
+**/.import_linter_cache
+**/.coverage
+**/coverage
+**/dist
+**/.env
+**/.env.*
+.github
+.githooks
+.claude
+docs
+deploy
+frontend/tests
+backend/tests
+*.md
+!kb/**
