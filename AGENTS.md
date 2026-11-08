@@ -6,6 +6,43 @@ a fraud decision engine. These rules apply to every agent (Claude Code, Codex, C
 
 The specification in `docs/` is the source of truth. Start at `docs/README.md`.
 
+## 0. Short commands from the human
+
+The human should never have to retype context. Everything you need is in GitHub (issues, PRs,
+review comments, CI runs) and in this repo. At the start of every session, and whenever the
+human says one of the phrases below, **rebuild the context yourself** with `gh` and `git`, then
+act. Nothing here overrides the rules in §1 to §7.
+
+**First, orient (every session):**
+
+```sh
+gh auth status                                  # must be logged in as the human
+git fetch origin && git status && git branch --show-current
+gh issue list --assignee @me --state open       # the human's work queue
+gh pr list --author @me --state open            # PRs in flight
+gh pr status                                    # CI and review state of those PRs
+```
+
+Then say in a few lines what you found: open PRs and their state, unanswered review
+comments, failing checks, and the next assigned issue.
+
+| The human says | You do |
+|---|---|
+| **"continue"** (or "what's next") | 1. An open PR of theirs with unaddressed review comments or failing checks comes first: handle it as below. 2. Otherwise, if the current branch is `m<N>/<issue>-…`, read that issue and its latest comments, and finish the work. 3. Otherwise, start the next assigned issue: the lowest milestone first, skipping `status:blocked`, and skipping issues whose "Notes / dependencies" are not merged yet. Follow §1 (read the linked spec, check overlap) and comment on the issue that you started. |
+| **"check the PR"** / **"check comments"** | For each of their open PRs: read the conversation (`gh pr view <N> --comments`) **and** the inline review comments (`gh api repos/Kar6677thik/DELPHI/pulls/<N>/comments`). Fix each point in a new commit, run the §5 gates, push, then reply to each comment saying what changed (or why not). Never resolve a reviewer's thread for them unless the fix is plainly complete. If a comment asks for something outside the issue or against the spec, explain it to the human instead of doing it. |
+| **"check CI"** / **"pipeline"** | CI runs **by itself** on every push to a PR. You never need to trigger it. `gh pr checks <N>`; if one failed, `gh run view <run-id> --log-failed`, reproduce it locally with the §5 commands, fix the cause, push. A run that is still going: tell the human, don't loop on it. |
+| **"what's assigned to me"** | The issue list above, with milestone, labels and whether each one's dependencies are merged. |
+| **"deploy"** | Collaborators don't release. Follow `deploy/README.md` → "Collaborators: requesting a deploy": only after their change is merged to `main`, and then tell the owner. The owner approves every deploy. |
+
+**Leave a trail.** When you stop (the human ends the session, or you are blocked), comment on the
+issue: what is done, what is left, and the branch or PR. The next session (yours or another
+agent's) starts from that comment, not from chat history.
+
+**Access you need:** the GitHub CLI logged in as the human, and network access for `gh`, `git`
+and `uv`. If a command fails for lack of them, tell the human what to enable; don't work around
+it. The GitHub wiki is a human-friendly copy of these rules: everything an agent needs is in
+this repo, so don't depend on the wiki.
+
 ## 1. Before you write any code
 
 1. **Work only from an issue assigned to the human you are working for.** Run
@@ -120,4 +157,5 @@ cause, or stop and explain it to the human.
 | Testing rules | `docs/21-testing.md` |
 | Conventions | `docs/24-engineering-conventions.md` |
 | Plan | `docs/25-milestones.md` and the GitHub milestones |
+| Deploying (collaborators and owner) | `deploy/README.md` |
 | Tech debt | `docs/tech-debt.md` |
