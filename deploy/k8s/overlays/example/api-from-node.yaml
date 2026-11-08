@@ -1,0 +1,13 @@
+# The host-level tunnel connects to the api from the node itself; allow exactly that.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: api-from-node, namespace: delphi }
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/component: api }
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - ipBlock: { cidr: <THE NODE'S ADDRESS RANGE, e.g. a /32> }
+      ports:
+        - { protocol: TCP, port: 8000 }

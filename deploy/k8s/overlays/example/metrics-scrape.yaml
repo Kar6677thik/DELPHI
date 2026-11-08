@@ -1,0 +1,17 @@
+# Optional: let the operator's metrics scraper reach the api's and the worker's :9000.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: metrics-from-scraper, namespace: delphi }
+spec:
+  podSelector:
+    matchExpressions:
+      - { key: app.kubernetes.io/component, operator: In, values: ["api", "worker"] }
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: <MONITORING NAMESPACE> }
+          podSelector:
+            matchLabels: { <SCRAPER POD LABEL KEY>: <VALUE> }
+      ports:
+        - { protocol: TCP, port: 9000 }

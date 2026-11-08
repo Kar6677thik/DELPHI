@@ -1,0 +1,12 @@
+# What the bootstrap applies (docs/23 §6), through the operator's private overlay.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - config.yaml
+  - postgres.yaml
+  - api.yaml
+  - worker.yaml
+  - backup.yaml
+  - networkpolicies.yaml
+  - deployer-rbac.yaml

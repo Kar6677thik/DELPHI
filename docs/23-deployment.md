@@ -293,11 +293,17 @@ this repo.
    Kubernetes API.
 5. Create the OIDC trust credential for this repo and environment `megatron`, limited to that tag.
 
+**The first image (owner):** the Deployments need an image to start from, and the deploy
+workflow can only change images, not create Deployments. So the very first time, run Actions →
+Deploy on `main` and **reject** the `megatron` approval. `publish` has pushed the image by then,
+and the run summary shows its digest.
+
 **Cluster (operator):**
 
 6. Generate the secret values locally (e.g. `openssl rand -hex 32`) and create the four
    Secrets (§4).
-7. Copy `deploy/k8s/overlays/example` to a private location and fill in:
+7. Copy `deploy/k8s/overlays/example` to `deploy/k8s/overlays/local/` (git-ignored) and fill in:
+   - the first image's digest;
    - a free fixed ClusterIP for `delphi-api`;
    - the node address range;
    - optionally, the scrape rule.
@@ -310,8 +316,9 @@ this repo.
 
 **First release (owner):**
 
-11. Actions → Deploy → Run workflow on `main` with **seed = yes**, and approve the `megatron`
-    gate.
+11. Actions → Deploy → Run workflow on `main` with **seed = yes** and **digest** = the first
+    image's digest, and approve the `megatron` gate. This runs the first migration and enqueues
+    the demo dataset.
 12. Sign in with the bootstrap admin, rotate the password, and create the other users (an FDE
     engineer, an investigator, a guest viewer).
 
@@ -327,8 +334,9 @@ this repo.
 ## 8. Backups and restore
 
 - `CronJob delphi-pg-backup` runs `30 21 * * *` UTC (= 03:00 IST). It writes `pg_dump -Fc` to
-  PVC `delphi-backups` (5Gi, `local-path`), keeps the 7 most recent, and inserts a row into
-  `delphi.ops_backup_runs`.
+  PVC `delphi-backups` (5Gi, `local-path`) and keeps the 7 most recent. Recording each run in
+  `delphi.ops_backup_runs`, for the Overview's backup-age alert (doc 20 §4), comes with that
+  table (M9).
 - **The backups live on the same disk as the database**, so they protect against mistakes, not
   against losing the disk. An off-host copy is the owner's decision (not in scope).
 - **Restore drill** (M9, then monthly), to prove backups work (EFG §34):

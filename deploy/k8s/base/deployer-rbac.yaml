@@ -1,0 +1,55 @@
+# The deploy workflow's identity (docs/23 §4, ADR-0015): it may change Deployments' images and
+# run Jobs in `delphi`, and read their pods and logs. Nothing else: no Secrets, ConfigMaps,
+# Services, NetworkPolicies, RBAC, namespaces or anything cluster-scoped.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: delphi-deployer
+  namespace: delphi
+automountServiceAccountToken: false
+---
+# Its long-lived token (rotate every 90 days: delete this Secret and re-apply, docs/23 §7).
+apiVersion: v1
+kind: Secret
+metadata:
+  name: delphi-deployer-token
+  namespace: delphi
+  annotations:
+    kubernetes.io/service-account.name: delphi-deployer
+type: kubernetes.io/service-account-token
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: delphi-deployer
+  namespace: delphi
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: ["apps"]
+    resources: ["replicasets"] # rollout status and undo
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: delphi-deployer
+  namespace: delphi
+subjects:
+  - kind: ServiceAccount
+    name: delphi-deployer
+    namespace: delphi
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: delphi-deployer
