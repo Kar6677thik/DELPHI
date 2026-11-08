@@ -318,6 +318,8 @@ this repo.
 
 **GitHub (owner):**
 1. Create environment `megatron` with required reviewer = owner and deployment branches = `main`.
+   Leave **Prevent self-review** off: when the owner is the only reviewer and also starts the
+   run, that setting hides Approve and Reject, and the run can only be cancelled.
 2. Fill in the §3 variables and secrets. The ServiceAccount token comes from step 8 below.
 3. Package settings: link the package to the repo with **Read** access, and make it public (A-05).
 
@@ -326,10 +328,12 @@ this repo.
 4. Create the CI tag, owned by the owner, and an ACL grant that lets it reach only the cluster's
    Kubernetes API.
 5. Create the OIDC trust credential for this repo and environment `megatron`, limited to that tag.
+   Match on the immutable subject that GitHub shows under the repository's OIDC settings (it
+   uses IDs, not names); a subject written with the repo's name does not match.
 
 **The first image (owner):** the Deployments need an image to start from, and the deploy
 workflow can only change images, not create Deployments. So the very first time, run Actions →
-Deploy on `main` and **reject** the `megatron` approval. `publish` has pushed the image by then,
+Deploy on `main` and **reject** the `megatron` approval (or cancel the run once `publish` is done). `publish` has pushed the image by then,
 and the run summary shows its digest.
 
 **Cluster (operator):**
