@@ -1,4 +1,4 @@
-import type { Permission } from '../api/pending-contracts';
+import type { Permission } from '../api/types';
 
 export interface Screen {
   path: string;

@@ -10,10 +10,21 @@ export class FakeEventSource {
   onopen: (() => void) | null = null;
   onerror: (() => void) | null = null;
   closed = false;
+  readonly listeners = new Map<string, ((event: MessageEvent) => void)[]>();
 
   constructor(url: string) {
     this.url = url;
     FakeEventSource.instances.push(this);
+  }
+
+  addEventListener(type: string, listener: (event: MessageEvent) => void): void {
+    this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]);
+  }
+
+  /** A named frame (`id: <id>`, `event: <type>`), as the server sends them (docs/16 §3). */
+  emit(type: string, id: string): void {
+    const event = new MessageEvent(type, { data: '{}', lastEventId: id });
+    for (const listener of this.listeners.get(type) ?? []) listener(event);
   }
 
   open(): void {

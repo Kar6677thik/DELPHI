@@ -49,10 +49,10 @@ fe-test:
     pnpm test
     pnpm build
 
-# Vite dev server with a mocked API (no backend needed)
+# Vite dev server against `uv run delphi api` (CONTRIBUTING: "Sign in locally")
 [working-directory: 'frontend']
-fe-dev-mock:
-    pnpm dev:mock
+fe-dev:
+    pnpm dev
 
 # Enable the repository's git hooks (commit authorship rule)
 hooks:

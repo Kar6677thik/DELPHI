@@ -194,6 +194,24 @@
             "description": "Comma-separated topics"
           },
           {
+            "name": "last_event_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Last-Event-ID for clients that cannot set it",
+              "title": "Last Event Id"
+            },
+            "description": "Last-Event-ID for clients that cannot set it"
+          },
+          {
             "name": "Last-Event-ID",
             "in": "header",
             "required": false,

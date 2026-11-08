@@ -1,7 +1,7 @@
 import { screen, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
-import { setMockSession } from '../src/mocks/handlers';
+import { setMockSession } from './mocks/handlers';
 import { renderApp } from './renderApp';
 
 function navLabels(): string[] {

@@ -39,3 +39,31 @@ uv run delphi migrate && uv run delphi api   # http://localhost:8000/api/v1/read
 The integration tests create and drop their own databases on the server you point them at, so
 never point `DELPHI_TEST_DATABASE_URL` at a database you care about. All settings are listed in
 [docs/23 §4.1](docs/23-deployment.md#41-process-settings).
+
+### Sign in locally (frontend against the real api)
+
+Node 22 and pnpm 9 for the frontend (docs/24 §3). With PostgreSQL up and the database migrated
+as above:
+
+```sh
+export DELPHI_BOOTSTRAP_ADMIN_USERNAME=admin               # created on start if no user exists
+export DELPHI_BOOTSTRAP_ADMIN_PASSWORD='a long local password'
+uv run delphi api                                          # backend/, on :8000
+
+cd frontend && pnpm install --frozen-lockfile && pnpm dev  # http://localhost:5173
+```
+
+Open http://localhost:5173 in Chrome or Firefox and sign in as `admin`.
+
+- **CSRF:** Vite proxies `/api` to the api with `changeOrigin` off, so the api sees the
+  browser's own `Origin` and `Host` (`localhost:5173`) and its same-origin check passes
+  (docs/16 §1). Leave `DELPHI_PUBLIC_ORIGIN` unset locally; set to anything else, every
+  sign-in gets `403 CSRF_REJECTED`.
+- **The cookie is `Secure`:** Chrome and Firefox keep it on `http://localhost`. Safari may not,
+  and then every page sends you back to sign in.
+- **Lockout:** five wrong passwords for one username from one address within 15 minutes lock
+  sign-in; the page says when to try again (`429 RATE_LIMITED`, `Retry-After`). Restart the api
+  to clear it.
+
+The frontend tests answer the API from MSW (`frontend/tests/mocks`); the app itself always talks
+to the api.

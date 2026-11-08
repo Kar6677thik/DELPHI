@@ -1,8 +1,16 @@
 import { http, HttpResponse } from 'msw';
 import { describe, expect, it } from 'vitest';
 
-import { ApiError, CSRF_HEADER, getJson, isUnauthenticated, postJson } from '../src/api/client';
-import { server } from '../src/mocks/node';
+import {
+  ApiError,
+  CSRF_HEADER,
+  getJson,
+  isRateLimited,
+  isUnauthenticated,
+  parseRetryAfter,
+  postJson,
+} from '../src/api/client';
+import { server } from './mocks/node';
 
 describe('api client', () => {
   it('sends the CSRF header on mutations only (docs/16 §1)', async () => {
@@ -59,5 +67,27 @@ describe('api client', () => {
   it('recognises 401 as unauthenticated', () => {
     expect(isUnauthenticated(new ApiError(401, null))).toBe(true);
     expect(isUnauthenticated(new Error('x'))).toBe(false);
+  });
+
+  it('reads Retry-After as seconds or as a date (RFC 9110 §10.2.3)', () => {
+    const now = Date.parse('2026-11-08T06:00:00Z');
+    expect(parseRetryAfter('120', now)).toBe(120);
+    expect(parseRetryAfter('Sun, 08 Nov 2026 06:02:30 GMT', now)).toBe(150);
+    expect(parseRetryAfter('Sun, 08 Nov 2026 05:00:00 GMT', now)).toBe(0);
+    expect(parseRetryAfter('soon', now)).toBeNull();
+    expect(parseRetryAfter(null, now)).toBeNull();
+    expect(parseRetryAfter(' ', now)).toBeNull();
+  });
+
+  it('keeps Retry-After on a 429', async () => {
+    server.use(
+      http.post(
+        '/api/v1/probe',
+        () => new HttpResponse(null, { status: 429, headers: { 'Retry-After': '30' } }),
+      ),
+    );
+    const error: unknown = await postJson('/probe').catch((e: unknown) => e);
+    expect(isRateLimited(error)).toBe(true);
+    expect(error instanceof ApiError && error.retryAfterSeconds).toBe(30);
   });
 });

@@ -1,5 +1,4 @@
 dist
 coverage
-mock-public
 pnpm-lock.yaml
 src/api/schema.d.ts

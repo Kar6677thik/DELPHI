@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SseIndicator } from '../src/components/SseIndicator';
 import { SSE_RETRY_BASE_MS, SSE_RETRY_MAX_MS } from '../src/lib/config';
-import { useEventStream } from '../src/lib/useEventStream';
+import { resumeUrl, useEventStream } from '../src/lib/useEventStream';
 import { FakeEventSource } from './fakeEventSource';
 
 const URL = '/api/v1/events/stream?topics=cases';
@@ -88,5 +88,25 @@ describe('useEventStream + SseIndicator (docs/18 §4)', () => {
     });
     expect(FakeEventSource.instances).toHaveLength(1);
     expect(FakeEventSource.latest().closed).toBe(true);
+  });
+
+  it('resumes after the last event it saw when it has to reconnect itself (docs/16 §3)', () => {
+    render(<Probe />);
+    act(() => {
+      FakeEventSource.latest().open();
+      FakeEventSource.latest().emit('job.updated', '41');
+      FakeEventSource.latest().emit('case.opened', '42');
+      FakeEventSource.latest().emit('not.an.event.type', '99'); // nobody listens to it
+      FakeEventSource.latest().fail({ retrying: false });
+    });
+    act(() => {
+      vi.advanceTimersByTime(SSE_RETRY_BASE_MS);
+    });
+    expect(FakeEventSource.latest().url).toBe(`${URL}&last_event_id=42`);
+  });
+
+  it('starts without a resume point', () => {
+    expect(resumeUrl(URL, null)).toBe(URL);
+    expect(resumeUrl('/api/v1/events/stream', '7')).toBe('/api/v1/events/stream?last_event_id=7');
   });
 });

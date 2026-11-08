@@ -3,8 +3,8 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup } from '@testing-library/react';
 import { afterAll, afterEach, beforeAll, vi } from 'vitest';
 
-import { setMockSession } from '../src/mocks/handlers';
-import { server } from '../src/mocks/node';
+import { setMockSession } from './mocks/handlers';
+import { server } from './mocks/node';
 import { FakeEventSource } from './fakeEventSource';
 
 vi.stubGlobal('EventSource', FakeEventSource);

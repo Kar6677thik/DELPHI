@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 
-import type { Permission } from '../api/pending-contracts';
+import type { Permission } from '../api/types';
 import { useHasPermission } from '../lib/session';
 
 interface RoleGateProps {

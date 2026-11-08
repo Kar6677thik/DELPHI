@@ -183,12 +183,39 @@ def test_reconnect_with_last_event_id_replays_missed_events(
     assert [e["data"]["entity_id"] for e in received] == ["missed-0", "missed-1", "missed-2"]
 
 
+def test_the_stream_says_it_is_open_at_once(server: str) -> None:
+    """#73: a comment goes out first, so proxies that hold the response head until the first
+    body bytes (Vite's dev proxy) do not keep the client waiting for the 15 s heartbeat."""
+    started = time.monotonic()
+    with httpx.stream("GET", server, timeout=5) as response:
+        first = next(response.iter_lines())
+    assert first == ": open"
+    assert time.monotonic() - started < 2
+
+
+def test_a_new_event_source_resumes_with_the_query_parameter(
+    server: str, sessions: sessionmaker[Session]
+) -> None:
+    """#73: a client that opens a new EventSource after an HTTP error cannot set headers, so it
+    passes the last id it saw as `?last_event_id=`; the header still wins when both are sent."""
+    seen = _publish(sessions, EventType.JOB_UPDATED, "seen")
+    missed = [_publish(sessions, EventType.JOB_UPDATED, f"missed-{i}") for i in range(2)]
+    by_query = _read_events(server, count=2, params={"last_event_id": str(seen)})
+    assert [e["id"] for e in by_query] == missed
+    both = _read_events(
+        server, count=1, headers={"Last-Event-ID": str(missed[0])}, params={"last_event_id": "0"}
+    )
+    assert [e["id"] for e in both] == missed[1:]
+
+
 def test_the_stream_rejects_bad_requests(server: str) -> None:
     bad_topic = httpx.get(server, params={"topics": "nope"}, timeout=5)
     assert bad_topic.status_code == 422
     assert bad_topic.json()["code"] == "VALIDATION_FAILED"
     bad_id = httpx.get(server, headers={"Last-Event-ID": "abc"}, timeout=5)
     assert bad_id.status_code == 422
+    bad_param = httpx.get(server, params={"last_event_id": "-1"}, timeout=5)
+    assert bad_param.status_code == 422
 
 
 def test_publish_order_is_commit_order_under_concurrency(sessions: sessionmaker[Session]) -> None:
