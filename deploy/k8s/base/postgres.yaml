@@ -1,0 +1,82 @@
+# PostgreSQL 16 for DELPHI (docs/17, docs/23 §4): one replica on the node's local-path storage.
+# Runs as the image's postgres user (999) under Pod Security `restricted`; the root filesystem is
+# read-only, with emptyDirs for the socket directory and /tmp.
+apiVersion: v1
+kind: Service
+metadata:
+  name: delphi-postgres
+  namespace: delphi
+  labels: { app.kubernetes.io/name: delphi, app.kubernetes.io/component: postgres }
+spec:
+  clusterIP: None
+  selector: { app.kubernetes.io/name: delphi, app.kubernetes.io/component: postgres }
+  ports:
+    - { name: postgres, port: 5432, targetPort: 5432 }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: delphi-postgres
+  namespace: delphi
+  labels: { app.kubernetes.io/name: delphi, app.kubernetes.io/component: postgres }
+spec:
+  serviceName: delphi-postgres
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: delphi, app.kubernetes.io/component: postgres }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: delphi, app.kubernetes.io/component: postgres }
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: postgres
+          image: postgres:16@sha256:5db6dac2ef5dcff512f4f00a009c3c332b9f2f28f24277175bf3e4a3d02ef83a
+          env:
+            - { name: POSTGRES_DB, value: delphi }
+            - { name: PGDATA, value: /var/lib/postgresql/data/pgdata }
+          envFrom:
+            - secretRef: { name: delphi-postgres }
+          ports:
+            - { name: postgres, containerPort: 5432 }
+          resources:
+            requests: { cpu: 100m, memory: 384Mi }
+            limits: { cpu: "1", memory: 1Gi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          startupProbe:
+            exec: { command: ["pg_isready", "-U", "postgres", "-d", "delphi"] }
+            periodSeconds: 5
+            failureThreshold: 60
+          livenessProbe:
+            exec: { command: ["pg_isready", "-U", "postgres", "-d", "delphi"] }
+            periodSeconds: 10
+            timeoutSeconds: 5
+          readinessProbe:
+            exec: { command: ["pg_isready", "-U", "postgres", "-d", "delphi"] }
+            periodSeconds: 5
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/postgresql/data }
+            - { name: init, mountPath: /docker-entrypoint-initdb.d, readOnly: true }
+            - { name: run, mountPath: /var/run/postgresql }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: init
+          configMap: { name: delphi-postgres-init, defaultMode: 0555 }
+        - { name: run, emptyDir: { sizeLimit: 16Mi } }
+        - { name: tmp, emptyDir: { sizeLimit: 256Mi } }
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: local-path
+        resources: { requests: { storage: 10Gi } }

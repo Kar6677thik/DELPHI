@@ -1,0 +1,60 @@
+# The worker (docs/04 §5.4, docs/23 §4): jobs and the simulation clock. It alone holds the
+# `delphi_sim` URL (Secret `delphi-worker`). `Recreate`: two workers at once would only contend
+# for jobs, and the node is small.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: delphi-worker
+  namespace: delphi
+  labels: { app.kubernetes.io/name: delphi, app.kubernetes.io/component: worker }
+spec:
+  replicas: 1
+  revisionHistoryLimit: 5
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app.kubernetes.io/name: delphi, app.kubernetes.io/component: worker }
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: delphi
+        app.kubernetes.io/component: worker
+        delphi.io/db-client: "true"
+    spec:
+      automountServiceAccountToken: false
+      # A slot finishes its current job on SIGTERM; a job cut off later is reclaimed when its
+      # lease expires (docs/04 §5.4).
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: worker
+          image: ghcr.io/kar6677thik/delphi # the overlay pins the digest; deploys change it
+          args: ["worker"]
+          envFrom:
+            - configMapRef: { name: delphi-config }
+            - secretRef: { name: delphi-worker }
+          ports:
+            - { name: health, containerPort: 9000 }
+          resources:
+            requests: { cpu: 100m, memory: 768Mi }
+            limits: { cpu: 1500m, memory: 1536Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          startupProbe:
+            httpGet: { path: /health, port: health }
+            periodSeconds: 5
+            failureThreshold: 60
+          livenessProbe: # 503 once a loop has not beaten for 30 s (docs/20 §3)
+            httpGet: { path: /health, port: health }
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - { name: tmp, emptyDir: { sizeLimit: 512Mi } }

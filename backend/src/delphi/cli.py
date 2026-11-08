@@ -176,7 +176,13 @@ def worker_registry(platform: Platform) -> tuple[JobRegistry, Engine | None]:
         application_name="delphi-worker-sim",
     )
     kb = load_and_validate(_REPO_KB_DIR, CLASSIFIER_NAMES)  # KB v1 until #15 (TD-3)
-    register_sim_jobs(registry, sim_engine=sim_engine, clock=platform.clock, kb=kb)
+    register_sim_jobs(
+        registry,
+        sim_engine=sim_engine,
+        clock=platform.clock,
+        kb=kb,
+        allowed_profiles=settings.allowed_dataset_profiles,
+    )
     return registry, sim_engine
 
 
@@ -214,6 +220,7 @@ def _seed(settings: Settings, args: argparse.Namespace) -> int:
                 platform.clock,
                 idempotency_key=f"GENERATE_DATASET:{args.profile}:seed-{seed}",
                 params=params,
+                allowed_profiles=settings.allowed_dataset_profiles,
             )
     except DelphiError as exc:
         print(f"delphi seed: {exc}", file=sys.stderr)

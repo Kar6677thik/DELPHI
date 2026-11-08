@@ -32,3 +32,6 @@ Thumbs.db
 
 # Claude Code: personal settings stay local (.claude/settings.json is shared)
 .claude/settings.local.json
+
+# The operator's private kustomize overlay: it holds server details (docs/23 §4, §6)
+deploy/k8s/overlays/local/

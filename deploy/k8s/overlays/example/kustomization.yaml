@@ -1,0 +1,18 @@
+# The shape of the operator's private overlay (docs/23 §4, §6). Copy this directory to
+# deploy/k8s/overlays/local/ (git-ignored) and replace every <PLACEHOLDER>. The real values
+# describe the server's network and never belong in this public repo.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+  - api-from-node.yaml
+  # - metrics-scrape.yaml   # optional: let the operator's metrics scraper reach :9000
+images:
+  - name: ghcr.io/kar6677thik/delphi
+    digest: sha256:<DIGEST OF THE FIRST PUBLISHED IMAGE>
+patches:
+  - target: { kind: Service, name: delphi-api }
+    patch: |-
+      - op: add
+        path: /spec/clusterIP
+        value: <A FREE FIXED CLUSTER IP: THE HOST TUNNEL'S TARGET>

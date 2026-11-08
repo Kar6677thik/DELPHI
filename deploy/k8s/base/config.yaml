@@ -1,0 +1,32 @@
+# Non-secret settings (docs/23 §4.1). Secrets are created by the bootstrap from values generated
+# on the operator's machine and mounted with envFrom; no secret value or key is in this repo.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: delphi-config
+  namespace: delphi
+data:
+  DELPHI_ENV: demo
+  DELPHI_LOG_LEVEL: INFO
+  DELPHI_PUBLIC_ORIGIN: https://delphi.karthiksurkanti.in
+  DELPHI_CLIENT_IP_HEADER: CF-Connecting-IP
+  # The `eval` dataset needs ~3.8 GiB, more than this node can spare (docs/22 §1).
+  DELPHI_DATASET_PROFILES: test,demo
+---
+# Run once, on Postgres's first start (empty data directory): create the two LOGIN roles the
+# app uses (docs/17 §2). Passwords come from the container's environment (Secret
+# `delphi-postgres`) and are passed as psql variables, never interpolated into SQL text.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: delphi-postgres-init
+  namespace: delphi
+data:
+  10-roles.sh: |
+    #!/bin/sh
+    set -eu
+    psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
+      -v app_pw="$DELPHI_APP_DB_PASSWORD" -v sim_pw="$DELPHI_SIM_DB_PASSWORD" <<'SQL'
+    CREATE ROLE delphi_app LOGIN PASSWORD :'app_pw';
+    CREATE ROLE delphi_sim LOGIN PASSWORD :'sim_pw';
+    SQL

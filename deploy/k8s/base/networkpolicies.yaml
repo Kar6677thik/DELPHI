@@ -1,0 +1,73 @@
+# NetworkPolicies (docs/23 §4): deny everything, then allow only what DELPHI needs. The rule
+# letting the host tunnel reach the api (it needs the node's address range) and the optional
+# metrics-scrape rule live in the operator's private overlay.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: default-deny, namespace: delphi }
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress", "Egress"]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: allow-dns, namespace: delphi }
+spec:
+  podSelector: {}
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+          podSelector:
+            matchLabels: { k8s-app: kube-dns }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+---
+# Postgres accepts connections only from DELPHI's database clients: the api, the worker, the
+# migrate and seed Jobs and the backup (label delphi.io/db-client).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: postgres-from-db-clients, namespace: delphi }
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/component: postgres }
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { delphi.io/db-client: "true" }
+      ports:
+        - { protocol: TCP, port: 5432 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: db-clients-to-postgres, namespace: delphi }
+spec:
+  podSelector:
+    matchLabels: { delphi.io/db-client: "true" }
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/component: postgres }
+      ports:
+        - { protocol: TCP, port: 5432 }
+---
+# The api and the worker may call public HTTPS services (the LLM provider, M7), but nothing on
+# private networks: not the home LAN, not the tailnet, not the cluster.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: public-https-egress, namespace: delphi }
+spec:
+  podSelector:
+    matchExpressions:
+      - { key: app.kubernetes.io/component, operator: In, values: ["api", "worker"] }
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "169.254.0.0/16", "127.0.0.0/8"]
+      ports:
+        - { protocol: TCP, port: 443 }
