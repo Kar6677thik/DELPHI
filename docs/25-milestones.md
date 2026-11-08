@@ -46,8 +46,9 @@ OPE and trace analytics (M7), the ablations (M8) and the load test (M9). These a
 
 ## M0 — Walking skeleton and continuous deployment
 
-**Goal:** a trivial app that is built, tested, published and deployed to the home server
-automatically on every push to `main`, and is reachable at the public URL behind a login.
+**Goal:** a trivial app that is built, tested, published and deployed to the home server by a
+manual, owner-approved run on `main` (ADR-0015), and is reachable at the public URL behind a
+login.
 
 Deliverables:
 
