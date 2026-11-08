@@ -17,6 +17,7 @@ from pathlib import Path
 
 import uvicorn
 from alembic import command
+from sqlalchemy import Engine
 
 from delphi.api.app import create_app
 from delphi.api.contract import OPENAPI_FILE, openapi_document
@@ -24,15 +25,17 @@ from delphi.kb.canonical import content_sha256
 from delphi.kb.issues import KbValidationError
 from delphi.kb.loader import load_and_validate
 from delphi.platform.accounts import BootstrapError, ensure_bootstrap_admin
-from delphi.platform.db import alembic_config
+from delphi.platform.db import alembic_config, make_engine
 from delphi.platform.events import EventHub
+from delphi.platform.jobs import JobRegistry
 from delphi.platform.logging import configure_logging, get_logger
 from delphi.platform.settings import Settings, SettingsError, libpq_url, load_settings
-from delphi.platform.wiring import build_platform
-from delphi.platform.worker import install_stop_handlers, run_worker
+from delphi.platform.wiring import Platform, build_platform
+from delphi.platform.worker import build_registry, install_stop_handlers, run_worker
 from delphi.probes.registry import CLASSIFIER_NAMES
 from delphi.sim.dataset import generate_dataset
 from delphi.sim.generator_config import load_generator_config
+from delphi.sim.jobs import register_sim_jobs
 from delphi.sim.response_models import GENERATED_FILE, dump_yaml, freeze, load_config
 from delphi.sim.stats import dataset_stats, format_report
 
@@ -155,11 +158,37 @@ def _api(settings: Settings) -> int:
     return 0
 
 
+def worker_registry(platform: Platform) -> tuple[JobRegistry, Engine | None]:
+    """The worker's handlers: the platform's, plus the simulator's when the worker has its
+    `delphi_sim` pool (`DELPHI_SIM_DATABASE_URL`, docs/17 §2). The api never gets that pool.
+    Returns the sim engine too, for the caller to dispose of."""
+    registry = build_registry(platform)
+    settings = platform.settings
+    if settings.sim_database_url is None:
+        log.warning("worker.sim_jobs_disabled", reason="DELPHI_SIM_DATABASE_URL is not set")
+        return registry, None
+    sim_engine = make_engine(
+        settings.sim_database_url,
+        pool_size=settings.db_pool_size,
+        connect_timeout_s=settings.db_connect_timeout_s,
+        application_name="delphi-worker-sim",
+    )
+    kb = load_and_validate(_REPO_KB_DIR, CLASSIFIER_NAMES)  # KB v1 until #15 (TD-3)
+    register_sim_jobs(registry, sim_engine=sim_engine, clock=platform.clock, kb=kb)
+    return registry, sim_engine
+
+
 def _worker(settings: Settings) -> int:
     _quiet_alembic()
     stop = threading.Event()
     install_stop_handlers(stop)
-    run_worker(build_platform(settings, process="worker"), stop)
+    platform = build_platform(settings, process="worker")
+    registry, sim_engine = worker_registry(platform)
+    try:
+        run_worker(platform, stop, registry=registry)
+    finally:
+        if sim_engine is not None:
+            sim_engine.dispose()
     return 0
 
 
