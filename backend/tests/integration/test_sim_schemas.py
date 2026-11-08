@@ -10,12 +10,13 @@ import pytest
 from sqlalchemy import Engine, Table, inspect, text
 from sqlalchemy.exc import IntegrityError, ProgrammingError
 
-from delphi.sim import bank, truth
+from delphi.sim import bank, catalog, truth
 
 from ._db import engine_as
 
 TRUTH_TABLES = sorted(truth.metadata.tables.values(), key=lambda t: t.name)
 BANK_TABLES = sorted(bank.metadata.tables.values(), key=lambda t: t.name)
+CATALOG_TABLES = list(catalog.metadata.tables.values())  # delphi.datasets (0005)
 T0 = datetime(2026, 7, 1, tzinfo=UTC)
 
 
@@ -39,7 +40,9 @@ def test_head_creates_every_bank_and_truth_table(owner_engine: Engine) -> None:
     assert set(inspector.get_table_names(schema="sim_truth")) == {t.name for t in TRUTH_TABLES}
 
 
-@pytest.mark.parametrize("table", [*BANK_TABLES, *TRUTH_TABLES], ids=lambda t: t.fullname)
+@pytest.mark.parametrize(
+    "table", [*BANK_TABLES, *TRUTH_TABLES, *CATALOG_TABLES], ids=lambda t: t.fullname
+)
 def test_core_definitions_match_the_migrated_schema(owner_engine: Engine, table: Table) -> None:
     """The generator writes through these definitions, so they must not drift from 0002."""
     inspector = inspect(owner_engine)

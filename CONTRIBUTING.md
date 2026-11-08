@@ -67,3 +67,18 @@ Open http://localhost:5173 in Chrome or Firefox and sign in as `admin`.
 
 The frontend tests answer the API from MSW (`frontend/tests/mocks`); the app itself always talks
 to the api.
+
+### A dataset locally
+
+`delphi seed` queues `GENERATE_DATASET`, and the worker generates the profile and writes it
+(docs/14, #19). The worker writes ground truth, so it needs the `delphi_sim` pool too. Locally,
+the single superuser can stand in for both roles:
+
+```sh
+export DELPHI_SIM_DATABASE_URL=$DELPHI_DATABASE_URL
+uv run delphi seed --if-empty --profile test --personas   # or demo (about a minute)
+uv run delphi worker                                      # Ctrl-C once the job has SUCCEEDED
+```
+
+A database holds one dataset. Seeding again is harmless (`--if-empty`); to start over, drop and
+recreate the database.

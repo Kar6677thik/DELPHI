@@ -1,4 +1,4 @@
-"""The ``delphi`` command (docs/04 §4): ``api``, ``worker``, ``migrate``, ``openapi``,
+"""The ``delphi`` command (docs/04 §4): ``api``, ``worker``, ``migrate``, ``seed``, ``openapi``,
 ``kb validate``, ``sim freeze-response-models`` and ``sim stats``.
 
 This module is the process entrypoint and the only importer of ``delphi.api``. Configuration
@@ -17,6 +17,7 @@ from pathlib import Path
 
 import uvicorn
 from alembic import command
+from sqlalchemy import Engine
 
 from delphi.api.app import create_app
 from delphi.api.contract import OPENAPI_FILE, openapi_document
@@ -24,15 +25,19 @@ from delphi.kb.canonical import content_sha256
 from delphi.kb.issues import KbValidationError
 from delphi.kb.loader import load_and_validate
 from delphi.platform.accounts import BootstrapError, ensure_bootstrap_admin
-from delphi.platform.db import alembic_config
+from delphi.platform.db import alembic_config, make_engine
+from delphi.platform.errors import DelphiError
 from delphi.platform.events import EventHub
+from delphi.platform.jobs import JobRegistry
 from delphi.platform.logging import configure_logging, get_logger
 from delphi.platform.settings import Settings, SettingsError, libpq_url, load_settings
-from delphi.platform.wiring import build_platform
-from delphi.platform.worker import install_stop_handlers, run_worker
+from delphi.platform.wiring import Platform, build_platform
+from delphi.platform.worker import build_registry, install_stop_handlers, run_worker
 from delphi.probes.registry import CLASSIFIER_NAMES
+from delphi.sim.api import PROFILES, dataset_exists, request_dataset
 from delphi.sim.dataset import generate_dataset
 from delphi.sim.generator_config import load_generator_config
+from delphi.sim.jobs import register_sim_jobs
 from delphi.sim.response_models import GENERATED_FILE, dump_yaml, freeze, load_config
 from delphi.sim.stats import dataset_stats, format_report
 
@@ -155,11 +160,68 @@ def _api(settings: Settings) -> int:
     return 0
 
 
+def worker_registry(platform: Platform) -> tuple[JobRegistry, Engine | None]:
+    """The worker's handlers: the platform's, plus the simulator's when the worker has its
+    `delphi_sim` pool (`DELPHI_SIM_DATABASE_URL`, docs/17 §2). The api never gets that pool.
+    Returns the sim engine too, for the caller to dispose of."""
+    registry = build_registry(platform)
+    settings = platform.settings
+    if settings.sim_database_url is None:
+        log.warning("worker.sim_jobs_disabled", reason="DELPHI_SIM_DATABASE_URL is not set")
+        return registry, None
+    sim_engine = make_engine(
+        settings.sim_database_url,
+        pool_size=settings.db_pool_size,
+        connect_timeout_s=settings.db_connect_timeout_s,
+        application_name="delphi-worker-sim",
+    )
+    kb = load_and_validate(_REPO_KB_DIR, CLASSIFIER_NAMES)  # KB v1 until #15 (TD-3)
+    register_sim_jobs(registry, sim_engine=sim_engine, clock=platform.clock, kb=kb)
+    return registry, sim_engine
+
+
 def _worker(settings: Settings) -> int:
     _quiet_alembic()
     stop = threading.Event()
     install_stop_handlers(stop)
-    run_worker(build_platform(settings, process="worker"), stop)
+    platform = build_platform(settings, process="worker")
+    registry, sim_engine = worker_registry(platform)
+    try:
+        run_worker(platform, stop, registry=registry)
+    finally:
+        if sim_engine is not None:
+            sim_engine.dispose()
+    return 0
+
+
+def _seed(settings: Settings, args: argparse.Namespace) -> int:
+    """Queue `GENERATE_DATASET` for the worker and exit (docs/23 §4: the PostSync hook runs it on
+    every deploy). The key names the profile and seed, so running it again is harmless."""
+    seed = (
+        args.seed if args.seed is not None else load_generator_config().profiles[args.profile].seed
+    )
+    params: dict[str, object] = {"profile": args.profile, "seed": seed}
+    if args.personas is not None:
+        params["personas"] = args.personas
+    platform = build_platform(settings, process="seed")
+    try:
+        with platform.sessions.begin() as session:
+            if args.if_empty and dataset_exists(session):
+                print("delphi seed: the database already holds a dataset; nothing to do")
+                return 0
+            queued = request_dataset(
+                session,
+                platform.clock,
+                idempotency_key=f"GENERATE_DATASET:{args.profile}:seed-{seed}",
+                params=params,
+            )
+    except DelphiError as exc:
+        print(f"delphi seed: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        platform.close()
+    state = "queued" if queued.created else "already queued"
+    print(f"GENERATE_DATASET job {queued.job_id} {state} ({args.profile}, seed {seed})")
     return 0
 
 
@@ -181,6 +243,19 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("migrate", help="apply database migrations (alembic upgrade head)").set_defaults(
         func=_with_settings(_migrate)
     )
+    seed = sub.add_parser("seed", help="queue dataset generation for the worker (docs/23 §4)")
+    seed.add_argument("--profile", default="demo", choices=PROFILES)
+    seed.add_argument("--seed", type=int, help="default: the profile's seed")
+    seed.add_argument(
+        "--personas",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="default: on for the profiles personas.yaml lists (demo)",
+    )
+    seed.add_argument(
+        "--if-empty", action="store_true", help="do nothing if a dataset is already there"
+    )
+    seed.set_defaults(func=lambda args: _with_settings(lambda s: _seed(s, args))(args))
 
     openapi = sub.add_parser("openapi", help="write the OpenAPI contract (docs/16)")
     openapi.add_argument("--out", default=str(OPENAPI_FILE), help="default: backend/openapi.json")

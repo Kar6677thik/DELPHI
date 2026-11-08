@@ -151,7 +151,10 @@ worker also replays the mule network's scheduled onward transfers (doc 14 §8).
 
 `jobs` table, typed job handlers, at-least-once execution. Handlers MUST be idempotent: they use
 the job's `idempotency_key` and upsert their results (EFG §19). The worker runs at most 2 jobs
-concurrently. `SIM_TICK` and `CHASE_RETRACE` have their own lane, so long jobs cannot starve
+concurrently. `delphi.platform.worker.build_registry` registers the platform's handlers; the
+worker's composition root (`delphi.cli`) adds the feature modules' (`delphi.sim.jobs` for
+`GENERATE_DATASET`, with the worker's `delphi_sim` pool), since `delphi.platform` may not import
+them (§4.1). `SIM_TICK` and `CHASE_RETRACE` have their own lane, so long jobs cannot starve
 them.
 
 **Runner rules** (`delphi.platform.jobs`, `delphi.platform.worker`):

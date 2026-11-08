@@ -439,8 +439,9 @@ silent:
   their timings, Arjun's new phone, Ravi's complaint channel) are data in `personas.yaml` for
   the `DEMO_STORY` runners. Gap fills there are marked "gap".
 - **The manifest.** `Dataset.personas` says which ids are whose, for the runners and
-  `GET /phone/personas`. Persisting it at seed time is the `GENERATE_DATASET` job's (#19,
-  needs the job runner, #7).
+  `GET /phone/personas`. The `GENERATE_DATASET` job keeps it in
+  `sim_truth.persona_manifests` (doc 17), without the story scripts, which `load_manifest`
+  takes from `personas.yaml` (#19).
 
 ## 7. Label arrival model (what the bank learns, and when)
 

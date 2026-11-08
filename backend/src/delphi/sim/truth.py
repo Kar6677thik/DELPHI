@@ -1,4 +1,5 @@
-"""SQLAlchemy Core definitions of the ground-truth tables (docs/17 §3, migrations 0002, 0004).
+"""SQLAlchemy Core definitions of the ground-truth tables (docs/17 §3, migrations 0002, 0004,
+0005).
 
 Only ``delphi.sim`` and ``delphi.evaluation`` may import this module (docs/04 §4.1 rule 5, an
 import-linter contract); at the database, only the ``delphi_sim`` role can read the
@@ -91,5 +92,15 @@ schedule_truth = Table(
     Column("reason", Text, nullable=False),
     Column("flow", Integer),
     Column("session", Boolean, nullable=False),
+    _ts("created_at"),
+)
+
+# The persona manifest of a dataset (migration 0005, docs/14 §6): it names the scripted rings
+# and the story payees, so it is ground truth.
+persona_manifests = Table(
+    "persona_manifests",
+    metadata,
+    Column("dataset_id", Uuid, primary_key=True),
+    Column("manifest", JSONB, nullable=False),
     _ts("created_at"),
 )
