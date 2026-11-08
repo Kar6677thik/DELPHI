@@ -60,16 +60,16 @@ Deliverables:
 3. Frontend skeleton: login page, app shell with role-aware navigation, Overview placeholder,
    SSE connection indicator, generated API types.
 4. Dockerfile (multi-stage, non-root, read-only FS), `compose.yaml`, `justfile`.
-5. `ci.yml` and `deploy.yml` (doc 23 §3), with the e2e job running a login smoke test.
-6. `deploy/k8s` base + `home` overlay, `deploy/argocd/*`, and the bootstrap runbook executed on
-   the server, with the Image Updater CR field names verified against the pinned version (spike,
-   time-boxed to 0.5 day).
+5. `ci.yml` and the manual `deploy.yml` (doc 23 §3), with the e2e job running a login smoke test.
+6. `deploy/k8s` base, jobs and the example overlay, and the bootstrap runbook (doc 23 §6)
+   executed on the server by its operator (ADR-0015).
 7. ADRs 0001–0014 accepted (they already exist in `docs/adr/`).
 
 Exit criteria:
 
-- [ ] Pushing a commit that changes a string on the Overview page shows it at
-  `https://delphi.<domain>` within 15 min. The deploy workflow's verify job is green
+- [ ] Running Deploy on `main` (and approving it) for a commit that changes a string on the
+  Overview page shows it at `https://delphi.karthiksurkanti.in`. The deploy workflow's verify job
+  is green
   (FR-DEP-01, NFR-10).
 - [ ] `workflow_dispatch` on `main` works; dispatch on another branch is refused.
 - [ ] No commit in the repo has a Co-Authored-By trailer. The hook is installed. The workflows
@@ -258,7 +258,7 @@ Exit criteria:
 |---|---|---|---|---|---|
 | R-01 | Demo stories don't emerge naturally from KB v1 + simulator (e.g. the planner picks an unexpected probe) | Medium | High | Engine-level story tests from M4; tune only the persona scripts and simulator, never KB v1 to the test (doc 21 §3) | M4 |
 | R-02 | The lookahead planner is too slow in Python | Low | Medium | Memoisation + numpy; fallback: depth 2 for Guardian (config) | M1 |
-| R-03 | Image Updater CRD fields differ from the spec | Medium | Low | M0 spike verifies against the pinned version | M0 |
+| R-03 | ~~Image Updater CRD fields differ from the spec~~. Closed: ADR-0015 replaced Argo CD and Image Updater | — | — | — | — |
 | R-04 | The home server lacks resources for `eval` generation and evaluation | Medium | Medium | Run `eval` jobs at night; reduce to 10k customers (config) with a documented note | M2/M8 |
 | R-05 | Sensing gates not met on synthetic data | Low | Medium | Document the deviation; the engine's value does not depend on prior quality | M3 |
 | R-06 | Telugu/Hindi/Tamil review unavailable | Medium | Low | The English fallback keeps every story working; S-1 shows English | M4 |

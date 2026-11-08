@@ -28,10 +28,10 @@
 
 Two database roles: `delphi_app` (used by the api) and `delphi_sim` (used by the `sim` and
 `evaluation` code paths in the worker, which hold a second connection pool). The DSN for each
-comes from the Secret `delphi-db`.
+comes from the Secrets in doc 23 §4 (the api's Secret holds only the app role's URL).
 
 - **Who creates the roles.** In the home deployment, the Postgres init script creates both as
-  LOGIN roles with passwords from `delphi-db` (doc 23 §4). The first migration creates them as
+  LOGIN roles with passwords from Secret `delphi-postgres` (doc 23 §4). The first migration creates them as
   NOLOGIN roles only if they do not exist yet (CI, a fresh local database), then applies the
   grants. Roles are cluster-wide and are never dropped by a downgrade.
 - **Who owns the schema.** Migrations run as one owner role (`DELPHI_MIGRATE_DATABASE_URL`; the

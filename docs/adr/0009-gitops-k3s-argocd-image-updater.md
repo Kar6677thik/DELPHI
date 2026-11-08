@@ -1,6 +1,7 @@
 # ADR-0009 — GitOps on k3s: GHCR + Argo CD + Argo CD Image Updater (no bot commits)
 
-- **Status:** Accepted
+- **Status:** Superseded by ADR-0015 (2026-11-08): deploys are manual and approved, and the
+  home server has no Argo CD
 - **Date:** 2026-10-31
 
 ## Context

@@ -29,7 +29,7 @@ code implements this spec. If they disagree, the spec wins until a PR changes bo
 | 20 | [Observability](20-observability.md) | Logs, metrics, health, alerts |
 | 21 | [Testing](21-testing.md) | Test portfolio, golden tests, quality gates |
 | 22 | [Evaluation](22-evaluation.md) | Baselines, metrics, experiment protocol |
-| 23 | [Deployment and operations](23-deployment.md) | CI/CD, k3s, Argo CD, Cloudflare Tunnel, runbooks |
+| 23 | [Deployment and operations](23-deployment.md) | CI, manual approved deploys to k3s, Cloudflare Tunnel, runbooks |
 | 24 | [Engineering conventions](24-engineering-conventions.md) | Repo layout, tooling, coding standards, git workflow |
 | 25 | [Milestones](25-milestones.md) | M0–M9 with deliverables and exit criteria |
 | — | [ADRs](adr/) | Architecture Decision Records |
@@ -61,8 +61,8 @@ code implements this spec. If they disagree, the spec wins until a PR changes bo
 | Detection-as-code | The knowledge base is an immutable, versioned bundle. KB v1 is seeded from YAML in git | 0006 |
 | LLM | Claude API (`claude-opus-5-5`) behind a provider port, with a deterministic template fallback | 0007 |
 | UI | React + TypeScript SPA (Vite), served by the API process | 0008 |
-| Deploy | GitHub Actions → GHCR → Argo CD + Image Updater on k3s. No bot commits | 0009 |
-| Access | Cloudflare Tunnel to a public hostname, protected by app login | 0010 |
+| Deploy | Manual, owner-approved `workflow_dispatch`: GitHub Actions builds, attests and deploys by digest over the tailnet with a namespace-scoped account. No bot commits | 0015 (supersedes 0009) |
+| Access | The server's shared Cloudflare Tunnel to `delphi.karthiksurkanti.in`, protected by app login | 0010, 0015 |
 | Data | Synthetic-first simulator. External datasets are an optional stretch | 0011 |
 | Chase maths | Proportional taint tracing + exponential dwell-time survival | 0012 |
 | Live UI updates | Server-Sent Events | 0013 |

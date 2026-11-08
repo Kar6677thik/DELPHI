@@ -9,7 +9,7 @@ When a guide principle and this document conflict, this document wins for DELPHI
 |---|---|
 | Modular monolith (§5) | One package, module facades, import-linter contracts (doc 04) |
 | Functional core / DIP (§2) | Pure `engine`; ports and adapters for every external system |
-| KISS / YAGNI (§2) | PostgreSQL only; no broker, cache, tracing stack or k8s operators beyond Argo CD; no features outside doc 03 |
+| KISS / YAGNI (§2) | PostgreSQL only; no broker, cache, tracing stack or k8s operators; no features outside doc 03 |
 | Explicitness (§2) | Composition root wiring; no global singletons; config validated at startup |
 | Fail fast (§2) | Invalid config or KB → refuse to start; invalid input → 4xx with a precise code |
 | Design by contract (§2) | Pydantic DTOs; engine pre/post-conditions as asserts in tests; DB constraints |

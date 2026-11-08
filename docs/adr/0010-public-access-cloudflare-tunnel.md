@@ -1,6 +1,7 @@
 # ADR-0010 — Public access via Cloudflare Tunnel, protected by app login
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by ADR-0015 (2026-11-08): the tunnel is the home server's shared,
+  host-level tunnel, not a `cloudflared` Deployment in the namespace
 - **Date:** 2026-10-31
 
 ## Context

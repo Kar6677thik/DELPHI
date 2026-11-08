@@ -80,11 +80,11 @@ end-to-end test (doc 21).
 
 | ID | Assumption | Consequence if wrong |
 |---|---|---|
-| A-01 | The home server runs k3s on Linux, with ≥ 4 CPU cores and ≥ 8 GB RAM free for DELPHI, and the default `local-path` storage class | Resize requests and limits (doc 23), or reduce the dataset profile |
+| A-01 | The home server runs k3s on Linux with the default `local-path` storage class, and DELPHI gets the budget in doc 23 §4 (≈ 1.5 GiB requested, ≈ 3.25 GiB at the limits) on a node shared with other apps (confirmed 2026-11-08) | Resize requests and limits (doc 23), or reduce the dataset profile. The `eval` profile does not fit and runs elsewhere |
 | A-02 | Server CPU architecture is `linux/amd64` | Set repo variable `IMAGE_PLATFORMS=linux/arm64` (doc 23) |
-| A-03 | The owner controls a domain in Cloudflare, so a remotely-managed tunnel can publish `delphi.<domain>` | Fall back to Tailscale-only access. Nothing else changes |
+| A-03 | The owner's domain is on Cloudflare, and the server's shared tunnel publishes `delphi.karthiksurkanti.in` (confirmed 2026-11-08) | Fall back to Tailscale-only access. Nothing else changes |
 | A-04 | An Anthropic API key is available. The demo never depends on it, because the template fallback always works | Narratives use templates |
-| A-05 | The GitHub repo `Kar6677thik/DELPHI` is **public** (confirmed 2026-11-02), so the GHCR package is public too | No image pull secret or registry credentials are needed in the cluster (doc 23 §5–6), and Pre-M0 item P-3 is dropped. If the repo is ever made private, restore the `ghcr-pull` secret and the Image Updater registry credentials |
+| A-05 | The GitHub repo `Kar6677thik/DELPHI` is **public** (confirmed 2026-11-02), so the GHCR package is public too | No image pull secret or registry credentials are needed in the cluster (doc 23 §4–6), and Pre-M0 item P-3 is dropped. If the repo is ever made private, add an image pull secret to the namespace |
 | A-06 | In the simulation, the Chase loop has network-wide visibility of downstream hops (as DPIP/CFCFRMS data sharing would provide), delayed by a configurable latency | Chase would see only first hops; the ranking logic is unchanged |
 | A-07 | MITRE F3 stage labels are a 4-stage subset: `INITIAL_ACCESS`, `POSITIONING`, `EXECUTION`, `MONETIZATION` (research §9.5). They are stored as configuration | Rename in config once checked against the official F3 matrix |
 | A-08 | Telugu, Hindi and Tamil question translations are approved by a native speaker before being marked `APPROVED` | Unapproved languages fall back to English (FR-GDN-09) |

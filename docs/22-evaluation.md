@@ -7,9 +7,10 @@ and the numbers for the pitch.
 
 1. Generate the `eval` profile (seed 7): 20,000 customers, 150 days of history under the legacy
    policy, and a 30-day evaluation stream. The dataset is held in memory while it is generated
-   and written, with a peak RSS budget of < 4.5 GiB (measured 3.77 GiB, #58). That fits the
-   worker's 5 Gi limit (doc 23 §4). If a change pushes it over, derive `ledger_entries` from
-   the payments at write time first.
+   and written, with a peak RSS budget of < 4.5 GiB (measured 3.77 GiB, #58). That does not fit
+   the home server (doc 23 §4), where `DELPHI_DATASET_PROFILES` excludes `eval`: evaluation
+   runs on a laptop or in CI. If a change pushes the peak over the budget, derive
+   `ledger_entries` from the payments at write time first.
 2. Train sensing on the history labels observed at day 150, over the matured window (doc 13 §4).
 3. Replay the **identical** evaluation stream through each policy with a `VirtualClock`
    (discrete events, no waiting). Each policy gets its own copy of the bank state, because
