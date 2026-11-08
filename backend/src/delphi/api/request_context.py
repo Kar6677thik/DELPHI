@@ -16,6 +16,7 @@ from delphi.api.problems import internal_error_response
 from delphi.api.request_id import request_id_var
 from delphi.platform.ids import uuid7
 from delphi.platform.logging import bind_context, clear_context, get_logger
+from delphi.platform.metrics import HTTP_REQUEST_DURATION, HTTP_REQUESTS, status_class
 
 REQUEST_ID_HEADER = "x-request-id"
 # A client-supplied id is echoed only if it is short and harmless in logs and headers.
@@ -67,14 +68,17 @@ class RequestContextMiddleware:
                 raise  # too late for an error response; the server closes the connection
             await internal_error_response(scope["path"])(scope, receive, send_with_id)
         finally:
-            route = scope.get("route")
+            # The route template, never the raw path: bounded cardinality, no ids (docs/20 §2).
+            route = getattr(scope.get("route"), "path", "<unmatched>")
+            elapsed_s = time.perf_counter() - started
+            HTTP_REQUESTS.labels(scope["method"], route, status_class(status["code"])).inc()
+            HTTP_REQUEST_DURATION.labels(route).observe(elapsed_s)
             log.info(
                 "http.request",
                 method=scope["method"],
-                # The route template, never the raw path: bounded cardinality, no ids (docs/20 §2).
-                route=getattr(route, "path", "<unmatched>"),
+                route=route,
                 status=status["code"],
-                duration_ms=round((time.perf_counter() - started) * _MS_PER_S, 2),
+                duration_ms=round(elapsed_s * _MS_PER_S, 2),
             )
             clear_context()
             request_id_var.reset(token)

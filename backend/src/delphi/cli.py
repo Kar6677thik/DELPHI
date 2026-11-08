@@ -30,6 +30,7 @@ from delphi.platform.errors import DelphiError
 from delphi.platform.events import EventHub
 from delphi.platform.jobs import JobRegistry
 from delphi.platform.logging import configure_logging, get_logger
+from delphi.platform.metrics import SSE_CLIENTS, metrics_server
 from delphi.platform.settings import Settings, SettingsError, libpq_url, load_settings
 from delphi.platform.wiring import Platform, build_platform
 from delphi.platform.worker import build_registry, install_stop_handlers, run_worker
@@ -146,6 +147,9 @@ def _api(settings: Settings) -> int:
     except BootstrapError as exc:
         platform.close()
         raise SettingsError(str(exc)) from None
+    SSE_CLIENTS.set_function(lambda: hub.subscriber_count)
+    metrics = metrics_server(settings.metrics_port)
+    threading.Thread(target=metrics.serve_forever, name="metrics", daemon=True).start()
     try:
         uvicorn.run(
             create_app(platform, event_hub=hub),
@@ -156,6 +160,7 @@ def _api(settings: Settings) -> int:
             server_header=False,
         )
     finally:
+        metrics.shutdown()
         platform.close()
     return 0
 

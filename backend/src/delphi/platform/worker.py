@@ -5,8 +5,9 @@ Threads, all sharing one stop event:
   has ``worker_default_concurrency`` slots (2), the fast lane ``worker_fast_concurrency`` (1);
 - **scheduler**: every ``worker_poll_interval_s`` it enqueues due recurring jobs and fails the
   RUNNING jobs whose worker died on their last attempt;
-- **health**: ``GET /health`` on ``metrics_port`` (docs/20 §3), 200 while every loop has beaten
-  in the last ``worker_heartbeat_max_age_s`` seconds, else 503.
+- **metrics**: on ``metrics_port``, ``GET /metrics`` (docs/20 §2) and ``GET /health``
+  (docs/20 §3): 200 while every loop has beaten in the last ``worker_heartbeat_max_age_s``
+  seconds, else 503.
 
 On SIGTERM a slot finishes the job it is running and then stops (the pod's grace period is
 60 s, docs/23 §4). A job cut off by SIGKILL is claimed again after its lease expires.
@@ -14,7 +15,6 @@ On SIGTERM a slot finishes the job it is running and then stops (the pod's grace
 
 from __future__ import annotations
 
-import json
 import os
 import signal
 import socket
@@ -22,12 +22,22 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import FrameType
+from typing import Any
 
 from delphi.platform.audit import AuditVerifyJob
-from delphi.platform.jobs import Job, JobContext, JobQueue, JobRegistry, JobType, Lane
+from delphi.platform.jobs import (
+    Job,
+    JobContext,
+    JobQueue,
+    JobRegistry,
+    JobStatus,
+    JobType,
+    Lane,
+    queued_counts,
+)
 from delphi.platform.logging import bind_context, clear_context, get_logger
+from delphi.platform.metrics import JOB_DURATION, JOBS, JOBS_QUEUED, HealthCheck, metrics_server
 from delphi.platform.retention import RetentionSweep
 from delphi.platform.scheduler import Scheduler
 from delphi.platform.wiring import Platform
@@ -36,6 +46,8 @@ log = get_logger(__name__)
 
 # A lease is extended this many times per lease period while a handler runs.
 LEASE_RENEWALS_PER_PERIOD = 3
+# delphi_jobs_total{status} after a failed attempt, by the job's next status.
+_FAIL_OUTCOME = {JobStatus.QUEUED: "RETRY", JobStatus.FAILED: "FAILED"}
 
 
 def install_stop_handlers(stop: threading.Event) -> None:
@@ -85,17 +97,24 @@ def run_job(queue: JobQueue, registry: JobRegistry, job: Job, worker_id: str) ->
     renewer = threading.Thread(target=renew, name=f"lease-{job.id}", daemon=True)
     renewer.start()
     bind_context(job_id=str(job.id), job_type=job.type)
+    started = time.perf_counter()
     try:
-        result = handler(ctx)
+        try:
+            result = handler(ctx)
+        finally:
+            JOB_DURATION.labels(job.type).observe(time.perf_counter() - started)
     except Exception as exc:
         log.error("job.handler_failed", exc_info=exc)
-        queue.fail(job, worker_id, f"{type(exc).__name__}: {exc}")
+        after = queue.fail(job, worker_id, f"{type(exc).__name__}: {exc}")
+        # None: the lease was taken over, so this attempt's outcome is not ours.
+        outcome = _FAIL_OUTCOME.get(after, "LOST") if after is not None else "LOST"
     else:
-        queue.succeed(job, worker_id, result)
+        outcome = "SUCCEEDED" if queue.succeed(job, worker_id, result) else "LOST"
     finally:
         done.set()
         renewer.join()
         clear_context()
+    JOBS.labels(job.type, outcome).inc()
 
 
 def _loop(
@@ -117,27 +136,21 @@ def _loop(
             stop.wait(poll_s)
 
 
-def _health_server(port: int, heartbeats: Heartbeats, version: str) -> ThreadingHTTPServer:
-    class Health(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:
-            if self.path != "/health":
-                self.send_error(404)
-                return
-            stale = heartbeats.stale()
-            ok = heartbeats.healthy()
-            body = json.dumps(
-                {"status": "ok" if ok else "unhealthy", "version": version, "stale": stale}
-            ).encode()
-            self.send_response(200 if ok else 503)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+def worker_health(heartbeats: Heartbeats, version: str) -> HealthCheck:
+    def check() -> tuple[int, dict[str, Any]]:
+        stale = heartbeats.stale()
+        ok = heartbeats.healthy()
+        body = {"status": "ok" if ok else "unhealthy", "version": version, "stale": stale}
+        return (200 if ok else 503), body
 
-        def log_message(self, *_args: object) -> None:  # probes every few seconds: no log noise
-            return
+    return check
 
-    return ThreadingHTTPServer(("0.0.0.0", port), Health)  # nosec B104: inside the pod only
+
+def sample_queue_depth(queue: JobQueue) -> None:
+    """Set ``delphi_jobs_queued`` for every job type (0 when none is waiting)."""
+    counts = queued_counts(queue.sessions)
+    for job_type in JobType:
+        JOBS_QUEUED.labels(job_type.value).set(counts.get(job_type.value, 0))
 
 
 def build_registry(platform: Platform) -> JobRegistry:
@@ -184,6 +197,7 @@ def run_worker(
     def scheduler_step() -> bool:
         scheduler.tick()
         queue.reap_expired()
+        sample_queue_depth(queue)
         return False
 
     loops: list[tuple[str, Callable[[], bool]]] = [("scheduler", scheduler_step)]
@@ -204,9 +218,13 @@ def run_worker(
         )
         for name, step in loops
     ]
-    server = _health_server(s.metrics_port, heartbeats, s.version) if serve_health else None
+    server = (
+        metrics_server(s.metrics_port, worker_health(heartbeats, s.version))
+        if serve_health
+        else None
+    )
     if server is not None:
-        threading.Thread(target=server.serve_forever, name="health", daemon=True).start()
+        threading.Thread(target=server.serve_forever, name="metrics", daemon=True).start()
 
     log.info(
         "worker.started",

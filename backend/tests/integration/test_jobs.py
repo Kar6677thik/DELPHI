@@ -9,6 +9,7 @@ from typing import Any
 from uuid import UUID
 
 import pytest
+from prometheus_client import REGISTRY
 from sqlalchemy import Engine, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -29,7 +30,7 @@ from delphi.platform.scheduler import Recurring, Scheduler
 from delphi.platform.settings import Settings
 from delphi.platform.tables import jobs, outbox_events
 from delphi.platform.wiring import Platform
-from delphi.platform.worker import run_job, run_worker
+from delphi.platform.worker import run_job, run_worker, sample_queue_depth
 
 from ._db import MIGRATIONS_DIR, engine_as
 
@@ -81,6 +82,32 @@ def status_of(sessions: sessionmaker[Session], job_id: UUID) -> Mapping[str, Any
 
 
 DEMO = frozenset({JobType.DEMO_RESET})
+
+
+def job_count(job_type: JobType, outcome: str) -> float:
+    value = REGISTRY.get_sample_value(
+        "delphi_jobs_total", {"type": job_type.value, "status": outcome}
+    )
+    return value or 0.0
+
+
+def test_the_queue_depth_gauge_counts_waiting_jobs_per_type(
+    sessions: sessionmaker[Session], clock: FixedClock, queue: JobQueue
+) -> None:
+    add(sessions, clock, "a")
+    add(sessions, clock, "b")
+    add(sessions, clock, "c", job_type=JobType.DEMO_STORY)
+    claimed = queue.claim("w", frozenset({JobType.DEMO_STORY}))
+    assert claimed is not None  # RUNNING now: no longer waiting
+
+    sample_queue_depth(queue)
+
+    def depth(job_type: JobType) -> float | None:
+        return REGISTRY.get_sample_value("delphi_jobs_queued", {"type": job_type.value})
+
+    assert depth(JobType.DEMO_RESET) == 2
+    assert depth(JobType.DEMO_STORY) == 0
+    assert depth(JobType.AUDIT_VERIFY) == 0  # every type is reported, not only those waiting
 
 
 def test_enqueue_is_idempotent_on_the_key(
@@ -210,6 +237,8 @@ def test_run_job_records_success_progress_and_failure(
     registry.register(JobType.DEMO_STORY, broken)
     good = add(sessions, clock, "ok")
     bad = add(sessions, clock, "bad", job_type=JobType.DEMO_STORY)
+    ok_before = job_count(JobType.DEMO_RESET, "SUCCEEDED")
+    retry_before = job_count(JobType.DEMO_STORY, "RETRY")
 
     for types in (DEMO, frozenset({JobType.DEMO_STORY})):
         job = queue.claim("w", types)
@@ -217,6 +246,8 @@ def test_run_job_records_success_progress_and_failure(
         run_job(queue, registry, job, "w")
 
     assert seen == [0.5]
+    assert job_count(JobType.DEMO_RESET, "SUCCEEDED") == ok_before + 1
+    assert job_count(JobType.DEMO_STORY, "RETRY") == retry_before + 1
     assert status_of(sessions, good)["result"] == {"rows": 3}
     failed = status_of(sessions, bad)
     assert failed["status"] == "QUEUED"  # attempt 1 of 3
