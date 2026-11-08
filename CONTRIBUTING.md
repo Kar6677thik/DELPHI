@@ -39,3 +39,18 @@ uv run delphi migrate && uv run delphi api   # http://localhost:8000/api/v1/read
 The integration tests create and drop their own databases on the server you point them at, so
 never point `DELPHI_TEST_DATABASE_URL` at a database you care about. All settings are listed in
 [docs/23 §4.1](docs/23-deployment.md#41-process-settings).
+
+### A dataset locally
+
+`delphi seed` queues `GENERATE_DATASET`, and the worker generates the profile and writes it
+(docs/14, #19). The worker writes ground truth, so it needs the `delphi_sim` pool too. Locally,
+the single superuser can stand in for both roles:
+
+```sh
+export DELPHI_SIM_DATABASE_URL=$DELPHI_DATABASE_URL
+uv run delphi seed --if-empty --profile test --personas   # or demo (about a minute)
+uv run delphi worker                                      # Ctrl-C once the job has SUCCEEDED
+```
+
+A database holds one dataset. Seeding again is harmless (`--if-empty`); to start over, drop and
+recreate the database.

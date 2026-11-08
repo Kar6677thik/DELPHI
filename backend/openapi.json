@@ -619,6 +619,66 @@
           }
         }
       }
+    },
+    "/api/v1/admin/datasets": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Create Dataset",
+        "description": "Queue a `GENERATE_DATASET` job (202 with the job). 409 `JOB_ALREADY_RUNNING` while one\nis under way, 409 `INVALID_STATE_TRANSITION` once the bank holds a dataset.",
+        "operationId": "create_dataset_api_v1_admin_datasets_post",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DatasetRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobView"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An RFC 9457 problem (docs/16 §1)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -714,6 +774,39 @@
           "role"
         ],
         "title": "CreateUser"
+      },
+      "DatasetRequest": {
+        "properties": {
+          "profile": {
+            "type": "string",
+            "enum": [
+              "test",
+              "demo",
+              "eval"
+            ],
+            "title": "Profile"
+          },
+          "seed": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 9.223372036854776e+18,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seed",
+            "description": "default: the profile's"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "profile"
+        ],
+        "title": "DatasetRequest"
       },
       "HealthView": {
         "properties": {
