@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections import Counter
 from datetime import datetime, time, timedelta
 from uuid import UUID
@@ -14,6 +15,7 @@ from delphi.sim.export import canonical_export
 from delphi.sim.generator_config import GeneratorConfig, load_generator_config
 from delphi.sim.history import IST
 from delphi.sim.persona_config import PersonaConfig, Story, StoryTelemetry, load_persona_config
+from delphi.sim.personas import load_manifest, manifest_json
 
 from ..golden.test_story_behaviour import ARJUN_PASSIVE, KAMALA_PASSIVE
 
@@ -264,6 +266,15 @@ def test_persona_devices_are_stable_on_demo(
 
 def test_the_demo_profile_has_personas_by_default() -> None:
     assert "demo" in load_persona_config().profiles
+
+
+def test_the_manifest_survives_its_json_form(dataset: Dataset) -> None:
+    """#19: the GENERATE_DATASET job stores the manifest as JSON; the runners load it back."""
+    manifest = dataset.personas
+    assert manifest is not None
+    stored = json.loads(json.dumps(manifest_json(manifest)))
+    assert "stories" not in stored  # personas.yaml's, not the dataset's
+    assert load_manifest(stored, load_persona_config()) == manifest
 
 
 def test_the_persona_config_rejects_broken_references() -> None:

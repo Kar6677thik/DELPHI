@@ -176,7 +176,8 @@ variant_exposures(customer_id, variant_id, last_shown_at, primary key(customer_i
 
 model_artifacts(id, kind, version, status, trained_at, training_cutoff, metrics jsonb,
                 feature_list jsonb, blob bytea, sha256)
-datasets(id, profile, seed, generator_version, status, stats jsonb, seed_completed_at null, created_at)
+datasets(id, job_id unique → jobs, profile (test|demo|eval), seed, generator_version,
+         status (READY), stats jsonb, seed_completed_at null, created_at)   -- migration 0005
 evaluations(id, job_id, dataset_id, policies jsonb, seed, metrics jsonb, created_at)
 
 jobs(id, type, status (QUEUED|RUNNING|SUCCEEDED|FAILED|CANCELLED), params jsonb, result jsonb null,
@@ -204,7 +205,17 @@ label_schedule(subject_type, subject_id, hypothesis_key, label_source, due_at, d
                pk (subject_type, subject_id, label_source))  idx (due_at) where not delivered
 schedule_truth(schedule_id pk → bank.sim_schedule, reason (SALARY|MULE_FORWARDING),
                flow null, session bool)                          -- migration 0004
+persona_manifests(dataset_id pk → delphi.datasets on delete cascade, manifest jsonb)  -- 0005
 ```
+
+`delphi.datasets` has a row per dataset the `GENERATE_DATASET` job wrote (#19). The job writes
+the bank rows, this row and the persona manifest in one transaction, so a row only exists
+`READY`; `job_id` lets a retried attempt find what an earlier one committed. `stats` holds the
+row counts and the doc 14 stats report. `seed_completed_at` is the marker demo reset deletes
+back to (doc 14 §10). The bank tables hold one dataset (their ids are deterministic), so a
+second one is refused until the bank is reset. `persona_manifests` keeps the persona manifest
+(doc 14 §6) for the story runners; it is ground truth because it names the scripted rings and
+the story payees. The api finds the personas themselves through `bank.customers.persona_key`.
 
 `bank.sim_schedule` payloads carry only what executing a transfer needs (payer, payee, amount,
 channel). Why a scheduled transfer exists is ground truth, kept in `schedule_truth` (#56).
