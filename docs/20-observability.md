@@ -19,6 +19,19 @@ scraper the owner runs. If none runs, the in-app metrics pages cover the busines
 
 `prometheus-client`. Bounded label cardinality: no ids as labels (EFG §24).
 
+- **Where:** both processes listen on `metrics_port` (9000). The api serves only `/metrics`
+  there; the worker serves `/metrics` and `/health`. Port 9000 is never routed publicly, and the
+  app port's `/metrics` is the SPA page (FR-DEP-04). The body is the classic text format
+  (`text/plain; version=0.0.4`), plus the client library's standard `process_*` and `python_*`
+  metrics.
+- **Which process:** HTTP and SSE metrics come from the api; job metrics from the worker.
+  `delphi_jobs_queued` is sampled by the worker's scheduler loop (every
+  `worker_poll_interval_s`), with a series for every job type.
+- **`delphi_jobs_total{status}`:** one per finished attempt: `SUCCEEDED`, `RETRY` (failed,
+  queued again with backoff), `FAILED` (no attempts left) or `LOST` (the lease was taken over).
+- **Rollout:** each metric is added with the module it measures. Today: the HTTP, job and SSE
+  metrics. The Guardian, probe, case, LLM and KB-version metrics arrive in M1–M5.
+
 | Metric | Type | Labels |
 |---|---|---|
 | `delphi_http_requests_total` | counter | method, route template, status class |

@@ -13,8 +13,9 @@ from datetime import time as clock_time
 import pytest
 
 from delphi.platform.jobs import FAST_LANE, JobType, Lane, lane_of
+from delphi.platform.metrics import metrics_server
 from delphi.platform.scheduler import SCHEDULE, Recurring
-from delphi.platform.worker import Heartbeats, _health_server
+from delphi.platform.worker import Heartbeats, worker_health
 
 
 def test_interval_slots_align_to_the_epoch() -> None:
@@ -77,7 +78,7 @@ def _get(url: str) -> tuple[int, dict[str, object]]:
 def test_worker_health_reflects_loop_heartbeats() -> None:
     # Generous margins: a loaded CI machine must not turn a fresh beat stale mid-request.
     beats = Heartbeats(max_age_s=1.0)
-    server = _health_server(0, beats, "abc123")
+    server = metrics_server(0, worker_health(beats, "abc123"))
     port = server.server_address[1]
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:

@@ -441,3 +441,14 @@ def list_jobs(
     if status is not None:
         query = query.where(jobs.c.status == status)
     return [JobRecord(*row) for row in session.execute(query)]
+
+
+def queued_counts(sessions: sessionmaker[Session]) -> dict[str, int]:
+    """How many jobs of each type are waiting (status QUEUED, due or not)."""
+    with sessions() as session:
+        rows = session.execute(
+            select(jobs.c.type, func.count())
+            .where(jobs.c.status == JobStatus.QUEUED.value)
+            .group_by(jobs.c.type)
+        ).all()
+    return {job_type: count for job_type, count in rows}
