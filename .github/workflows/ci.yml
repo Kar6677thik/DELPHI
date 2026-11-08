@@ -2,10 +2,10 @@
 # arrive with the rest of M0 (#10). The commit-policy check is in policy.yml. This workflow never writes to the repository.
 name: ci
 
+# Runs once per PR update (not also on the branch push, which doubled every run), and from
+# deploy.yml. Open a draft PR to get CI on a branch.
 on:
   pull_request:
-  push:
-    branches-ignore: [main]
   workflow_call:
 
 permissions:
