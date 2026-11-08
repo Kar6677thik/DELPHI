@@ -1,0 +1,73 @@
+# Nightly logical backup (docs/23 §8): pg_dump -Fc at 03:00 IST, the 7 most recent kept.
+# The PVC is on the same disk as the database: this protects against mistakes, not against
+# losing the disk. An off-host copy is the owner's decision.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: delphi-backups
+  namespace: delphi
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources: { requests: { storage: 5Gi } }
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: delphi-pg-backup
+  namespace: delphi
+  labels: { app.kubernetes.io/name: delphi, app.kubernetes.io/component: backup }
+spec:
+  schedule: "30 21 * * *" # UTC = 03:00 IST
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 1800
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: delphi
+            app.kubernetes.io/component: backup
+            delphi.io/db-client: "true"
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            runAsGroup: 999
+            fsGroup: 999
+            seccompProfile: { type: RuntimeDefault }
+          containers:
+            - name: backup
+              image: postgres:16@sha256:5db6dac2ef5dcff512f4f00a009c3c332b9f2f28f24277175bf3e4a3d02ef83a
+              envFrom:
+                - secretRef: { name: delphi-postgres }
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  export PGPASSWORD="$POSTGRES_PASSWORD"
+                  out="/backups/delphi-$(date -u +%Y%m%dT%H%M%SZ).dump"
+                  pg_dump -h delphi-postgres -U "${POSTGRES_USER:-postgres}" -d delphi -Fc -f "$out.part"
+                  mv "$out.part" "$out"
+                  ls -1t /backups/delphi-*.dump | tail -n +8 | xargs -r rm --
+                  echo "wrote $out"; ls -lh /backups
+              resources:
+                requests: { cpu: 50m, memory: 128Mi }
+                limits: { cpu: 500m, memory: 512Mi }
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: { drop: ["ALL"] }
+              volumeMounts:
+                - { name: backups, mountPath: /backups }
+                - { name: tmp, mountPath: /tmp }
+          volumes:
+            - name: backups
+              persistentVolumeClaim: { claimName: delphi-backups }
+            - { name: tmp, emptyDir: { sizeLimit: 64Mi } }

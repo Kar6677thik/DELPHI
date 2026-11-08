@@ -1,0 +1,12 @@
+# Namespace `delphi` (docs/23 §4). Pod Security `restricted` is enforced: every pod must run
+# non-root, drop all capabilities and use the runtime's seccomp profile.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: delphi
+  labels:
+    app.kubernetes.io/part-of: delphi
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted

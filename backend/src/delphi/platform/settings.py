@@ -88,6 +88,9 @@ class Settings(BaseSettings):
     # Header carrying the real client IP behind the tunnel (`CF-Connecting-IP` in the home
     # deployment); unset: the socket peer.
     client_ip_header: str | None = None
+    # Dataset profiles this deployment may generate (docs/23 §4). The home server leaves out
+    # `eval`, whose generation needs about 3.8 GiB (docs/22 §1).
+    dataset_profiles: str = "test,demo,eval"
     # The first ADMIN, created on start when no user exists (docs/19 §2, FR-PLT-03).
     bootstrap_admin_username: str | None = None
     bootstrap_admin_password: SecretStr | None = None
@@ -114,6 +117,10 @@ class Settings(BaseSettings):
             retry_backoff=timedelta(seconds=self.job_retry_backoff_s),
             default_max_attempts=self.job_max_attempts,
         )
+
+    @property
+    def allowed_dataset_profiles(self) -> frozenset[str]:
+        return frozenset(p.strip() for p in self.dataset_profiles.split(",") if p.strip())
 
     @property
     def session_policy(self) -> SessionPolicy:

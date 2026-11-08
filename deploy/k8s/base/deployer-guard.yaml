@@ -1,0 +1,85 @@
+# What the delphi-deployer ServiceAccount may do, enforced at admission rather than trusted to the workflow.
+# Its Role lets it create Jobs and patch Deployments, and without this policy either could mount any Secret in the
+# namespace (the database superuser password, its own token). With it, the deployer can only:
+#   - create Jobs named delphi-(migrate|seed)-<7 hex>-<n> running DELPHI's image by digest, with only the
+#     delphi-config ConfigMap and the job's own Secret, and emptyDir volumes;
+#   - change the image of delphi-api / delphi-worker to DELPHI's image by digest, and nothing else in the pod.
+# rollout undo works because it restores a previous template, which differs only in the image.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: delphi-deployer-guard
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    namespaceSelector:
+      matchLabels: { kubernetes.io/metadata.name: delphi }
+    resourceRules:
+      - { apiGroups: ["batch"], apiVersions: ["v1"], operations: ["CREATE", "UPDATE"], resources: ["jobs"] }
+      - { apiGroups: ["apps"], apiVersions: ["v1"], operations: ["UPDATE"], resources: ["deployments"] }
+  matchConditions:
+    - name: only-the-deployer
+      expression: request.userInfo.username == 'system:serviceaccount:delphi:delphi-deployer'
+  variables:
+    - name: image
+      expression: "'^ghcr\\\\.io/kar6677thik/delphi@sha256:[0-9a-f]{64}$'"
+    - name: pod
+      expression: object.spec.template.spec
+    - name: old
+      expression: "request.operation == 'UPDATE' ? oldObject.spec.template.spec : object.spec.template.spec"
+  validations:
+    # --- Jobs ---------------------------------------------------------------------------------------------
+    - expression: >-
+        request.resource.resource != 'jobs' || request.operation == 'CREATE'
+      message: The deployer may create Jobs but not change them.
+    - expression: >-
+        request.resource.resource != 'jobs' || (
+          object.metadata.name.matches('^delphi-(migrate|seed)-[0-9a-f]{7}-[0-9]+$') &&
+          size(variables.pod.containers) == 1 && !has(variables.pod.initContainers) &&
+          !has(variables.pod.ephemeralContainers) &&
+          variables.pod.containers.all(c, c.image.matches(variables.image)) &&
+          has(variables.pod.automountServiceAccountToken) && variables.pod.automountServiceAccountToken == false &&
+          (!has(variables.pod.serviceAccountName) || variables.pod.serviceAccountName == 'default') &&
+          (!has(variables.pod.volumes) || variables.pod.volumes.all(v, has(v.emptyDir))) &&
+          variables.pod.containers.all(c, !has(c.env) && has(c.envFrom) && c.envFrom.all(e,
+            (has(e.configMapRef) && e.configMapRef.name == 'delphi-config') ||
+            (has(e.secretRef) && e.secretRef.name == (object.metadata.name.startsWith('delphi-migrate-') ? 'delphi-migrate' : 'delphi-seed')))))
+      message: >-
+        The deployer may only create delphi-migrate-*/delphi-seed-* Jobs running DELPHI's image by digest, with
+        delphi-config and the job's own Secret, and emptyDir volumes.
+    # --- Deployments: only the image may change -------------------------------------------------------------
+    - expression: >-
+        request.resource.resource != 'deployments' || (
+          object.metadata.name in ['delphi-api', 'delphi-worker'] &&
+          object.spec.replicas == oldObject.spec.replicas &&
+          object.spec.selector == oldObject.spec.selector &&
+          object.spec.template.metadata.labels == oldObject.spec.template.metadata.labels &&
+          variables.pod.containers.all(c, c.image.matches(variables.image)) &&
+          variables.pod.containers.map(c, c.name) == variables.old.containers.map(c, c.name) &&
+          variables.pod.containers.all(c, variables.old.containers.exists(o, o.name == c.name &&
+            has(c.command) == has(o.command) && (!has(c.command) || c.command == o.command) &&
+            has(c.args) == has(o.args) && (!has(c.args) || c.args == o.args) &&
+            has(c.env) == has(o.env) && (!has(c.env) || c.env == o.env) &&
+            has(c.envFrom) == has(o.envFrom) && (!has(c.envFrom) || c.envFrom == o.envFrom) &&
+            has(c.volumeMounts) == has(o.volumeMounts) && (!has(c.volumeMounts) || c.volumeMounts == o.volumeMounts) &&
+            has(c.securityContext) == has(o.securityContext) && (!has(c.securityContext) || c.securityContext == o.securityContext) &&
+            has(c.resources) == has(o.resources) && (!has(c.resources) || c.resources == o.resources))) &&
+          has(variables.pod.initContainers) == has(variables.old.initContainers) &&
+          (!has(variables.pod.initContainers) || variables.pod.initContainers == variables.old.initContainers) &&
+          has(variables.pod.volumes) == has(variables.old.volumes) &&
+          (!has(variables.pod.volumes) || variables.pod.volumes == variables.old.volumes) &&
+          has(variables.pod.securityContext) == has(variables.old.securityContext) &&
+          (!has(variables.pod.securityContext) || variables.pod.securityContext == variables.old.securityContext) &&
+          has(variables.pod.serviceAccountName) == has(variables.old.serviceAccountName) &&
+          (!has(variables.pod.serviceAccountName) || variables.pod.serviceAccountName == variables.old.serviceAccountName) &&
+          has(variables.pod.automountServiceAccountToken) == has(variables.old.automountServiceAccountToken) &&
+          (!has(variables.pod.automountServiceAccountToken) || variables.pod.automountServiceAccountToken == variables.old.automountServiceAccountToken))
+      message: The deployer may only change the image of delphi-api / delphi-worker, to DELPHI's image by digest.
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: delphi-deployer-guard
+spec:
+  policyName: delphi-deployer-guard
+  validationActions: [Deny]

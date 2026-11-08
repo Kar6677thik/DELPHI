@@ -38,11 +38,19 @@ def request_dataset(
     idempotency_key: str,
     params: Mapping[str, Any],
     created_by: UUID | None = None,
+    allowed_profiles: frozenset[str] | None = None,
 ) -> Enqueued:
     """Queue a `GENERATE_DATASET` job in the caller's transaction. A request with a key already
     used returns that job (so `delphi seed` can run on every deploy). Otherwise the bank must
     hold no dataset (409 INVALID_STATE_TRANSITION) and no generation may be under way (409
     JOB_ALREADY_RUNNING): the bank tables hold one dataset."""
+    profile = params.get("profile")
+    if allowed_profiles is not None and profile not in allowed_profiles:
+        raise DelphiError(
+            f"Profile {profile!r} is turned off on this deployment "
+            f"(DELPHI_DATASET_PROFILES: {', '.join(sorted(allowed_profiles))}).",
+            code=ProblemCode.VALIDATION_FAILED,
+        )
     session.execute(select(func.pg_advisory_xact_lock(DATASET_REQUEST_LOCK_KEY)))
     known = session.execute(
         select(jobs.c.id).where(jobs.c.idempotency_key == idempotency_key)

@@ -52,6 +52,7 @@ def create_dataset(
             idempotency_key=f"GENERATE_DATASET:api:{key}",
             params=params,
             created_by=admin.user_id,
+            allowed_profiles=platform.settings.allowed_dataset_profiles,
         )
         record = get_job(session, queued.job_id)
         assert record is not None

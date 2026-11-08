@@ -119,9 +119,13 @@ class GenerateDatasetJob:
     kb: KnowledgeBase
     config: GeneratorConfig
     generator_version: int
+    # Profiles this deployment may generate (DELPHI_DATASET_PROFILES, docs/23 §4).
+    allowed_profiles: frozenset[str] | None = None
 
     def __call__(self, ctx: JobContext) -> Mapping[str, Any] | None:
         params = DatasetParams.of(ctx.job.params, self.config)
+        if self.allowed_profiles is not None and params.profile not in self.allowed_profiles:
+            raise ValueError(f"profile {params.profile!r} is turned off on this deployment")
         with self.sim_engine.connect() as conn:
             done = _committed(conn, ctx.job.id)
         if done is not None:
@@ -175,7 +179,12 @@ class GenerateDatasetJob:
 
 
 def register_sim_jobs(
-    registry: JobRegistry, *, sim_engine: Engine, clock: Clock, kb: KnowledgeBase
+    registry: JobRegistry,
+    *,
+    sim_engine: Engine,
+    clock: Clock,
+    kb: KnowledgeBase,
+    allowed_profiles: frozenset[str] | None = None,
 ) -> None:
     """Add the simulator's handlers. ``sim_engine`` connects as ``delphi_sim``."""
     registry.register(
@@ -186,5 +195,6 @@ def register_sim_jobs(
             kb=kb,
             config=load_generator_config(),
             generator_version=load_config().generator_version,
+            allowed_profiles=allowed_profiles,
         ),
     )

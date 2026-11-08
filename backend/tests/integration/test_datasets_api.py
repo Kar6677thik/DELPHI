@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
@@ -195,3 +196,32 @@ def test_seed_refuses_while_another_generation_runs(
     assert env.post({"profile": "eval"}).status_code == 202
     assert _seed(env, monkeypatch, "--profile", "demo", "--seed", "5") == 1
     assert "already being generated" in capsys.readouterr().err
+
+
+def test_a_profile_turned_off_is_refused_everywhere(
+    env: Env, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """docs/23 §4: DELPHI_DATASET_PROFILES=test,demo on the home server refuses `eval` in the
+    api and in `delphi seed`, and the job refuses it too."""
+    from dataclasses import replace
+
+    from delphi.sim.jobs import GenerateDatasetJob
+
+    limited = env.platform.settings.model_copy(update={"dataset_profiles": "test,demo"})
+    env.client.app.state.platform = replace(env.platform, settings=limited)  # type: ignore[attr-defined]
+    refused = env.post({"profile": "eval"})
+    assert refused.status_code == 422  # type: ignore[attr-defined]
+    assert "turned off" in refused.json()["detail"]  # type: ignore[attr-defined]
+    assert env.post({"profile": "demo"}).status_code == 202  # type: ignore[attr-defined]
+
+    monkeypatch.setenv("DELPHI_DATASET_PROFILES", "test,demo")
+    assert _seed(env, monkeypatch, "--profile", "eval") == 1
+    assert "turned off" in capsys.readouterr().err
+
+    job = GenerateDatasetJob.__new__(GenerateDatasetJob)
+    object.__setattr__(job, "allowed_profiles", frozenset({"test", "demo"}))
+    object.__setattr__(job, "config", load_generator_config())
+
+    ctx = SimpleNamespace(job=SimpleNamespace(params={"profile": "eval"}, id=uuid4()))
+    with pytest.raises(ValueError, match="turned off"):
+        job(ctx)  # type: ignore[arg-type]
