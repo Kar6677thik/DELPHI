@@ -1,7 +1,11 @@
-"""The simulator's facade for the api and the CLI (docs/04 §4.1 rule 3): asking the worker for a
-dataset (docs/16 §2 `POST /admin/datasets`, docs/23 §4 `delphi seed`, #19).
+"""The simulator's facade for the api, the CLI and the feature modules (docs/04 §4.1 rule 3):
+asking the worker for a dataset (docs/16 §2 `POST /admin/datasets`, docs/23 §4 `delphi seed`,
+#19), and the `bank` schema's table definitions.
 
-It reads no ground truth, so the api may import it.
+Feature modules read the simulated bank through these re-exported `bank` tables (the probes'
+sim adapters, sensing, the Navigator evidence rules), so the schema is defined once, in
+`delphi.sim.bank`. They are **read-only** for everyone but the simulator. Nothing from
+`sim_truth` is exported: this module reads no ground truth, so the api may import it.
 """
 
 from __future__ import annotations
@@ -17,7 +21,42 @@ from delphi.platform.clock import Clock
 from delphi.platform.errors import DelphiError, InvalidStateTransitionError, ProblemCode
 from delphi.platform.jobs import Enqueued, JobStatus, JobType, enqueue
 from delphi.platform.tables import jobs
+from delphi.sim.bank import (
+    accounts,
+    complaints,
+    crm_events,
+    customers,
+    devices,
+    ledger_entries,
+    login_events,
+    payees,
+    payments,
+    session_telemetry,
+    sim_phone_risk,
+    sim_registry_listings,
+)
 from delphi.sim.catalog import datasets
+
+# The read-only `bank` tables re-exported for feature modules, and this facade's own API.
+__all__ = [
+    "DATASET_REQUEST_LOCK_KEY",
+    "PROFILES",
+    "DatasetProfile",
+    "accounts",
+    "complaints",
+    "crm_events",
+    "customers",
+    "dataset_exists",
+    "devices",
+    "ledger_entries",
+    "login_events",
+    "payees",
+    "payments",
+    "request_dataset",
+    "session_telemetry",
+    "sim_phone_risk",
+    "sim_registry_listings",
+]
 
 # The generator's profiles (docs/14 §2); a test checks they match `generator.yaml`.
 DatasetProfile = Literal["test", "demo", "eval"]

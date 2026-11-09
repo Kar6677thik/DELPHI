@@ -77,6 +77,12 @@ class Settings(BaseSettings):
     worker_fast_concurrency: int = Field(default=1, ge=1, le=4)
     worker_poll_interval_s: float = Field(default=1.0, gt=0, le=60)
     worker_heartbeat_max_age_s: int = Field(default=30, ge=5, le=600)
+    # Passive probe adapters (docs/08 §2 step 4): their own bounded thread pool, so adapters
+    # that time out cannot starve the event loop's default executor; and each adapter query's
+    # statement_timeout = the KB's passive_adapter_timeout_ms + this margin, so an abandoned
+    # query ends soon instead of holding a pool connection.
+    passive_probe_threads: int = Field(default=8, ge=1, le=32)
+    passive_statement_margin_ms: int = Field(default=200, ge=0, le=5_000)
     # Sessions and sign-in (docs/19 §2, docs/16 §1).
     session_idle_h: int = Field(default=12, ge=1, le=24 * 7)
     session_absolute_days: int = Field(default=7, ge=1, le=90)

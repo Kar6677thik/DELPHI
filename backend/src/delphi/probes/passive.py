@@ -8,14 +8,18 @@ classifies it. The runner fetches every eligible probe in parallel, each with th
 an ``ERROR`` result with no outcome, so the session records ``ProbeRun ERROR`` and makes no
 update. Nothing raises into the session.
 
-Adapters are synchronous (they run SQL); the runner calls them in worker threads. A thread
-that times out keeps running in the background, but the session no longer waits for it.
+Adapters are synchronous (they run SQL); the runner calls them in worker threads. Pass the
+dedicated, bounded pool from ``passive_executor`` (sized by the ``passive_probe_threads``
+setting): a thread that times out keeps running until its query ends (the sim adapters set a
+``statement_timeout``), and it must not take a thread from the event loop's default executor,
+which SSE replay also uses.
 """
 
 from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Mapping, Sequence
+from concurrent.futures import Executor, ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
@@ -143,17 +147,26 @@ class PassiveResult:
     error: str | None = None  # "TIMEOUT", or the exception type and message
 
 
+def passive_executor(threads: int) -> ThreadPoolExecutor:
+    """The bounded pool passive adapters run on (setting ``passive_probe_threads``). Create one
+    per process at start-up and shut it down on exit."""
+    return ThreadPoolExecutor(max_workers=threads, thread_name_prefix="passive-probe")
+
+
 async def _run_one(
     key: str,
     fetch: Fetcher | None,
     request: PassiveRequest,
     thresholds: ClassifierThresholds,
     timeout_s: float,
+    *,
+    executor: Executor,
 ) -> PassiveResult:
     if fetch is None or key not in GUARDIAN_CLASSIFIERS:
         return PassiveResult(key, PassiveStatus.ERROR, error="NO_ADAPTER")
+    loop = asyncio.get_running_loop()
     try:
-        obs = await asyncio.wait_for(asyncio.to_thread(fetch, request), timeout_s)
+        obs = await asyncio.wait_for(loop.run_in_executor(executor, fetch, request), timeout_s)
         outcome = GUARDIAN_CLASSIFIERS[key].classify(obs, thresholds)
     except TimeoutError:
         return PassiveResult(key, PassiveStatus.ERROR, error="TIMEOUT")
@@ -168,12 +181,18 @@ async def run_passive_probes(
     request: PassiveRequest,
     thresholds: ClassifierThresholds,
     timeout_ms: int,
+    *,
+    executor: Executor,
 ) -> tuple[PassiveResult, ...]:
-    """Fetch and classify ``keys`` in parallel. Results come back in the order of ``keys``
-    (pass KB source order: the session applies updates in that order, docs/08 §2)."""
+    """Fetch and classify ``keys`` in parallel on ``executor`` (see ``passive_executor``).
+    Results come back in the order of ``keys`` (pass KB source order: the session applies
+    updates in that order, docs/08 §2)."""
     timeout_s = timeout_ms / 1000.0
     return tuple(
         await asyncio.gather(
-            *(_run_one(k, fetchers.get(k), request, thresholds, timeout_s) for k in keys)
+            *(
+                _run_one(k, fetchers.get(k), request, thresholds, timeout_s, executor=executor)
+                for k in keys
+            )
         )
     )
