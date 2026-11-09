@@ -2,7 +2,8 @@
 
 Under KB v1, at least 70% of UPI_COLLECT_REFUND sessions must end with P(UNEXPLAINED) at or
 above the Scout routing threshold (0.35). The sessions' prior comes from the trained sensing
-model (docs/13), so the check runs once ``delphi.sensing`` exists (M3, #36). Until then it is
+model (docs/13 §4), so the check runs once ``delphi.sensing.prior`` exists (M3, #89, #36).
+Until then it is
 skipped, and the harness itself is exercised with a fixture prior.
 
 If the check fails, tune only the collect-refund telemetry and answers in ``sim/config`` (never
@@ -120,7 +121,7 @@ def test_s4_collect_refund_sessions_reach_unexplained(
     kb: KnowledgeBase, guardian: CompiledProfile
 ) -> None:
     sensing = pytest.importorskip(
-        "delphi.sensing", reason="needs the sensing model's prior: M3, #36 (docs/14 §5.4)"
+        "delphi.sensing.prior", reason="needs the sensing model's prior: M3, #36 (docs/14 §5.4)"
     )
     threshold = kb.config.engine.unexplained_routing_threshold
     results = run_collect_refund_sessions(guardian, load_response_models(), _sensing_prior(sensing))

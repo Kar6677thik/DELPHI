@@ -1,0 +1,7 @@
+# Sensing layer configuration (docs/13). Every tunable number of the sensing models lives here.
+
+anomaly:                       # docs/13 §5
+  n_estimators: 200
+  contamination: auto
+  random_state: 7
+  n_quantiles: 10001           # training-score quantiles stored in the artifact
