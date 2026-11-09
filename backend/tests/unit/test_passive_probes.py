@@ -28,6 +28,7 @@ from delphi.probes.passive import (
     SessionTelemetry,
     call_status_obs,
     device_posture_obs,
+    passive_executor,
     passive_fetchers,
     run_passive_probes,
     session_behaviour_obs,
@@ -45,6 +46,7 @@ TELEMETRY = SessionTelemetry(
     call_counterparty_known=False,
 )
 FAST_TIMEOUT_MS = 100
+EXECUTOR = passive_executor(threads=8)
 
 
 @pytest.fixture(scope="module")
@@ -74,7 +76,9 @@ class FakeAdapters:
 def _run(
     fetchers: dict[str, object], t: ClassifierThresholds, timeout_ms: int = FAST_TIMEOUT_MS
 ) -> tuple[PassiveResult, ...]:
-    return asyncio.run(run_passive_probes(list(fetchers), fetchers, REQUEST, t, timeout_ms))  # type: ignore[arg-type]
+    return asyncio.run(
+        run_passive_probes(list(fetchers), fetchers, REQUEST, t, timeout_ms, executor=EXECUTOR)
+    )  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------- telemetry mapping
@@ -139,7 +143,9 @@ def test_results_keep_the_order_of_the_keys(t: ClassifierThresholds) -> None:
     adapters = FakeAdapters()
     fetchers = passive_fetchers(adapters, adapters, adapters, adapters)
     keys = ["CALL_STATUS", "BENEFICIARY_INTEL", "DEVICE_POSTURE"]
-    results = asyncio.run(run_passive_probes(keys, fetchers, REQUEST, t, FAST_TIMEOUT_MS))
+    results = asyncio.run(
+        run_passive_probes(keys, fetchers, REQUEST, t, FAST_TIMEOUT_MS, executor=EXECUTOR)
+    )
     assert [r.source_key for r in results] == keys
 
 
@@ -157,7 +163,9 @@ def test_a_slow_adapter_times_out_without_blocking_the_others(t: ClassifierThres
 
     async def scenario() -> tuple[tuple[PassiveResult, ...], float]:
         started = time.perf_counter()
-        results = await run_passive_probes(list(fetchers), fetchers, REQUEST, t, FAST_TIMEOUT_MS)
+        results = await run_passive_probes(
+            list(fetchers), fetchers, REQUEST, t, FAST_TIMEOUT_MS, executor=EXECUTOR
+        )
         elapsed = time.perf_counter() - started
         release.set()  # let the abandoned thread finish so the event loop can close
         return results, elapsed
@@ -195,7 +203,9 @@ def test_a_probe_without_an_adapter_or_classifier_is_an_error_result(
     t: ClassifierThresholds,
 ) -> None:
     results = asyncio.run(
-        run_passive_probes(["CALL_STATUS", "NOT_A_PROBE"], {}, REQUEST, t, FAST_TIMEOUT_MS)
+        run_passive_probes(
+            ["CALL_STATUS", "NOT_A_PROBE"], {}, REQUEST, t, FAST_TIMEOUT_MS, executor=EXECUTOR
+        )
     )
     assert [(r.source_key, r.error) for r in results] == [
         ("CALL_STATUS", "NO_ADAPTER"),
@@ -205,3 +215,24 @@ def test_a_probe_without_an_adapter_or_classifier_is_an_error_result(
 
 def test_the_kb_timeout_is_300_ms(kb: KnowledgeBase) -> None:
     assert kb.config.guardrails.passive_adapter_timeout_ms == 300
+
+
+def test_adapters_run_on_the_given_pool_not_the_default_executor(t: ClassifierThresholds) -> None:
+    """A dedicated pool keeps timed-out adapters off the loop's default executor (SSE replay)."""
+    names: list[str] = []
+
+    def record(request: PassiveRequest) -> CallStatusObs:
+        names.append(threading.current_thread().name)
+        return call_status_obs(TELEMETRY)
+
+    pool = passive_executor(threads=1)
+    try:
+        results = asyncio.run(
+            run_passive_probes(
+                ["CALL_STATUS"], {"CALL_STATUS": record}, REQUEST, t, 1000, executor=pool
+            )
+        )
+    finally:
+        pool.shutdown()
+    assert results[0].status is PassiveStatus.OK
+    assert names and names[0].startswith("passive-probe")
