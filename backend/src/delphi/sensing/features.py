@@ -34,7 +34,7 @@ from datetime import UTC, datetime, timedelta
 import numpy as np
 from numpy.typing import NDArray
 
-from delphi.sensing.config import FeatureConfig
+from delphi.sensing.config import AccountFeatureConfig, FeatureConfig
 
 IntArray = NDArray[np.int64]
 
@@ -247,3 +247,118 @@ def build_payment_features(
 
 def _count(at_us: IntArray, as_of: int) -> int:
     return int(np.searchsorted(at_us, as_of, "left"))
+
+
+# --------------------------------------------------------------------------- account features
+
+ACCOUNT_FEATURES = (
+    "inbound_distinct_payers_48h",
+    "inbound_count_7d",
+    "inbound_sum_7d_log",
+    "median_dwell_minutes_7d",
+    "outbound_to_inbound_ratio_7d",
+    "account_age_days",
+    "kyc_minimal",
+    "device_shared_accounts_30d",
+    "cash_out_share_7d",
+    "complaints_linked",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class AccountHistory:
+    """What the bank knew about an account (any bank's: docs/13 §6, A-06). Each event array is
+    sorted by time; later events may be present and are ignored.
+
+    - ``inbound_*`` / ``outbound_*``: its executed credits and debits, by execution time;
+    - ``device_use_*``: its own payments (any status) by initiation time, and the device
+      fingerprint each was made from (``None`` without a device);
+    - ``shared_use_*``: payments by *other* accounts from a fingerprint this account used;
+    - ``complaint_at_us``: complaints that name the account as a counterparty.
+    """
+
+    account_id: str
+    opened_at_us: int
+    kyc_level: str
+    inbound_at_us: IntArray = field(default_factory=_empty)
+    inbound_amount_paise: IntArray = field(default_factory=_empty)
+    inbound_payer: tuple[str, ...] = ()
+    outbound_at_us: IntArray = field(default_factory=_empty)
+    outbound_amount_paise: IntArray = field(default_factory=_empty)
+    outbound_channel: tuple[str, ...] = ()
+    device_use_at_us: IntArray = field(default_factory=_empty)
+    device_use_fingerprint: tuple[str | None, ...] = ()
+    shared_use_at_us: IntArray = field(default_factory=_empty)
+    shared_use_fingerprint: tuple[str, ...] = ()
+    shared_use_account: tuple[str, ...] = ()
+    complaint_at_us: IntArray = field(default_factory=_empty)
+
+
+def build_account_features(
+    history: AccountHistory, as_of_us: int, config: AccountFeatureConfig
+) -> dict[str, float]:
+    """docs/13 §6, for one account, as of ``as_of_us``. Gap fills (also in docs/13 §6):
+    ``inbound_sum_7d_log`` is log10(1 + ₹ sum); ``median_dwell_minutes_7d`` is the median time
+    from each 7-day credit to the account's next debit, credits not yet followed by one left
+    out, and the whole window when none is; ``outbound_to_inbound_ratio_7d`` floors the inbound
+    sum at ₹100; ``cash_out_share_7d`` is the share of the 7-day debit amount cashed out;
+    ``device_shared_accounts_30d`` counts other accounts that paid, in 30 days, from a device
+    fingerprint this account paid from in those 30 days."""
+    flow_us = int(config.flow_days * _US_PER_DAY)
+    week = as_of_us - flow_us
+
+    n_in = _count(history.inbound_at_us, as_of_us)
+    in_at = history.inbound_at_us[:n_in]
+    recent_in = slice(_count(in_at, week), n_in)
+    in_7d = history.inbound_amount_paise[recent_in] / _PAISE_PER_INR
+    payers_from = _count(in_at, as_of_us - int(config.inbound_payers_hours * _US_PER_HOUR))
+    payers = set(history.inbound_payer[payers_from:n_in])
+
+    n_out = _count(history.outbound_at_us, as_of_us)
+    out_at = history.outbound_at_us[:n_out]
+    recent_out = slice(_count(out_at, week), n_out)
+    out_7d = history.outbound_amount_paise[recent_out] / _PAISE_PER_INR
+    cashed = sum(
+        amount
+        for amount, channel in zip(out_7d, history.outbound_channel[recent_out], strict=True)
+        if channel == config.cash_out_channel
+    )
+
+    dwells = []
+    for credit in in_at[recent_in]:
+        nxt = int(np.searchsorted(out_at, credit, "right"))  # the first debit after the credit
+        if nxt < n_out:
+            dwells.append((int(out_at[nxt]) - int(credit)) / _US_PER_MINUTE)
+    dwell = float(np.median(dwells)) if dwells else flow_us / _US_PER_MINUTE
+
+    share_from = as_of_us - int(config.device_share_days * _US_PER_DAY)
+    own = slice(
+        _count(history.device_use_at_us, share_from), _count(history.device_use_at_us, as_of_us)
+    )
+    prints = {f for f in history.device_use_fingerprint[own] if f is not None}
+    others = slice(
+        _count(history.shared_use_at_us, share_from), _count(history.shared_use_at_us, as_of_us)
+    )
+    sharers = {
+        account
+        for account, fingerprint in zip(
+            history.shared_use_account[others], history.shared_use_fingerprint[others], strict=True
+        )
+        if fingerprint in prints and account != history.account_id
+    }
+
+    in_sum, out_sum = float(in_7d.sum()), float(out_7d.sum())
+    return {
+        "inbound_distinct_payers_48h": float(len(payers)),
+        "inbound_count_7d": float(in_7d.size),
+        "inbound_sum_7d_log": math.log10(1 + in_sum),
+        "median_dwell_minutes_7d": dwell,
+        "outbound_to_inbound_ratio_7d": out_sum / max(in_sum, config.amount_floor_inr),
+        "account_age_days": min(
+            max(_days(as_of_us - history.opened_at_us), 0.0), config.account_age_cap_days
+        ),
+        "kyc_minimal": float(history.kyc_level == config.minimal_kyc_level),
+        "device_shared_accounts_30d": float(len(sharers)),
+        "cash_out_share_7d": cashed / out_sum if out_sum else 0.0,
+        "complaints_linked": float(_count(history.complaint_at_us, as_of_us)),
+    }

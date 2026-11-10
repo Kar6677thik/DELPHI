@@ -40,11 +40,27 @@ class FeatureConfig(BaseModel):
     mule_score_fallback: float = Field(ge=0, le=1)
 
 
+class AccountFeatureConfig(BaseModel):
+    """The account features (docs/13 §6)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    inbound_payers_hours: float = Field(gt=0)
+    flow_days: float = Field(gt=0)
+    device_share_days: float = Field(gt=0)
+    account_age_cap_days: float = Field(gt=0)
+    amount_floor_inr: float = Field(gt=0)
+    cash_out_channel: str
+    minimal_kyc_level: str
+    executed_status: str
+
+
 class SensingConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     anomaly: AnomalyConfig
     features: FeatureConfig
+    accounts: AccountFeatureConfig
 
 
 def load_sensing_config(path: Path = CONFIG_FILE) -> SensingConfig:

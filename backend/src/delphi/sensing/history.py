@@ -10,13 +10,21 @@ customer_id. Only events strictly before the payment's initiation are loaded.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+from datetime import datetime, timedelta
 from uuid import UUID
 
 import numpy as np
-from sqlalchemy import Connection, or_, select
+from sqlalchemy import Connection, any_, or_, select
 
-from delphi.sensing.config import FeatureConfig
-from delphi.sensing.features import CustomerHistory, PaymentView, to_us
+from delphi.sensing.config import AccountFeatureConfig, FeatureConfig
+from delphi.sensing.features import (
+    AccountHistory,
+    CustomerHistory,
+    IntArray,
+    PaymentView,
+    to_us,
+)
 from delphi.sim import api as bank
 
 
@@ -116,3 +124,72 @@ def load_payment_snapshot(
         limit_increase_at_us=np.array([to_us(r.at) for r in limits], dtype=np.int64),
     )
     return payment, history
+
+
+def load_account_snapshot(
+    conn: Connection, account_id: UUID, as_of: datetime, config: AccountFeatureConfig
+) -> AccountHistory:
+    """The account's history as of ``as_of`` (docs/13 §6). ``LookupError`` if it is unknown.
+    Device use is read for the last ``device_share_days`` only, which is all the feature uses."""
+    a, p, d, c = bank.accounts, bank.payments, bank.devices, bank.complaints
+    account = conn.execute(
+        select(a.c.opened_at, a.c.kyc_level).where(a.c.id == account_id)
+    ).one_or_none()
+    if account is None:
+        raise LookupError(f"no account {account_id}")
+    executed = (p.c.status == config.executed_status, p.c.executed_at < as_of)
+    inbound = conn.execute(
+        select(p.c.executed_at, p.c.amount_paise, p.c.payer_account_id)
+        .where(p.c.payee_account_id == account_id, *executed)
+        .order_by(p.c.executed_at, p.c.id)
+    ).all()
+    outbound = conn.execute(
+        select(p.c.executed_at, p.c.amount_paise, p.c.channel)
+        .where(p.c.payer_account_id == account_id, *executed)
+        .order_by(p.c.executed_at, p.c.id)
+    ).all()
+    since = as_of - timedelta(days=config.device_share_days)
+    in_window = (p.c.initiated_at >= since, p.c.initiated_at < as_of)
+    own = conn.execute(
+        select(p.c.initiated_at, d.c.fingerprint)
+        .outerjoin(d, d.c.id == p.c.device_id)
+        .where(p.c.payer_account_id == account_id, *in_window)
+        .order_by(p.c.initiated_at, p.c.id)
+    ).all()
+    prints = sorted({r.fingerprint for r in own if r.fingerprint is not None})
+    shared = (
+        conn.execute(
+            select(p.c.initiated_at, d.c.fingerprint, p.c.payer_account_id)
+            .join(d, d.c.id == p.c.device_id)
+            .where(d.c.fingerprint.in_(prints), p.c.payer_account_id != account_id, *in_window)
+            .order_by(p.c.initiated_at, p.c.id)
+        ).all()
+        if prints
+        else []
+    )
+    complaints = conn.execute(
+        select(c.c.reported_at)
+        .where(any_(c.c.counterparty_account_ids) == account_id, c.c.reported_at < as_of)
+        .order_by(c.c.reported_at)
+    ).all()
+    return AccountHistory(
+        account_id=str(account_id),
+        opened_at_us=to_us(account.opened_at),
+        kyc_level=account.kyc_level,
+        inbound_at_us=_times(r.executed_at for r in inbound),
+        inbound_amount_paise=np.array([r.amount_paise for r in inbound], dtype=np.int64),
+        inbound_payer=tuple(str(r.payer_account_id) for r in inbound),
+        outbound_at_us=_times(r.executed_at for r in outbound),
+        outbound_amount_paise=np.array([r.amount_paise for r in outbound], dtype=np.int64),
+        outbound_channel=tuple(r.channel for r in outbound),
+        device_use_at_us=_times(r.initiated_at for r in own),
+        device_use_fingerprint=tuple(r.fingerprint for r in own),
+        shared_use_at_us=_times(r.initiated_at for r in shared),
+        shared_use_fingerprint=tuple(r.fingerprint for r in shared),
+        shared_use_account=tuple(str(r.payer_account_id) for r in shared),
+        complaint_at_us=_times(r.reported_at for r in complaints),
+    )
+
+
+def _times(times: Iterable[datetime]) -> IntArray:
+    return np.array([to_us(t) for t in times], dtype=np.int64)

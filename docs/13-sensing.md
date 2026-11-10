@@ -140,7 +140,18 @@ does not intersect `PROBE_INPUT_FEATURES`.
 - Account features: `inbound_distinct_payers_48h`, `inbound_count_7d`, `inbound_sum_7d_log`,
   `median_dwell_minutes_7d`, `outbound_to_inbound_ratio_7d`, `account_age_days`,
   `kyc_minimal`, `device_shared_accounts_30d`, `cash_out_share_7d`, `complaints_linked`
-  (as of the time).
+  (as of the time). They come from `build_account_features` over an `AccountHistory`, through
+  the same online and offline paths as the payment features (#87; migration 0006 indexes
+  complaints by counterparty and devices by fingerprint). Where this is silent:
+  - flows (inbound, outbound, dwell, cash-out share) count *executed* payments, by execution
+    time; `inbound_sum_7d_log` is log10(1 + ₹ sum);
+  - `median_dwell_minutes_7d`: the median time from each 7-day credit to the account's next
+    debit; credits not yet followed by one are left out, and with none it is the whole window;
+  - `outbound_to_inbound_ratio_7d` floors the inbound sum at ₹100; `cash_out_share_7d` is the
+    share of the 7-day debit amount cashed out;
+  - `device_shared_accounts_30d` counts other accounts that paid, in the last 30 days, from a
+    device fingerprint this account paid from in those 30 days;
+  - `complaints_linked` counts complaints that name the account as a counterparty.
 - LightGBM binary (num_leaves 15, n_estimators 300, seed 7); isotonic calibration on validation.
 - Labels: accounts labelled MULE (registry listing, investigator disposition, complaint) vs
   accounts with ≥ 30 days of activity and no fraud label.

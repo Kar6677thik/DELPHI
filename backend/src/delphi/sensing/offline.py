@@ -18,11 +18,14 @@ import numpy as np
 import pandas as pd
 from sqlalchemy import Connection, Select, select
 
-from delphi.sensing.config import FeatureConfig
+from delphi.sensing.config import AccountFeatureConfig, FeatureConfig
 from delphi.sensing.features import (
+    ACCOUNT_FEATURES,
+    AccountHistory,
     CustomerHistory,
     IntArray,
     PaymentView,
+    build_account_features,
     build_payment_features,
     payment_feature_names,
 )
@@ -76,6 +79,8 @@ def _frame(conn: Connection, query: Select[Any]) -> pd.DataFrame:
     for column in frame.columns:  # ids as strings, as the online path keys them
         if frame[column].map(lambda v: isinstance(v, UUID)).any():
             frame[column] = frame[column].map(lambda v: str(v) if isinstance(v, UUID) else None)
+        elif frame[column].map(lambda v: isinstance(v, list)).any():  # uuid[] columns
+            frame[column] = frame[column].map(lambda v: tuple(str(i) for i in v or ()))
     return frame
 
 
@@ -91,13 +96,14 @@ class BankFrames:
     devices: pd.DataFrame
     logins: pd.DataFrame
     crm_events: pd.DataFrame
+    complaints: pd.DataFrame
 
 
 def load_bank_frames(conn: Connection) -> BankFrames:
     c, a, p, t = bank.customers, bank.accounts, bank.payments, bank.session_telemetry
     return BankFrames(
         customers=_frame(conn, select(c.c.id, c.c.age, c.c.is_vulnerable)),
-        accounts=_frame(conn, select(a.c.id, a.c.customer_id, a.c.opened_at)),
+        accounts=_frame(conn, select(a.c.id, a.c.customer_id, a.c.opened_at, a.c.kyc_level)),
         payments=_frame(
             conn,
             select(
@@ -108,6 +114,8 @@ def load_bank_frames(conn: Connection) -> BankFrames:
                 p.c.channel,
                 p.c.initiated_at,
                 p.c.device_id,
+                p.c.status,
+                p.c.executed_at,
             ),
         ),
         telemetry=_frame(
@@ -119,7 +127,12 @@ def load_bank_frames(conn: Connection) -> BankFrames:
         ),
         devices=_frame(
             conn,
-            select(bank.devices.c.id, bank.devices.c.customer_id, bank.devices.c.first_seen_at),
+            select(
+                bank.devices.c.id,
+                bank.devices.c.customer_id,
+                bank.devices.c.first_seen_at,
+                bank.devices.c.fingerprint,
+            ),
         ),
         logins=_frame(
             conn,
@@ -133,6 +146,10 @@ def load_bank_frames(conn: Connection) -> BankFrames:
         crm_events=_frame(
             conn,
             select(bank.crm_events.c.customer_id, bank.crm_events.c.type, bank.crm_events.c.at),
+        ),
+        complaints=_frame(
+            conn,
+            select(bank.complaints.c.reported_at, bank.complaints.c.counterparty_account_ids),
         ),
     )
 
@@ -263,3 +280,80 @@ def _ints(frame: pd.DataFrame | None, column: str) -> IntArray:
 def _with_device(history: CustomerHistory, device: str, first_seen_us: int) -> CustomerHistory:
     seen = {**history.device_first_seen_us, device: first_seen_us}
     return replace(history, device_first_seen_us=seen)
+
+
+class OfflineAccountHistories:
+    """Every account's snapshot (docs/13 §6), from the same frames, for the mule scorer."""
+
+    def __init__(self, frames: BankFrames, config: AccountFeatureConfig) -> None:
+        self.config = config
+        accounts = frames.accounts
+        opened = _us(accounts["opened_at"]).tolist()
+        self._accounts: dict[str, tuple[int, str]] = {
+            str(r.id): (t, str(r.kyc_level))
+            for r, t in zip(accounts.itertuples(index=False), opened, strict=True)
+        }
+        payments = frames.payments
+        fingerprint_of = dict(zip(frames.devices["id"], frames.devices["fingerprint"], strict=True))
+        executed = payments[payments["status"] == config.executed_status]
+        executed = executed.assign(at_us=_us(executed["executed_at"])).sort_values(
+            ["at_us", "id"], kind="stable"
+        )
+        self._inbound = _by(executed, "payee_account_id")
+        self._outbound = _by(executed, "payer_account_id")
+        uses = payments.assign(
+            at_us=_us(payments["initiated_at"]),
+            fingerprint=payments["device_id"].map(fingerprint_of),
+        ).sort_values(["at_us", "id"], kind="stable")
+        self._uses = _by(uses, "payer_account_id")
+        self._uses_by_print = _by(uses[uses["fingerprint"].notna()], "fingerprint")
+        complaints = frames.complaints.assign(at_us=_us(frames.complaints["reported_at"]))
+        named = complaints.explode("counterparty_account_ids").dropna(
+            subset=["counterparty_account_ids"]
+        )
+        self._complaints = _by(named.sort_values("at_us"), "counterparty_account_ids")
+
+    def snapshot(self, account_id: str) -> AccountHistory:
+        if account_id not in self._accounts:
+            raise LookupError(f"no account {account_id}")
+        opened_us, kyc = self._accounts[account_id]
+        inbound = self._inbound.get(account_id)
+        outbound = self._outbound.get(account_id)
+        own = self._uses.get(account_id)
+        prints = (
+            sorted({f for f in own["fingerprint"] if isinstance(f, str)}) if own is not None else []
+        )
+        shared = [self._uses_by_print[f] for f in prints if f in self._uses_by_print]
+        others = pd.concat(shared).sort_values(["at_us", "id"], kind="stable") if shared else None
+        if others is not None:
+            others = others[others["payer_account_id"] != account_id]
+        complaints = self._complaints.get(account_id)
+        return AccountHistory(
+            account_id=account_id,
+            opened_at_us=opened_us,
+            kyc_level=kyc,
+            inbound_at_us=_ints(inbound, "at_us"),
+            inbound_amount_paise=_ints(inbound, "amount_paise"),
+            inbound_payer=_strs(inbound, "payer_account_id"),
+            outbound_at_us=_ints(outbound, "at_us"),
+            outbound_amount_paise=_ints(outbound, "amount_paise"),
+            outbound_channel=_strs(outbound, "channel"),
+            device_use_at_us=_ints(own, "at_us"),
+            device_use_fingerprint=(
+                tuple(_optional_str(f) for f in own["fingerprint"]) if own is not None else ()
+            ),
+            shared_use_at_us=_ints(others, "at_us"),
+            shared_use_fingerprint=_strs(others, "fingerprint"),
+            shared_use_account=_strs(others, "payer_account_id"),
+            complaint_at_us=_ints(complaints, "at_us"),
+        )
+
+    def features(self, account_ids: Iterable[str], as_of_us: int) -> pd.DataFrame:
+        """One row of account features per account, as of one time (``ACCOUNT_FEATURES``)."""
+        ids = list(account_ids)
+        rows = [build_account_features(self.snapshot(i), as_of_us, self.config) for i in ids]
+        return pd.DataFrame(rows, index=pd.Index(ids, name="account_id"))[list(ACCOUNT_FEATURES)]
+
+
+def _strs(frame: pd.DataFrame | None, column: str) -> tuple[str, ...]:
+    return tuple(str(v) for v in frame[column]) if frame is not None else ()
