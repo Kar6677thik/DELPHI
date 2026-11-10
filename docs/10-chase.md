@@ -40,6 +40,24 @@ leakage; hop depth per account (first-hop = 1). Integer arithmetic: compute in f
 each τ_out to paise with banker's rounding. The conservation check (Σ T_now + leakage + pruned =
 initial taint, ± hops × 1 paise) is a property test.
 
+**Implementation** (`delphi.chase.tracer`, a pure function; `delphi.chase.ledger` loads its inputs
+through the `bank` tables `delphi.sim.api` re-exports, up to `now − visibility_lag`, never
+`sim_truth`). Gaps the rule above leaves open, filled as follows:
+
+- **Balances come from the ledger:** B before a debit is `balance_after_paise + x`, so an account
+  first reached mid-way is traced with its real balance; nothing is replayed from t0.
+- **A payment's debit is applied before its credit**, whatever their entry ids (a payment's
+  entries are grouped at its first entry's time), so taint never arrives before it has left.
+- **Taint moves in whole paise:** τ_out is rounded once, on the debit, and the payee is credited
+  exactly that amount, so conservation holds **exactly** (gap 0, not ± hops paise); the property
+  test asserts 0. τ_out is capped at T.
+- **Pruning** happens whenever an account's T changes and lands in (0, min_trace_paise): what it
+  held is added to `pruned` and the account is dropped. Its later debits carry no taint.
+- **Cash-out:** the cash-out payee is not credited with taint, and the flow is recorded with no
+  payee. A debit whose payment has no visible credit counts as leakage too.
+- **Sources:** only EXECUTED source payments carry money. A source whose credit falls outside the
+  visible ledger still taints its payee with the full amount (depth 1).
+
 ## 4. Candidate scoring
 
 For every account with T_now ≥ ₹500 (the **freeze candidates**):
