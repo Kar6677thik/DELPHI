@@ -5,3 +5,20 @@ anomaly:                       # docs/13 §5
   contamination: auto
   random_state: 7
   n_quantiles: 10001           # training-score quantiles stored in the artifact
+
+features:                      # docs/13 §2–3, the payment features
+  local_utc_offset_minutes: 330  # IST, which has no daylight saving (docs/14 §2)
+  amount_floor_inr: 100        # amount_z_30d's std floor and sum_24h_ratio_30d's mean floor
+  payee_age_cap_days: 365
+  payee_account_age_cap_days: 3650
+  device_age_cap_days: 365
+  new_device_days: 7           # is_new_device; the same as the KB's DEVICE_POSTURE threshold
+  new_payee_hours: 24          # is_new_payee (docs/13 §3, amended)
+  baseline_days: 30            # the 30-day behavioural baseline window
+  # channel_* one-hot, in this order: the channels the bank's payments use.
+  channels: [IMPS, NEFT, UPI_PUSH, UPI_COLLECT_APPROVAL, CASH_OUT]
+  # Gap: the bank records no limit changes yet, so limit_change_24h stays 0 until it does.
+  limit_increase_event_types: []
+  # docs/13 §6: a payee account with no mule score yet is scored at this until the mule
+  # scorer (#91) fills bank.account_scores.
+  mule_score_fallback: 0.10
