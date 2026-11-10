@@ -65,17 +65,22 @@ this repo, so don't depend on the wiki.
 - **Never** commit to `main`, push to `main`, force-push a branch that others use, rewrite
   published history, merge PRs, approve PRs, or change repository settings. `main` is protected;
   only the owner merges.
-- **Merging for the owner (the only exception).** If `gh api user --jq .login` is
-  `Kar6677thik` and the owner asks you, in this session, to merge a PR (for example "review
-  and merge"), you may run `gh pr merge <N> --squash --admin`, but only when all of these hold:
+- **Approving and merging for the owner (the only exception).** If `gh api user --jq .login`
+  is `Kar6677thik` and the owner asks you, in this session, to merge a PR (for example "review
+  and merge"), check that all of these hold:
   - the PR is not a draft;
   - every required check has passed (`gh pr checks <N>`);
-  - you reviewed the diff against its issue and the spec, and posted your review comment first;
+  - you reviewed the diff against its issue and the spec, and found nothing blocking;
   - no commit and not the PR description carries AI attribution (the `commit-policy` check).
 
-  If any of these fails, don't merge: say why. `--admin` stands in for the owner's approval,
-  because agents never approve PRs. Everything else in this list still applies to the owner's
-  agent too. Collaborators' agents never merge.
+  If they all hold, approve with your review as the body
+  (`gh pr review <N> --approve --body-file <review>`), then `gh pr merge <N> --squash`. The
+  approval is the owner's, given at their request. It satisfies branch protection and
+  CODEOWNERS, so no bypass is needed. Use `--admin` only for the owner's own PRs, which GitHub
+  won't let their author approve. If any condition fails, post a comment review
+  (`gh pr review <N> --comment`) saying what's missing, and don't approve or merge.
+  Everything else in this list still applies to the owner's agent too. Collaborators' agents
+  never approve or merge.
 - Enable the hooks once per clone: `git config core.hooksPath .githooks`.
 - Commit messages follow Conventional Commits: `feat(sim): …`, `fix(engine): …`, `test(…)`,
   `docs(spec): …`, `chore: …`. Imperative mood, subject ≤ 72 characters.
