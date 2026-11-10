@@ -27,9 +27,9 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from delphi.platform.clock import Clock
+from delphi.platform.locks import AUDIT_LOCK_KEY
 from delphi.platform.tables import audit_log
 
-AUDIT_LOCK_KEY = 42  # docs/17 §4
 GENESIS = bytes(32)
 
 

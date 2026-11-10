@@ -28,13 +28,13 @@ from delphi.platform.errors import (
     VersionConflictError,
 )
 from delphi.platform.ids import uuid7
+from delphi.platform.locks import BOOTSTRAP_LOCK_KEY
 from delphi.platform.logging import get_logger
 from delphi.platform.tables import users
 
 log = get_logger(__name__)
 
 MIN_PASSWORD_LENGTH = 12  # docs/19 §2
-BOOTSTRAP_LOCK_KEY = 44  # pg_advisory_xact_lock key for the bootstrap admin (42 audit, 43 outbox)
 
 _hasher = PasswordHasher()  # argon2-cffi defaults are the docs/19 §2 parameters
 # Verifying against this when the username is unknown costs the same as a real check, so the

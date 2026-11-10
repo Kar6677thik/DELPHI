@@ -232,7 +232,13 @@ def _seed(settings: Settings, args: argparse.Namespace) -> int:
         return 1
     finally:
         platform.close()
-    state = "queued" if queued.created else "already queued"
+    state = (
+        "queued"
+        if queued.created
+        else "queued again (it had failed)"
+        if queued.requeued
+        else "already queued"
+    )
     print(f"GENERATE_DATASET job {queued.job_id} {state} ({args.profile}, seed {seed})")
     return 0
 

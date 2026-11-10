@@ -232,8 +232,10 @@ definitions; only `delphi.sim` and `delphi.evaluation` may import it (doc 04 §4
 
 `hash = SHA-256(prev_hash || canonical_json({at, actor_type, actor_id, action, entity_type,
 entity_id, payload}))`, and the genesis `prev_hash` is 32 zero bytes. Writes take a transaction
-advisory lock (`pg_advisory_xact_lock(42)`), so the chain is serial. Other advisory lock keys:
-43 for outbox publishing (doc 04 §5.5), 44 for the bootstrap admin. Verifying a window checks
+advisory lock (`pg_advisory_xact_lock(42)`), so the chain is serial. Every advisory lock key
+lives in `delphi.platform.locks`, and a test checks that they are distinct (#78): 42 the audit
+chain, 43 outbox publishing (doc 04 §5.5), 44 the bootstrap admin, 45 dataset requests, 46
+dataset writes. Verifying a window checks
 that its first entry links to the entry just before the window (or to the genesis hash), so a
 deleted or edited earlier entry is caught too. `GET
 /admin/audit/verify?from=&to=` recomputes the chain. The DD pack verifies the entries for its

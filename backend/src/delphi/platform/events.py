@@ -32,14 +32,13 @@ import psycopg
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
+from delphi.platform.locks import OUTBOX_LOCK_KEY
 from delphi.platform.logging import get_logger
 from delphi.platform.tables import outbox_events
 
 log = get_logger(__name__)
 
 CHANNEL = "delphi_events"
-# pg_advisory_xact_lock key that serialises publishers (42 is the audit chain's, docs/17 §4).
-OUTBOX_LOCK_KEY = 43
 # The most rows one read takes from the outbox; the hub reads again until it has caught up.
 FETCH_BATCH = 500
 

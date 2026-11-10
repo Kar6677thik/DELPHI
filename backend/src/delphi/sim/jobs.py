@@ -24,6 +24,7 @@ from delphi.kb.model import KnowledgeBase
 from delphi.platform.clock import Clock
 from delphi.platform.ids import uuid7
 from delphi.platform.jobs import JobContext, JobRegistry, JobType
+from delphi.platform.locks import DATASET_WRITE_LOCK_KEY
 from delphi.sim import bank
 from delphi.sim.catalog import READY, datasets
 from delphi.sim.dataset import generate_dataset
@@ -34,8 +35,6 @@ from delphi.sim.stats import StatsReport, dataset_stats
 from delphi.sim.truth import persona_manifests
 from delphi.sim.writer import write_dataset
 
-# pg_advisory_xact_lock key that serialises dataset writes (42: the audit chain, 43: the outbox).
-DATASET_WRITE_LOCK_KEY = 44
 # Progress reported as the job goes (docs/16 §2): started, generated, written.
 PROGRESS_STARTED = 0.05
 PROGRESS_GENERATED = 0.6
