@@ -7,6 +7,7 @@ dependencies = [
   "alembic>=1.14",
   "argon2-cffi>=23.1",
   "fastapi>=0.115",
+  "lightgbm>=4.5",
   "numpy>=2.1",
   "pandas>=2.2",
   "prometheus-client>=0.21",
@@ -85,8 +86,8 @@ module = ["delphi.engine.*", "delphi.kb.*"]
 strict = true
 
 [[tool.mypy.overrides]]
-# scikit-learn and joblib ship no type information (docs/13 sensing models)
-module = ["sklearn.*", "joblib.*"]
+# scikit-learn, joblib and scipy ship no type information (docs/13 sensing models)
+module = ["sklearn.*", "joblib.*", "scipy.*"]
 ignore_missing_imports = true
 
 # ---------------------------------------------------------------- coverage

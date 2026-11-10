@@ -128,6 +128,30 @@ does not intersect `PROBE_INPUT_FEATURES`.
     The demo must always have a model.
 - The evaluation's own metrics (doc 22) use `sim_truth`. The gate does not.
 
+**Implementation** (`delphi.sensing.prior`, settings in `sensing/config.yaml` `prior:`). Like the
+anomaly detector, the module trains and scores; choosing the rows from the database and storing
+the artifact belong to `TRAIN_SENSING` (#88). Gaps the text above leaves open, filled as follows:
+
+- **Observed labels:** `observed_labels` keeps the labels known by the cutoff, the doc 05 §8
+  precedence choosing between several. Labels that are not model classes (`FRAUD_OTHER`, an
+  unpromoted typology) are left out, like unlabelled payments.
+- **Split:** the matured window is whole days from the history start; validation and test each
+  get ⌊days/6⌋ and train the rest (`split_parts`).
+- **Class weights:** `n / (K_present · n_c)` per training row, over the classes present in
+  train. A class with no training rows (on `test`, MULE: mule accounts are labelled through the
+  registry, and their own payments mature as GENUINE, doc 14 §7) gets no weight.
+- **Early stopping:** on the validation split's unweighted multiclass log loss, patience 50
+  rounds (`early_stopping_rounds`), keeping the best iteration. Training is deterministic
+  (LightGBM `deterministic`, one thread, `seed`).
+- **Temperature:** fitted by bounded search over log T in `temperature_bounds`
+  ([0.05, 20]). With no validation rows, T = 1 and there is no early stopping.
+- **Metrics:** a class with no positives (or no negatives) in the test split has AUC `null`,
+  and macro AUC averages the classes that have one. An undefined macro AUC, or no test split,
+  fails the gate where it is enforced.
+- **Contributions:** LightGBM `pred_contrib` for one class, divided by T (so they add up, with
+  the bias, to that class's calibrated logit). By default, for the most probable class; the top
+  `top_contributions` by absolute value, ties in feature order.
+
 ## 5. Anomaly detector
 
 - scikit-learn `IsolationForest(n_estimators=200, contamination="auto", random_state=7)` on the
