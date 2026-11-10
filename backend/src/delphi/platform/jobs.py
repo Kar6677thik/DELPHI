@@ -129,6 +129,7 @@ class Job:
 class Enqueued:
     job_id: UUID
     created: bool  # False: a job with this idempotency key already existed
+    requeued: bool = False  # that job had FAILED and is QUEUED again (requeue_failed)
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,6 +181,27 @@ def enqueue(
         select(jobs.c.id).where(jobs.c.idempotency_key == idempotency_key)
     ).scalar_one()
     return Enqueued(existing, created=False)
+
+
+def requeue_failed(session: Session, clock: Clock, job_id: UUID) -> bool:
+    """In the caller's transaction: a FAILED job goes back to QUEUED with a fresh set of
+    attempts, due now. False if the job is not FAILED (or does not exist)."""
+    done = session.execute(
+        update(jobs)
+        .where(jobs.c.id == job_id, jobs.c.status == JobStatus.FAILED.value)
+        .values(
+            status=JobStatus.QUEUED.value,
+            attempts=0,
+            run_after=clock.now(),
+            progress=0.0,
+            error=None,
+            finished_at=None,
+        )
+        .returning(jobs.c.id)
+    ).one_or_none()
+    if done is not None:
+        _announce(session, job_id, JobStatus.QUEUED.value, 0.0)
+    return done is not None
 
 
 @dataclass(slots=True)
@@ -319,24 +341,8 @@ class JobQueue:
 
     def retry(self, job_id: UUID) -> bool:
         """FAILED → QUEUED with a fresh set of attempts (POST /jobs/{id}/retry, docs/16 §2)."""
-        now = self.clock.now()
         with self.sessions.begin() as session:
-            done = session.execute(
-                update(jobs)
-                .where(jobs.c.id == job_id, jobs.c.status == JobStatus.FAILED.value)
-                .values(
-                    status=JobStatus.QUEUED.value,
-                    attempts=0,
-                    run_after=now,
-                    progress=0.0,
-                    error=None,
-                    finished_at=None,
-                )
-                .returning(jobs.c.id)
-            ).one_or_none()
-            if done is not None:
-                _announce(session, job_id, JobStatus.QUEUED.value, 0.0)
-        return done is not None
+            return requeue_failed(session, self.clock, job_id)
 
     def _owned_update(self, job: Job, worker_id: str, values: Mapping[str, Any]) -> bool:
         with self.sessions.begin() as session:

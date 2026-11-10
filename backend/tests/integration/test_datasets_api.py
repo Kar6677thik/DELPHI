@@ -225,3 +225,37 @@ def test_a_profile_turned_off_is_refused_everywhere(
     ctx = SimpleNamespace(job=SimpleNamespace(params={"profile": "eval"}, id=uuid4()))
     with pytest.raises(ValueError, match="turned off"):
         job(ctx)  # type: ignore[arg-type]
+
+
+def test_seed_queues_a_failed_seed_job_again(
+    env: Env, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """#78: the seed key is stable, so a seed job that FAILED would otherwise stay failed on
+    every later deploy. `delphi seed` gives it a fresh set of attempts instead."""
+    assert _seed(env, monkeypatch, "--if-empty", "--profile", "test") == 0
+    [job] = env.jobs()
+    with env.platform.sessions.begin() as s:
+        s.execute(
+            jobs.update()
+            .where(jobs.c.id == job["id"])
+            .values(status="FAILED", attempts=3, error="boom", finished_at=T0)
+        )
+    capsys.readouterr()
+    assert _seed(env, monkeypatch, "--if-empty", "--profile", "test") == 0
+    assert "queued again (it had failed)" in capsys.readouterr().out
+    [again] = env.jobs()
+    assert again["id"] == job["id"]
+    assert (again["status"], again["attempts"], again["error"]) == ("QUEUED", 0, None)
+    assert again["finished_at"] is None
+
+
+def test_a_failed_seed_job_is_not_revived_once_a_dataset_is_there(
+    env: Env, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert _seed(env, monkeypatch, "--profile", "test") == 0
+    [job] = env.jobs()
+    with env.platform.sessions.begin() as s:
+        s.execute(jobs.update().where(jobs.c.id == job["id"]).values(status="FAILED"))
+    env.add_dataset()
+    assert _seed(env, monkeypatch, "--profile", "test") == 1
+    assert "already holds a dataset" in capsys.readouterr().err

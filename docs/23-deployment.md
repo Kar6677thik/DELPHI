@@ -251,9 +251,11 @@ same k3s release, including the exfiltration case, which is now denied.
   from the image's `kb/` if no KB version exists (idempotent, from #15). So `/ready` can pass on
   the very first deploy.
 - **`delphi-seed-<sha7>`** runs `delphi seed --if-empty --profile demo`. It is idempotent: the
-  job key names the profile and seed, and `--if-empty` does nothing once a dataset exists. It
-  enqueues `GENERATE_DATASET` (and `TRAIN_SENSING` once sensing exists, M3) and exits; the
-  worker does the work.
+  job key names the profile and seed, and `--if-empty` does nothing once a dataset exists. If
+  that seed job had FAILED, it is queued again with a fresh set of attempts (as
+  `POST /jobs/{id}/retry` does), so the next deploy retries it (#78). It enqueues
+  `GENERATE_DATASET` (and `TRAIN_SENSING` once sensing exists, M3) and exits; the worker does
+  the work.
 
 **First deploy order:**
 1. migrate (schema + KB v1);
