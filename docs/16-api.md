@@ -22,7 +22,7 @@ documents its error body as a `default` response of `application/problem+json` w
 | Concurrency | Mutable aggregates return `ETag: "<version>"`. Mutations need `If-Match`; a mismatch returns `412 VERSION_CONFLICT` |
 | Errors | RFC 9457 `application/problem+json`: `{type, title, status, detail, code, instance, request_id, errors?: [{path, code, message}]}` |
 | Request id | `X-Request-Id` is accepted or generated, and echoed in the response and the logs |
-| Rate limits | Login: 5 failures / 15 min per (username, IP) → `429 RATE_LIMITED`. Global: 20 req/s per session, token bucket with burst 40 |
+| Rate limits | Login: 5 failures / 15 min per (username, IP) → `429 RATE_LIMITED`. Global: 20 req/s per session, token bucket with burst 40 (`DELPHI_RATE_LIMIT_PER_S`, `DELPHI_RATE_LIMIT_BURST`) → `429 RATE_LIMITED` with `Retry-After`. Every `/api/` request takes a token except `/health` and `/ready`; a caller without a session is keyed by its client address. The SSE stream is one request. In process memory, like the login throttle (one api replica) |
 
 ### Error codes (stable)
 

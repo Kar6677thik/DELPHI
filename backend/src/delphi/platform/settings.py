@@ -88,6 +88,9 @@ class Settings(BaseSettings):
     session_absolute_days: int = Field(default=7, ge=1, le=90)
     login_max_failures: int = Field(default=5, ge=1, le=100)
     login_window_min: int = Field(default=15, ge=1, le=24 * 60)
+    # The global API rate limit: a token bucket per session (or address), docs/16 §1.
+    rate_limit_per_s: float = Field(default=20.0, gt=0, le=10_000)
+    rate_limit_burst: int = Field(default=40, ge=1, le=100_000)
     # The public origin (scheme://host) mutating requests must come from (CSRF, docs/19 §4).
     # Unset in development: the request's own origin is used.
     public_origin: str | None = None
