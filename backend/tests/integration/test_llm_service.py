@@ -113,12 +113,13 @@ def test_anything_but_a_valid_answer_falls_back_to_the_template(
     out = env.service(provider).generate(Purpose.EVIDENCE_NARRATIVE, FAN_IN)
     assert out.source is NarrativeSource.TEMPLATE
     assert isinstance(out.parsed, EvidenceNarrative) and "[ev-inbound_fan_in]" in out.parsed.finding
-    first, second = env.calls()
-    assert (first["provider"], first["status"]) == ("fake", status)
-    assert first["validation"]["passed"] is False
-    assert (second["provider"], second["status"]) == ("template", "OK")
+    # Both attempts share the fixed clock's instant, so find each by its provider, not by order.
+    calls = {c["provider"]: c for c in env.calls()}
+    assert set(calls) == {"fake", "template"}
+    assert calls["fake"]["status"] == status and calls["fake"]["validation"]["passed"] is False
+    assert calls["template"]["status"] == "OK"
     if status == "ERROR":
-        assert first["validation"]["error"] == "TimeoutError"
+        assert calls["fake"]["validation"]["error"] == "TimeoutError"
 
 
 def test_the_daily_budget_stops_model_calls_until_midnight(env: Env) -> None:
@@ -128,7 +129,13 @@ def test_the_daily_budget_stops_model_calls_until_midnight(env: Env) -> None:
     assert service.generate(Purpose.EVIDENCE_NARRATIVE, FAN_IN).source is NarrativeSource.LLM
     blocked = service.generate(Purpose.EVIDENCE_NARRATIVE, FAN_IN)  # 1,800 ≥ 1,000
     assert blocked.source is NarrativeSource.TEMPLATE
-    assert [c["status"] for c in env.calls()][-2:] == ["BUDGET_EXCEEDED", "OK"]
+    statuses = sorted((c["provider"], c["status"]) for c in env.calls())
+    assert statuses == [
+        ("fake", "BUDGET_EXCEEDED"),
+        ("fake", "OK"),
+        ("fake", "OK"),
+        ("template", "OK"),
+    ]
     env.clock.advance(timedelta(hours=12))  # past 00:00 UTC
     assert service.spent_today() == 0
     assert service.generate(Purpose.EVIDENCE_NARRATIVE, FAN_IN).source is NarrativeSource.LLM
