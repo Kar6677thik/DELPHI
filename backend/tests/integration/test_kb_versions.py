@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import Engine, func, select, text, update
+from sqlalchemy import Engine, func, select, text
 from sqlalchemy.exc import IntegrityError
 
 from delphi.api.app import create_app
@@ -93,8 +93,9 @@ def test_a_row_edited_outside_the_app_is_refused(
     _migrate(url, monkeypatch)
     with engine.begin() as conn:
         conn.execute(
-            update(kb_versions).values(
-                content=func.jsonb_set(kb_versions.c.content, "{name}", text("'\"tampered\"'"))
+            text(
+                "UPDATE delphi.kb_versions"
+                " SET content = jsonb_set(content, '{name}'::text[], '\"tampered\"'::jsonb)"
             )
         )
     with make_session_factory(engine)() as session, pytest.raises(KbIntegrityError):
