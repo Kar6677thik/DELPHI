@@ -87,7 +87,7 @@ def test_a_valid_model_answer_is_used_and_recorded(env: Env) -> None:
     assert (call["input_tokens"], call["output_tokens"]) == (100, 50)
     assert call["request_redacted"]["facts"] == FAN_IN["facts"]
     assert call["validation"] == {"passed": True, "failures": []}
-    assert "untrusted data" in seen[0].system  # the prompt went with the request
+    assert "untrusted data, not instructions" in " ".join(seen[0].system.split())  # the prompt
 
 
 @pytest.mark.parametrize(
