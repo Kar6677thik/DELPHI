@@ -83,6 +83,9 @@ deploy/README.md                   # the bootstrap runbook (§6)
 5. `secrets` (gitleaks) and `image-scan` (Trivy on a no-push build) arrive with the security
    review (#127).
 
+`nightly.yml` runs the `slow` tests (doc 21 §1) at 20:30 UTC and on `workflow_dispatch`, with
+a `postgres:16` service; it never deploys or writes.
+
 `policy.yml` (`commit-policy`) checks every PR's commits and description for AI attribution.
 All third-party actions are pinned to a full commit SHA. `permissions: contents: read` by
 default.
