@@ -1,0 +1,1 @@
+{% if f.complaints == 0 %}No complaint names {{ subject }} as of {{ as_of | when }} [{{ record_id }}].{% else %}{{ f.complaints }} complaint{{ "s" if f.complaints != 1 }} name{{ "s" if f.complaints == 1 }} {{ subject }} as a counterparty, as of {{ as_of | when }} [{{ record_id }}].{% endif %}

@@ -301,6 +301,10 @@ to start, exit code 2, naming the variable, if one is missing or invalid.
 | `DELPHI_SESSION_IDLE_H` / `DELPHI_SESSION_ABSOLUTE_DAYS` | `12` / `7` | api | doc 19 §2 |
 | `DELPHI_LOGIN_MAX_FAILURES` / `DELPHI_LOGIN_WINDOW_MIN` | `5` / `15` | api | doc 16 §1 |
 | `DELPHI_DATASET_PROFILES` | `test,demo,eval` | api, worker | ConfigMap: `test,demo` on the home server (the `eval` dataset needs about 3.8 GiB; §4). `POST /admin/datasets`, `delphi seed` and `GENERATE_DATASET` refuse other profiles |
+| `DELPHI_RATE_LIMIT_PER_S` / `DELPHI_RATE_LIMIT_BURST` | `20` / `40` | api | doc 16 §1 |
+| `DELPHI_LLM_PROVIDER` | `template` | api, worker | `anthropic` or `template` (the kill switch, doc 15 §3). With `template` no model is called |
+| `DELPHI_LLM_MODEL` / `DELPHI_LLM_DAILY_TOKEN_BUDGET` | `claude-opus-5-5` / `2000000` | api, worker | doc 15 §3. Above the budget, calls fall back to the template until 00:00 UTC |
+| `ANTHROPIC_API_KEY` | unset | api, worker | Secret `delphi-app` (#3). Never logged |
 | `DELPHI_BOOTSTRAP_ADMIN_USERNAME` / `DELPHI_BOOTSTRAP_ADMIN_PASSWORD` | unset | api | Secret `delphi-app`. Required only while `users` is empty: the api then creates this ADMIN, or exits with code 2 if they are unset (doc 19 §2) |
 
 Later milestones add their settings to this table (`DELPHI_LLM_*`, `DELPHI_TIME_MODE`) together
