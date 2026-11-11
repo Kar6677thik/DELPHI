@@ -4,17 +4,20 @@ asking the worker for a dataset (docs/16 §2 `POST /admin/datasets`, docs/23 §4
 
 Feature modules read the simulated bank through these re-exported `bank` tables (the probes'
 sim adapters, sensing, the Navigator evidence rules), so the schema is defined once, in
-`delphi.sim.bank`. They are **read-only** for everyone but the simulator. Nothing from
+`delphi.sim.bank`. They are **read-only** for everyone but the simulator, except
+`account_scores`, which the mule scorer writes (docs/13 §6). Nothing from
 `sim_truth` is exported: this module reads no ground truth, so the api may import it.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Literal, get_args
 from uuid import UUID
 
-from sqlalchemy import exists, func, select
+from sqlalchemy import Connection, exists, func, select
 from sqlalchemy.orm import Session
 
 from delphi.platform.clock import Clock
@@ -23,6 +26,7 @@ from delphi.platform.jobs import Enqueued, JobStatus, JobType, enqueue, requeue_
 from delphi.platform.locks import DATASET_REQUEST_LOCK_KEY
 from delphi.platform.tables import jobs
 from delphi.sim.bank import (
+    account_scores,
     accounts,
     complaints,
     crm_events,
@@ -42,10 +46,13 @@ from delphi.sim.catalog import datasets
 __all__ = [
     "DATASET_REQUEST_LOCK_KEY",
     "PROFILES",
+    "DatasetInfo",
     "DatasetProfile",
+    "account_scores",
     "accounts",
     "complaints",
     "crm_events",
+    "current_dataset",
     "customers",
     "dataset_exists",
     "devices",
@@ -67,6 +74,24 @@ _ACTIVE = (JobStatus.QUEUED.value, JobStatus.RUNNING.value)
 
 def dataset_exists(session: Session) -> bool:
     return bool(session.execute(select(exists().select_from(datasets))).scalar_one())
+
+
+@dataclass(frozen=True, slots=True)
+class DatasetInfo:
+    """The dataset in the bank, as feature modules see it (never its ground truth)."""
+
+    id: UUID
+    profile: str
+    seed: int
+    created_at: datetime
+
+
+def current_dataset(conn: Connection | Session) -> DatasetInfo | None:
+    """The bank holds at most one dataset (docs/14 §10); ``None`` before seeding."""
+    row = conn.execute(
+        select(datasets.c.id, datasets.c.profile, datasets.c.seed, datasets.c.created_at).limit(1)
+    ).first()
+    return DatasetInfo(row.id, row.profile, row.seed, row.created_at) if row is not None else None
 
 
 def request_dataset(
