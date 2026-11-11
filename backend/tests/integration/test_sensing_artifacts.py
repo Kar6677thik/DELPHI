@@ -17,7 +17,7 @@ from delphi.api.app import create_app
 from delphi.api.security import Permission, Principal, current_principal
 from delphi.platform.clock import FixedClock
 from delphi.platform.db import make_session_factory, migration_head
-from delphi.platform.jobs import Job, JobContext, JobQueue, JobType, enqueue
+from delphi.platform.jobs import JobContext, JobQueue, JobType, enqueue
 from delphi.platform.settings import Settings
 from delphi.platform.tables import jobs, outbox_events, users
 from delphi.platform.wiring import Platform
@@ -93,12 +93,13 @@ class Env:
         return dataset_id
 
     def train_job(self) -> JobContext:
+        """A TRAIN_SENSING job claimed by a worker, as the job loop hands it to the handler."""
         with self.platform.sessions.begin() as s:
-            queued = enqueue(s, self.clock, JobType.TRAIN_SENSING, idempotency_key=str(uuid4()))
-        with self.platform.sessions() as s:
-            row = s.execute(select(jobs).where(jobs.c.id == queued.job_id)).one()
+            enqueue(s, self.clock, JobType.TRAIN_SENSING, idempotency_key=str(uuid4()))
         queue = JobQueue(self.platform.sessions, self.clock)
-        return JobContext(job=Job.from_row(row), queue=queue, worker_id="w1")
+        job = queue.claim("w1", frozenset({JobType.TRAIN_SENSING}))
+        assert job is not None
+        return JobContext(job=job, queue=queue, worker_id="w1")
 
 
 @pytest.fixture
