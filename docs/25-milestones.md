@@ -96,8 +96,8 @@ Exit criteria:
   (FR-KB-01).
 - [x] Engine branch coverage ≥ 95%; `mypy --strict` clean.
 - [x] Story behaviours of doc 06 §17 pinned as golden tests (ENG-S1/S2 at engine level).
-- [ ] KB versions table, seed of v1, and the read-only API (list/get/diff/export)
-  (FR-KB-02, FR-KB-04 partial). Blocked on M0's database layer (tech-debt TD-3).
+- [x] KB versions table, seed of v1, and the read-only API (list/get/diff/export)
+  (FR-KB-02, FR-KB-04 partial): #15.
 
 ## M2 — Simulation
 

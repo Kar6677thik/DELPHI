@@ -238,6 +238,83 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/kb/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Kb Versions
+         * @description Newest first, without the content.
+         */
+        get: operations["read_kb_versions_api_v1_kb_versions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/kb/versions/{version_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Kb Version */
+        get: operations["read_kb_version_api_v1_kb_versions__version_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/kb/versions/{version_id}/diff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Kb Diff
+         * @description What changed from ``against`` (default: the parent) to this version.
+         */
+        get: operations["read_kb_diff_api_v1_kb_versions__version_id__diff_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/kb/versions/{version_id}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export Kb Version
+         * @description The version as the `kb/` YAML tree, zipped (docs/07 §1).
+         */
+        get: operations["export_kb_version_api_v1_kb_versions__version_id__export_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -285,6 +362,11 @@ export interface components {
              */
             seed?: number | null;
         };
+        /**
+         * DiffOp
+         * @enum {string}
+         */
+        DiffOp: "added" | "removed" | "changed";
         /** HealthView */
         HealthView: {
             /**
@@ -344,6 +426,90 @@ export interface components {
             created_at: string;
             /** Finished At */
             finished_at: string | null;
+        };
+        /** KbChangeView */
+        KbChangeView: {
+            /** Path */
+            path: string;
+            op: components["schemas"]["DiffOp"];
+            /** Before */
+            before?: unknown;
+            /** After */
+            after?: unknown;
+        };
+        /** KbDiffView */
+        KbDiffView: {
+            /** Version Id */
+            version_id: number;
+            /** Against Id */
+            against_id: number;
+            /** Changes */
+            changes: components["schemas"]["KbChangeView"][];
+        };
+        /**
+         * KbStatus
+         * @description The KB version status machine (docs/07 §1).
+         * @enum {string}
+         */
+        KbStatus: "CANDIDATE" | "SHADOW" | "ACTIVE" | "RETIRED" | "REJECTED";
+        /** KbVersionPage */
+        KbVersionPage: {
+            /** Items */
+            items: components["schemas"]["KbVersionSummaryView"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
+        /** KbVersionSummaryView */
+        KbVersionSummaryView: {
+            /** Id */
+            id: number;
+            status: components["schemas"]["KbStatus"];
+            /** Parent Id */
+            parent_id: number | null;
+            /** Content Sha256 */
+            content_sha256: string;
+            /** Change Summary */
+            change_summary: string;
+            /** Created By */
+            created_by: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Activated At */
+            activated_at: string | null;
+        };
+        /** KbVersionView */
+        KbVersionView: {
+            /** Id */
+            id: number;
+            status: components["schemas"]["KbStatus"];
+            /** Parent Id */
+            parent_id: number | null;
+            /** Content Sha256 */
+            content_sha256: string;
+            /** Change Summary */
+            change_summary: string;
+            /** Created By */
+            created_by: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Activated At */
+            activated_at: string | null;
+            /** Approved By */
+            approved_by: string | null;
+            /** Retired At */
+            retired_at: string | null;
+            /** Rollback Reason */
+            rollback_reason: string | null;
+            /** Content */
+            content: {
+                [key: string]: unknown;
+            };
         };
         /** LoginRequest */
         LoginRequest: {
@@ -908,6 +1074,134 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["JobView"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    read_kb_versions_api_v1_kb_versions_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KbVersionPage"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    read_kb_version_api_v1_kb_versions__version_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                version_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KbVersionView"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    read_kb_diff_api_v1_kb_versions__version_id__diff_get: {
+        parameters: {
+            query?: {
+                /** @description default: the version's parent */
+                against?: number | null;
+            };
+            header?: never;
+            path: {
+                version_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KbDiffView"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    export_kb_version_api_v1_kb_versions__version_id__export_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                version_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The YAML tree */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/zip": unknown;
                 };
             };
             /** @description An RFC 9457 problem (docs/16 §1) */

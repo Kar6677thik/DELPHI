@@ -115,9 +115,9 @@ Permission names refer to doc 19 §3.
 | POST `/typology-drafts/{id}/shadow` | `fde` | requires BACKTESTED |
 | POST `/typology-drafts/{id}/promote` | `fde` | four-eyes; requires shadow count |
 | POST `/typology-drafts/{id}/reject` | `fde` | `{reason}` |
-| GET `/kb/versions`, GET `/kb/versions/{id}` | `view` | `content`, `content_sha256`, `status`, lineage |
-| GET `/kb/versions/{id}/diff?against={id}` | `view` | structured diff |
-| GET `/kb/versions/{id}/export` | `view` | zip of the YAML tree |
+| GET `/kb/versions`, GET `/kb/versions/{id}` | `view` | `content`, `content_sha256`, `status`, lineage. The list is newest first, keyset-paged, without `content` |
+| GET `/kb/versions/{id}/diff?against={id}` | `view` | structured diff from `against` (default: the parent; a version with no parent needs `against`, else `422`) to `{id}`: `{version_id, against_id, changes: [{path, op, before, after}]}`. `path` is a JSON Pointer into `content`; `op` is `added`, `removed` or `changed`. Objects are compared key by key, lists element by element; a list whose length changed is one `changed` entry |
+| GET `/kb/versions/{id}/export` | `view` | zip of the YAML tree, laid out as `kb/` (doc 07 §2); loading it gives the same `content_sha256` |
 | POST `/kb/versions` | `fde` | manual edit: `{parent_id, patch (losses/costs/guardrails/classifier thresholds only), change_summary}` → CANDIDATE |
 | POST `/kb/versions/{id}/shadow` | `fde` | CANDIDATE→SHADOW |
 | POST `/kb/versions/{id}/promote` | `fde` | CANDIDATE→ACTIVE (allowed producers only, doc 07 §1) or SHADOW→ACTIVE; `409 KB_STALE_PARENT` if parent ≠ ACTIVE |

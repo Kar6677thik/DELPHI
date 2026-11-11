@@ -85,12 +85,30 @@ class StoredVersion:
     content_sha256: str
     change_summary: str
     created_by: UUID | None
+    approved_by: UUID | None
     created_at: datetime
     activated_at: datetime | None
+    retired_at: datetime | None
+    rollback_reason: str | None
     kb: KnowledgeBase
 
 
-def _content(kb: KnowledgeBase) -> Any:
+@dataclass(frozen=True, slots=True)
+class VersionSummary:
+    """A version without its content, for listings."""
+
+    id: int
+    status: KbStatus
+    parent_id: int | None
+    content_sha256: str
+    change_summary: str
+    created_by: UUID | None
+    created_at: datetime
+    activated_at: datetime | None
+
+
+def content_of(kb: KnowledgeBase) -> Any:
+    """The version's canonical JSON as plain values (what `content` stores)."""
     # The canonical JSON, parsed back: jsonb keeps numbers exactly, so re-serialising the stored
     # content canonically reproduces the hash.
     return json.loads(canonical_json(kb))
@@ -114,7 +132,7 @@ def insert_version(
         .values(
             status=status.value,
             parent_id=parent_id,
-            content=_content(kb),
+            content=content_of(kb),
             content_sha256=sha,
             change_summary=change_summary,
             created_by=created_by,
@@ -157,10 +175,50 @@ def _stored(row: Any) -> StoredVersion:
         content_sha256=row.content_sha256,
         change_summary=row.change_summary,
         created_by=row.created_by,
+        approved_by=row.approved_by,
         created_at=row.created_at,
         activated_at=row.activated_at,
+        retired_at=row.retired_at,
+        rollback_reason=row.rollback_reason,
         kb=kb,
     )
+
+
+def get_version(conn: Connection | Session, version_id: int) -> StoredVersion | None:
+    row = conn.execute(select(kb_versions).where(kb_versions.c.id == version_id)).one_or_none()
+    return _stored(row) if row is not None else None
+
+
+def list_versions(
+    conn: Connection | Session, *, limit: int, before_id: int | None = None
+) -> list[VersionSummary]:
+    """Newest first (keyset on ``id``), without the content."""
+    k = kb_versions.c
+    query = select(
+        k.id,
+        k.status,
+        k.parent_id,
+        k.content_sha256,
+        k.change_summary,
+        k.created_by,
+        k.created_at,
+        k.activated_at,
+    ).order_by(k.id.desc())
+    if before_id is not None:
+        query = query.where(k.id < before_id)
+    return [
+        VersionSummary(
+            id=r.id,
+            status=KbStatus(r.status),
+            parent_id=r.parent_id,
+            content_sha256=r.content_sha256,
+            change_summary=r.change_summary,
+            created_by=r.created_by,
+            created_at=r.created_at,
+            activated_at=r.activated_at,
+        )
+        for r in conn.execute(query.limit(limit))
+    ]
 
 
 def active_version(conn: Connection | Session) -> StoredVersion | None:
