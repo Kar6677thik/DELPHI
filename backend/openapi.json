@@ -78,6 +78,37 @@
         }
       }
     },
+    "/api/v1/status": {
+      "get": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Read Status",
+        "operationId": "read_status_api_v1_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusView"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An RFC 9457 problem (docs/16 §1)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/auth/login": {
       "post": {
         "tags": [
@@ -955,6 +986,16 @@
   },
   "components": {
     "schemas": {
+      "ArtifactKind": {
+        "type": "string",
+        "enum": [
+          "PRIOR",
+          "ANOMALY",
+          "MULE"
+        ],
+        "title": "ArtifactKind",
+        "description": "The sensing models (docs/13 §1)."
+      },
       "AuditVerifyView": {
         "properties": {
           "ok": {
@@ -1592,6 +1633,24 @@
         ],
         "title": "MeView"
       },
+      "ModelStatus": {
+        "properties": {
+          "version": {
+            "type": "integer",
+            "title": "Version"
+          },
+          "gate_passed": {
+            "type": "boolean",
+            "title": "Gate Passed"
+          }
+        },
+        "type": "object",
+        "required": [
+          "version",
+          "gate_passed"
+        ],
+        "title": "ModelStatus"
+      },
       "Permission": {
         "type": "string",
         "enum": [
@@ -1743,6 +1802,68 @@
           "ADMIN"
         ],
         "title": "Role"
+      },
+      "StatusView": {
+        "properties": {
+          "dataset_ready": {
+            "type": "boolean",
+            "title": "Dataset Ready"
+          },
+          "models_ready": {
+            "type": "boolean",
+            "title": "Models Ready"
+          },
+          "seed_job_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seed Job Id"
+          },
+          "seed_progress": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seed Progress"
+          },
+          "models": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ModelStatus"
+            },
+            "propertyNames": {
+              "$ref": "#/components/schemas/ArtifactKind"
+            },
+            "type": "object",
+            "title": "Models"
+          },
+          "models_below_gate": {
+            "items": {
+              "$ref": "#/components/schemas/ArtifactKind"
+            },
+            "type": "array",
+            "title": "Models Below Gate"
+          }
+        },
+        "type": "object",
+        "required": [
+          "dataset_ready",
+          "models_ready",
+          "seed_job_id",
+          "seed_progress",
+          "models",
+          "models_below_gate"
+        ],
+        "title": "StatusView"
       },
       "UpdateUser": {
         "properties": {
