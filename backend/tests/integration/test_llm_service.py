@@ -4,7 +4,7 @@ the kill switch, `llm_calls`, and its 30-day redaction."""
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -35,7 +35,7 @@ GOOD = EvidenceNarrative(
 class FakeLlm:
     """A stand-in provider: returns ``parsed`` with ``status``, or raises ``raises``."""
 
-    parsed: BaseModel | None = GOOD
+    parsed: BaseModel | None = field(default_factory=lambda: GOOD)
     status: LlmStatus = LlmStatus.OK
     raises: Exception | None = None
     tokens: int = 100
