@@ -901,6 +901,56 @@
           }
         }
       }
+    },
+    "/api/v1/admin/sensing/train": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Train Sensing",
+        "description": "Queue a `TRAIN_SENSING` job on the dataset in the bank (202 with the job). 409\n`INVALID_STATE_TRANSITION` without a dataset, 409 `JOB_ALREADY_RUNNING` while one runs. A\nmodel whose gate fails is stored as FAILED_GATE and the ACTIVE one is kept (docs/13 §4).",
+        "operationId": "train_sensing_api_v1_admin_sensing_train_post",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobView"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An RFC 9457 problem (docs/16 §1)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {

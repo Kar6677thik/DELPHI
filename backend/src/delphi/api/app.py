@@ -14,7 +14,17 @@ from delphi.api.problems import (
     install_problem_handlers,
 )
 from delphi.api.request_context import RequestContextMiddleware
-from delphi.api.routers import API_PREFIX, admin, auth, datasets, events, jobs, kb, platform
+from delphi.api.routers import (
+    API_PREFIX,
+    admin,
+    auth,
+    datasets,
+    events,
+    jobs,
+    kb,
+    platform,
+    sensing,
+)
 from delphi.api.spa import install_spa
 from delphi.api.web_security import WebSecurityMiddleware
 from delphi.platform.auth_sessions import LoginThrottle
@@ -65,6 +75,7 @@ def create_app(resources: Platform, *, event_hub: EventHub | None = None) -> Fas
     app.include_router(admin.router)
     app.include_router(datasets.router)
     app.include_router(kb.router)
+    app.include_router(sensing.router)
     # Last: the SPA catch-all must not shadow any API route.
     install_spa(app, resources.settings.static_dir)
     return app

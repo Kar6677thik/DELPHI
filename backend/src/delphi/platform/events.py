@@ -57,6 +57,7 @@ class EventType(StrEnum):
     JOB_UPDATED = "job.updated"
     SCOUT_CLUSTER_CREATED = "scout.cluster.created"
     KB_VERSION_CHANGED = "kb.version.changed"
+    ARTIFACT_ACTIVATED = "artifact.activated"
     SIM_TRANSFER = "sim.transfer"
 
 
@@ -68,6 +69,7 @@ TOPIC_PREFIXES: Mapping[str, tuple[str, ...]] = {
     "jobs": ("job.",),
     "scout": ("scout.",),
     "kb": ("kb.",),
+    "sensing": ("artifact.",),
     "sim": ("sim.",),
 }
 

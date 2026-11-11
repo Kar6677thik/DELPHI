@@ -44,6 +44,7 @@ def _platform(**settings: Any) -> Platform:
 def test_the_worker_registers_generate_dataset_only_with_its_sim_pool() -> None:
     registry, sim = worker_registry(_platform())
     assert sim is None and JobType.GENERATE_DATASET not in registry.handlers
+    assert JobType.TRAIN_SENSING in registry.handlers  # sensing needs no sim pool (#88)
     registry, sim = worker_registry(
         _platform(sim_database_url=URL.replace("app", "sim")), kb_source=lambda _: _repo_kb()
     )

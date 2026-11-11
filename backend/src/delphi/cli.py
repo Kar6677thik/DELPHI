@@ -38,6 +38,7 @@ from delphi.platform.settings import Settings, SettingsError, libpq_url, load_se
 from delphi.platform.wiring import Platform, build_platform
 from delphi.platform.worker import build_registry, install_stop_handlers, run_worker
 from delphi.probes.registry import CLASSIFIER_NAMES
+from delphi.sensing.jobs import register_sensing_jobs
 from delphi.sim.api import PROFILES, dataset_exists, request_dataset
 from delphi.sim.dataset import generate_dataset
 from delphi.sim.generator_config import load_generator_config
@@ -180,11 +181,14 @@ def _active_kb(platform: Platform) -> KnowledgeBase:
 def worker_registry(
     platform: Platform, *, kb_source: Callable[[Platform], KnowledgeBase] = _active_kb
 ) -> tuple[JobRegistry, Engine | None]:
-    """The worker's handlers: the platform's, plus the simulator's when the worker has its
+    """The worker's handlers: the platform's and sensing's, plus the simulator's when it has its
     `delphi_sim` pool (`DELPHI_SIM_DATABASE_URL`, docs/17 §2). The api never gets that pool.
     The simulator's jobs use the ACTIVE KB (``kb_source``). Returns the sim engine too, for the
     caller to dispose of."""
     registry = build_registry(platform)
+    register_sensing_jobs(
+        registry, engine=platform.engine, sessions=platform.sessions, clock=platform.clock
+    )
     settings = platform.settings
     if settings.sim_database_url is None:
         log.warning("worker.sim_jobs_disabled", reason="DELPHI_SIM_DATABASE_URL is not set")

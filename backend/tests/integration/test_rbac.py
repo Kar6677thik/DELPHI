@@ -40,6 +40,7 @@ ACCESS: dict[tuple[str, str], str | Permission] = {
     ("PATCH", "/api/v1/admin/users/{user_id}"): Permission.ADMIN,
     ("GET", "/api/v1/admin/audit/verify"): Permission.ADMIN,
     ("POST", "/api/v1/admin/datasets"): Permission.ADMIN,
+    ("POST", "/api/v1/admin/sensing/train"): Permission.ADMIN,
     ("GET", "/api/v1/kb/versions"): Permission.VIEW,
     ("GET", "/api/v1/kb/versions/{version_id}"): Permission.VIEW,
     ("GET", "/api/v1/kb/versions/{version_id}/diff"): Permission.VIEW,

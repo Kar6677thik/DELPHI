@@ -14,6 +14,7 @@ BOOTSTRAP_LOCK_KEY = 44  # creating the first ADMIN (docs/19 §2)
 DATASET_REQUEST_LOCK_KEY = 45  # queuing GENERATE_DATASET (POST /admin/datasets, delphi seed)
 DATASET_WRITE_LOCK_KEY = 46  # writing a generated dataset into the bank
 KB_SEED_LOCK_KEY = 47  # delphi migrate inserting KB v1 (docs/07 §1)
+MODEL_ARTIFACT_LOCK_KEY = 48  # storing a sensing artifact and switching the ACTIVE one
 
 ALL_LOCK_KEYS: dict[str, int] = {
     "audit": AUDIT_LOCK_KEY,
@@ -22,4 +23,5 @@ ALL_LOCK_KEYS: dict[str, int] = {
     "dataset_request": DATASET_REQUEST_LOCK_KEY,
     "dataset_write": DATASET_WRITE_LOCK_KEY,
     "kb_seed": KB_SEED_LOCK_KEY,
+    "model_artifact": MODEL_ARTIFACT_LOCK_KEY,
 }

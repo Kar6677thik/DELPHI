@@ -48,7 +48,7 @@ Permission names refer to doc 19 §3.
 | POST `/auth/login` | public | `{username, password}` → 204 + cookie |
 | POST `/auth/logout` | any | 204 |
 | GET `/auth/me` | any | `{id, username, display_name, role, permissions[]}` |
-| GET `/events/stream` | `view` | SSE (§3). Query `topics=guardian,cases,chase,jobs,scout,kb` |
+| GET `/events/stream` | `view` | SSE (§3). Query `topics=guardian,cases,chase,jobs,scout,kb,sensing,sim` |
 
 ### Guardian
 
@@ -148,7 +148,7 @@ Permission names refer to doc 19 §3.
 |---|---|---|
 | GET/POST `/admin/users`, PATCH `/admin/users/{id}` | `admin` | Create `{username, display_name, password, role}`; a taken username is 422. PATCH `{display_name?, role?, disabled?, password?}` with `If-Match` (ETag `"<version>"`): a stale one is 412, a missing one 422. Disabling, a role change or a password reset ends the user's sessions at once. Removing the last enabled ADMIN (disable or demote) is `409 INVALID_STATE_TRANSITION`. Every change is audited |
 | POST `/admin/datasets` | `admin` | `{profile, seed?}` → 202 with the `GENERATE_DATASET` job. One dataset per database (doc 17 §3): 409 `JOB_ALREADY_RUNNING` while one is being generated, 409 `INVALID_STATE_TRANSITION` once one is there |
-| POST `/admin/sensing/train` | `admin` | → job |
+| POST `/admin/sensing/train` | `admin` | `Idempotency-Key` → `202` with the `TRAIN_SENSING` job, on the dataset in the bank. `409 INVALID_STATE_TRANSITION` without a dataset, `409 JOB_ALREADY_RUNNING` while one is queued or running (doc 13 §7) |
 | POST `/admin/demo/scenarios/{story}/run` | `demo:drive` | story ∈ `S1,S2,S3,S4`; `{mode}` |
 | POST `/admin/demo/reset` | `admin` | → job |
 | GET `/jobs/{id}` | `view` | `{id, type, status, progress (0–1), result, error, attempts, created_at, finished_at}` |
@@ -166,6 +166,7 @@ default all) selects event types by prefix:
 - `jobs` → `job.*`
 - `scout` → `scout.*`
 - `kb` → `kb.*`
+- `sensing` → `artifact.*`
 - `sim` → `sim.*`
 
 An unknown topic, or a `Last-Event-ID` that is not an event id, is `422 VALIDATION_FAILED`.
@@ -179,7 +180,8 @@ data: {"type": "...", "entity_id": "...", "at": "...", "payload": {...}}
 
 Event types: `guardian.session.updated`, `guardian.session.decided`, `case.opened`,
 `case.updated`, `evidence.narrative_ready`, `campaign.updated`, `chase.updated`,
-`chase.lien.updated`, `job.updated`, `scout.cluster.created`, `kb.version.changed`,
+`chase.lien.updated`, `job.updated`, `scout.cluster.created`, `kb.version.changed`, `artifact.activated` (a sensing model became
+ACTIVE: the api and the worker reload it, docs/13 §7),
 `sim.transfer` (demo feed). An `: open` comment is sent as soon as the stream opens (some
 proxies hold the response head until the first body bytes), and a heartbeat comment (`: ping`)
 every 15 s. Reconnect with
