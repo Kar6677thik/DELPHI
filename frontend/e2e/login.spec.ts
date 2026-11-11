@@ -11,7 +11,9 @@ test('an unknown password is refused', async ({ page }) => {
   await page.getByLabel('Username').fill(USERNAME);
   await page.getByLabel('Password').fill('not the password');
   await page.getByRole('button', { name: 'Sign in' }).click();
-  await expect(page.getByText('Sign-in failed')).toBeVisible();
+  // Generic on purpose: the page never says which of the two was wrong (docs/19 §1).
+  await expect(page.getByRole('alert')).toHaveText('Invalid username or password.');
+  await expect(page.getByRole('heading', { name: 'Overview' })).toHaveCount(0);
 });
 
 test('the admin signs in, sees the Overview and signs out', async ({ page }) => {
