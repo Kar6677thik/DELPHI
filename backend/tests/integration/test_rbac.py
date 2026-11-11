@@ -28,6 +28,7 @@ ACCESS: dict[tuple[str, str], str | Permission] = {
     ("GET", "/api/v1/openapi.json"): PUBLIC,
     ("GET", "/api/v1/health"): PUBLIC,
     ("GET", "/api/v1/ready"): PUBLIC,
+    ("GET", "/api/v1/status"): Permission.VIEW,
     ("POST", "/api/v1/auth/login"): PUBLIC,
     ("POST", "/api/v1/auth/logout"): SIGNED_IN,
     ("GET", "/api/v1/auth/me"): SIGNED_IN,

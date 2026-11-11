@@ -44,7 +44,7 @@ Permission names refer to doc 19 §3.
 |---|---|---|
 | GET `/health` | public | `{status:"ok", version:"<git sha>", started_at}`. Liveness; no DB access |
 | GET `/ready` | public | 200 only if the DB is reachable, the migrations are at head and (from M1) an ACTIVE KB exists; else 503 with the failing checks. It deliberately does **not** depend on dataset or models, so the first deploy can become healthy before seeding finishes (doc 23 §4) |
-| GET `/status` | any | `{dataset_ready, models_ready, seed_job_id, seed_progress}`. The UI shows an "Initialising…" banner with progress until both are true |
+| GET `/status` | `view` (every role) | `{dataset_ready, models_ready, seed_job_id, seed_progress, models, models_below_gate}`. The UI shows an "Initialising…" banner with progress until both are true. `seed_job_id` is the latest `GENERATE_DATASET` job until a dataset exists, then the latest `TRAIN_SENSING` job. `models` gives each ACTIVE model's `{version, gate_passed}`; `models_below_gate` lists the kinds activated below their gate (doc 13 §4), for the Overview page's "sensing below quality gate" warning. `models_ready` needs an ACTIVE PRIOR, ANOMALY and MULE model |
 | POST `/auth/login` | public | `{username, password}` → 204 + cookie |
 | POST `/auth/logout` | any | 204 |
 | GET `/auth/me` | any | `{id, username, display_name, role, permissions[]}` |

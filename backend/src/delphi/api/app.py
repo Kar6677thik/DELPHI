@@ -24,6 +24,7 @@ from delphi.api.routers import (
     kb,
     platform,
     sensing,
+    status,
 )
 from delphi.api.spa import install_spa
 from delphi.api.web_security import WebSecurityMiddleware
@@ -69,6 +70,7 @@ def create_app(resources: Platform, *, event_hub: EventHub | None = None) -> Fas
     app.add_middleware(WebSecurityMiddleware, public_origin=s.public_origin)
     app.add_middleware(RequestContextMiddleware)
     app.include_router(platform.router)
+    app.include_router(status.router)
     app.include_router(auth.router)
     app.include_router(events.router)
     app.include_router(jobs.router)
