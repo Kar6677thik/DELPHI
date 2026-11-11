@@ -190,8 +190,9 @@ jobs(id, type, status (QUEUED|RUNNING|SUCCEEDED|FAILED|CANCELLED), params jsonb,
    idx (status, run_after)
 outbox_events(id bigint identity, type, entity_id, payload jsonb, at)   idx (at)
 ops_backup_runs(id bigint identity, finished_at, file_name, size_bytes, status)  -- written by the backup CronJob
-llm_calls(id, purpose, provider, model, prompt_version, request_redacted jsonb, response jsonb null,
-          status, validation jsonb, input_tokens, output_tokens, latency_ms, created_at)
+llm_calls(id, purpose, provider, model null, prompt_version, request_redacted jsonb null,
+          response jsonb null, status, validation jsonb, input_tokens, output_tokens, latency_ms,
+          created_at)   -- migration 0008; one row per attempt, the model's and the template's
 audit_log(id bigint identity, at, actor_type (USER|SYSTEM|ENGINE|LLM|JOB), actor_id null, action,
           entity_type, entity_id, payload jsonb, prev_hash bytea, hash bytea)
 ```

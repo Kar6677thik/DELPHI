@@ -1,0 +1,1 @@
+{% if f.prior_payments == 0 %}{{ subject }} had made no earlier payment to this payee before {{ as_of | when }} [{{ record_id }}].{% else %}{{ subject }} had made {{ f.prior_payments }} earlier payment{{ "s" if f.prior_payments != 1 }} to this payee before {{ as_of | when }}, the largest ₹{{ f.max_prior_amount_paise | inr }} [{{ record_id }}].{% endif %}

@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import timedelta
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import Field, SecretStr, ValidationError, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -94,6 +94,11 @@ class Settings(BaseSettings):
     # The public origin (scheme://host) mutating requests must come from (CSRF, docs/19 §4).
     # Unset in development: the request's own origin is used.
     public_origin: str | None = None
+    # LLM (docs/15 §3). `template` is the kill switch and the default: no key, no calls.
+    llm_provider: Literal["anthropic", "template"] = "template"
+    llm_model: str = "claude-opus-5-5"
+    llm_daily_token_budget: int = Field(default=2_000_000, ge=0, le=1_000_000_000)
+    anthropic_api_key: SecretStr | None = Field(default=None, validation_alias="ANTHROPIC_API_KEY")
     # Header carrying the real client IP behind the tunnel (`CF-Connecting-IP` in the home
     # deployment); unset: the socket peer.
     client_ip_header: str | None = None
