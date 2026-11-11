@@ -36,7 +36,7 @@ verify: poll https://delphi.karthiksurkanti.in/api/v1/health until .version == t
 
 ```
 Dockerfile                         # multi-stage: frontend build → python runtime
-compose.yaml                       # local development (PostgreSQL; api/worker later)
+compose.yaml                       # local development and the CI e2e stack (§10)
 .github/workflows/ci.yml           # PR CI, and reused by deploy.yml (workflow_call)
 .github/workflows/deploy.yml       # workflow_dispatch only: guard → ci → publish → deploy → verify
 deploy/k8s/base/                   # what the bootstrap applies (namespace delphi)
@@ -76,8 +76,12 @@ deploy/README.md                   # the bootstrap runbook (§6)
    `pnpm audit --prod` → build.
 3. `contract`: the generated TS types match `backend/openapi.json` (the backend checks the file
    against the code).
-4. Later in M0: `secrets` (gitleaks), `image-scan` (Trivy on a no-push build), and `e2e`
-   (compose + Playwright).
+4. `e2e`: `docker compose up --build --wait api worker` (the production image, §10) →
+   Playwright (Chromium) against `http://localhost:8000` → the stack's logs on failure. In M0
+   it runs the login smoke test (`frontend/e2e/login.spec.ts`); the story journeys of doc 21
+   §4 join it as their milestones land.
+5. `secrets` (gitleaks) and `image-scan` (Trivy on a no-push build) arrive with the security
+   review (#127).
 
 `policy.yml` (`commit-policy`) checks every PR's commits and description for AI attribution.
 All third-party actions are pinned to a full commit SHA. `permissions: contents: read` by
@@ -403,6 +407,11 @@ and the run summary shows its digest.
 
 ## 10. Local development
 
-`compose.yaml` services: `postgres`, `api` (hot reload, `uv run delphi api --reload`),
-`worker`, `frontend` (Vite dev server with a proxy to `api`). `just dev` starts them;
-`just seed-test` loads the `test` profile. The developer's LLM provider defaults to `template`.
+`compose.yaml` services: `postgres` (it creates the `delphi_app` and `delphi_sim` login roles
+on a fresh volume), `migrate` (runs once, then exits), `api` (:8000), `worker` and `frontend`
+(the Vite dev server, hot reload, proxying `/api` to `api`). `migrate`, `api` and `worker` run
+the production image (read-only root filesystem, non-root), so local runs and the CI e2e job
+test what deploys; `docker compose watch` rebuilds them when `backend/` or `kb/` changes, in
+place of a reloading dev server. `just dev` starts the stack; `just seed-test` loads the `test`
+profile with the personas. Passwords in the file are local defaults, never reused. The
+developer's LLM provider defaults to `template`.
