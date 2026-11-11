@@ -164,9 +164,9 @@ condition). Milestones (doc 25) reference these IDs. "Doc" points to the detaile
 
 | ID | Requirement | Acceptance | Doc |
 |---|---|---|---|
-| FR-DEP-01 | Every push to `main` and every manual dispatch on `main` builds, tests, publishes and verifies the deployment | A green deploy workflow run with the verify step | 23 §3 |
-| FR-DEP-02 | No cluster credentials or repo-write credentials in GitHub Actions; no bot commits; only `main` can publish a deployable image | Workflow review checklist; `permissions` blocks; a test workflow run from a non-main branch that names `production` is rejected; the package's repo access is Read | 23 §3 |
-| FR-DEP-03 | Migrations run as a PreSync hook; seeding is idempotent as a PostSync hook | First deploy on an empty cluster; a second deploy is a no-op seed | 23 §4 |
+| FR-DEP-01 | A manual dispatch of the deploy workflow on `main`, released by the owner's approval, builds, tests, publishes and deploys by digest, then verifies the public `/health` version. A push to `main` does not deploy, and a dispatch on any other ref is refused (ADR-0015) | A green deploy workflow run with the verify step; a dispatch from another branch fails its `guard` job | 23 §3 |
+| FR-DEP-02 | No repo-write credentials in GitHub Actions; no bot commits; only `main` can publish a deployable image. The only cluster credential is the namespace-scoped `delphi-deployer` token in the owner-approved `megatron` environment, reached over the tailnet only (ADR-0015) | Workflow review checklist; `permissions` blocks; a test workflow run from a non-main branch that names `production` is rejected; the package's repo access is Read; the deployer guard denies anything outside namespace `delphi` | 23 §3, §7 |
+| FR-DEP-03 | Every deploy runs the migrate Job (schema, then KB v1 if none exists) before the rollout; seeding is a separate, idempotent Job the run starts only when asked | First deploy on an empty cluster; a second deploy's migrate and seed are no-ops | 23 §4 |
 | FR-DEP-04 | Public access only via the Cloudflare Tunnel; metrics not reachable publicly | From outside: `GET /metrics` and `GET /api/v1/metrics` must not return a Prometheus exposition body (no `# HELP` lines). The SPA fallback serves `index.html` only for non-`/api` paths, and unknown `/api/*` paths return a 404 problem+json | 23 §4 |
 | FR-DEP-05 | Nightly backups and a passing restore drill | Drill report | 23 §7 |
 
@@ -183,7 +183,7 @@ condition). Milestones (doc 25) reference these IDs. "Doc" points to the detaile
 | NFR-07 | **Auditability**: 100% of decisions have complete DD packs; the audit chain verifies | Metric + verify endpoint |
 | NFR-08 | **Security**: doc 19 controls; no HIGH/CRITICAL vulns without a waiver | CI gates |
 | NFR-09 | **Maintainability**: CI gates in doc 21 §6; module contracts | CI |
-| NFR-10 | **Deploy lead time**: push to `main` → live and verified ≤ 15 min (p90) | Workflow timings |
+| NFR-10 | **Deploy lead time**: from the owner approving a deploy run to live and verified ≤ 15 min (p90) | Workflow timings |
 | NFR-11 | **Recoverability**: restore from the latest backup ≤ 30 min | Drill |
 | NFR-12 | **LLM independence**: every feature works with `DELPHI_LLM_PROVIDER=template` | E2E runs in template mode |
 | NFR-13 | **Cost guard**: LLM tokens ≤ the daily budget; above it, template | Unit test |
