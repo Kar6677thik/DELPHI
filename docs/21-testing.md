@@ -8,17 +8,17 @@ real LLM, fixed seeds.
 
 | Level | Tool | Scope | Runs |
 |---|---|---|---|
-| Unit | pytest | engine, classifiers, taint tracing, feature functions, KB validation, validators, prompts' templates | every push |
-| Property-based | Hypothesis | engine invariants (§2), taint conservation, KB round-trip | every push |
-| Golden | pytest | doc 06 §16 worked example; demo-story engine traces; template narratives | every push |
-| Simulation determinism | pytest | `test` profile dataset SHA-256; response-model freeze file unchanged | every push |
-| Integration | pytest + real PostgreSQL 16 (CI service container; locally `docker compose up -d postgres`). The tests read the server from `DELPHI_TEST_DATABASE_URL` and create and drop their own databases; without it they skip, except in CI, where `DELPHI_REQUIRE_INTEGRATION=1` turns the skip into a failure | repositories, migrations, jobs (claim/retry/idempotency), API routers with auth/RBAC, SSE outbox replay, Guardian session resume after "crash" | every push |
-| Contract | pytest | `openapi.json` up to date; generated TS types up to date | every push |
-| Architecture | import-linter | doc 04 §4.1 contracts | every push |
-| Frontend unit | Vitest + Testing Library | components (HypothesisBar, CandidatesTable, MoneyText, forms) | every push |
+| Unit | pytest | engine, classifiers, taint tracing, feature functions, KB validation, validators, prompts' templates | every PR |
+| Property-based | Hypothesis | engine invariants (§2), taint conservation, KB round-trip | every PR |
+| Golden | pytest | doc 06 §16 worked example; demo-story engine traces; template narratives | every PR |
+| Simulation determinism | pytest | `test` profile dataset SHA-256; response-model freeze file unchanged | every PR |
+| Integration | pytest + real PostgreSQL 16 (CI service container; locally `docker compose up -d postgres`). The tests read the server from `DELPHI_TEST_DATABASE_URL` and create and drop their own databases; without it they skip, except in CI, where `DELPHI_REQUIRE_INTEGRATION=1` turns the skip into a failure | repositories, migrations, jobs (claim/retry/idempotency), API routers with auth/RBAC, SSE outbox replay, Guardian session resume after "crash" | every PR |
+| Contract | pytest | `openapi.json` up to date; generated TS types up to date | every PR |
+| Architecture | import-linter | doc 04 §4.1 contracts | every PR |
+| Frontend unit | Vitest + Testing Library | components (HypothesisBar, CandidatesTable, MoneyText, forms) | every PR |
 | E2E | Playwright (Chromium) against the docker compose stack, `DELPHI_LLM_PROVIDER=template`, `test`+personas dataset | E2E-S1…S5, login/RBAC, demo reset, accessibility scan | PRs to `main` and `main` |
 | Load | Locust | §5 | M9 and before demos (manual) |
-| Security | gitleaks, pip-audit, pnpm audit, Trivy, bandit | | every push (Trivy on image builds) |
+| Security | gitleaks, pip-audit, pnpm audit, Trivy, bandit | | every PR (Trivy on image builds) |
 | LLM eval | `just llm-eval` | doc 15 §8 | manual |
 | Restore drill | runbook | doc 23 §7 | M9, then monthly |
 
@@ -84,7 +84,8 @@ stable (< 10% growth over the run).
   mypy standard for the rest.
 - ESLint, `tsc --noEmit`, Prettier check.
 - Coverage: `engine` ≥ 95% branches, backend overall ≥ 80% lines; frontend components ≥ 70%.
-- All test levels marked "every push" pass.
+- All test levels marked "every PR" pass. (CI runs on pull requests only, not on branch pushes:
+  #83.)
 - E2E passes on PRs to `main`.
 - No high/critical vulnerabilities from pip-audit/pnpm audit/Trivy without a documented waiver
   in `security/waivers.yaml` (each waiver expires within 30 days).
