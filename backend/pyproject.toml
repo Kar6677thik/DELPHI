@@ -106,6 +106,7 @@ type = "forbidden"
 source_modules = ["delphi.engine"]
 forbidden_modules = [
   "delphi.kb.loader",
+  "delphi.kb.store",
   "delphi.kb.validate",
   "delphi.probes",
   "delphi.platform",
@@ -125,6 +126,7 @@ forbidden_modules = [
   "delphi.api",
   "delphi.cli",
   "delphi.kb.loader",
+  "delphi.kb.store",
   "delphi.kb.validate",
 ]
 

@@ -13,6 +13,7 @@ OUTBOX_LOCK_KEY = 43  # outbox publishing, so events commit in id order (docs/04
 BOOTSTRAP_LOCK_KEY = 44  # creating the first ADMIN (docs/19 §2)
 DATASET_REQUEST_LOCK_KEY = 45  # queuing GENERATE_DATASET (POST /admin/datasets, delphi seed)
 DATASET_WRITE_LOCK_KEY = 46  # writing a generated dataset into the bank
+KB_SEED_LOCK_KEY = 47  # delphi migrate inserting KB v1 (docs/07 §1)
 
 ALL_LOCK_KEYS: dict[str, int] = {
     "audit": AUDIT_LOCK_KEY,
@@ -20,4 +21,5 @@ ALL_LOCK_KEYS: dict[str, int] = {
     "bootstrap": BOOTSTRAP_LOCK_KEY,
     "dataset_request": DATASET_REQUEST_LOCK_KEY,
     "dataset_write": DATASET_WRITE_LOCK_KEY,
+    "kb_seed": KB_SEED_LOCK_KEY,
 }
