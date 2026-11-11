@@ -1,12 +1,42 @@
-# Local development stack (docs/23 §1). For now: PostgreSQL only, matching production's major
-# version. The api/worker services and the e2e profile are added with the Dockerfile (#9).
+# Local development and the CI end-to-end stack (docs/23 §10, docs/21 §1).
 #
+#   docker compose up --build          # postgres, migrate, api (:8000), worker, frontend (:5173)
+#   docker compose up -d --wait api    # what CI's e2e job starts (the api serves the built SPA)
+#   docker compose exec api delphi seed --profile test --if-empty
+#   docker compose watch               # rebuilds api/worker when backend/ or kb/ changes
+#
+# The api, worker and migrate services run the production image (read-only root filesystem,
+# non-root), so local runs and e2e test what deploys. Sign in at http://localhost:5173 (Vite,
+# hot reload) or http://localhost:8000 (the built SPA) as `admin` / `dev-only-admin-pw`.
+#
+# Every password below is a local development default, not a secret. Never reuse one anywhere.
+# Postgres creates the two LOGIN roles on the first start of an empty volume only: after
+# upgrading from the postgres-only file, run `docker compose down -v` once.
+#
+# Tests against this server (no api needed):
 #   docker compose up -d postgres
-#   export DELPHI_DATABASE_URL=postgresql://postgres:dev-only@localhost:5432/delphi
 #   export DELPHI_TEST_DATABASE_URL=postgresql://postgres:dev-only@localhost:5432/postgres
-#
-# The password is a local development default, not a secret. Never reuse it anywhere else.
 name: delphi
+
+x-app: &app
+  build:
+    context: .
+    args: { DELPHI_VERSION: dev }
+  image: delphi:dev
+  read_only: true
+  tmpfs: [/tmp]
+  environment: &app-env
+    DELPHI_ENV: dev
+    DELPHI_DATABASE_URL: postgresql://delphi_app:dev-only-app@postgres:5432/delphi
+    DELPHI_MIGRATE_DATABASE_URL: postgresql://postgres:dev-only@postgres:5432/delphi
+    DELPHI_BOOTSTRAP_ADMIN_USERNAME: admin
+    DELPHI_BOOTSTRAP_ADMIN_PASSWORD: dev-only-admin-pw
+    DELPHI_DATASET_PROFILES: test,demo
+  develop:
+    watch:
+      - { action: rebuild, path: ./backend/src }
+      - { action: rebuild, path: ./backend/migrations }
+      - { action: rebuild, path: ./kb }
 
 services:
   postgres:
@@ -16,11 +46,70 @@ services:
       POSTGRES_DB: delphi
     ports: ["127.0.0.1:5432:5432"]
     volumes: [pgdata:/var/lib/postgresql/data]
+    configs:
+      - source: postgres-roles
+        target: /docker-entrypoint-initdb.d/10-roles.sql
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "postgres"]
       interval: 5s
       timeout: 5s
       retries: 10
 
+  # Schema and KB v1 (docs/23 §4), then it exits; api and worker wait for it.
+  migrate:
+    <<: *app
+    command: ["migrate"]
+    restart: "no"
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  api:
+    <<: *app
+    command: ["api"]
+    ports: ["127.0.0.1:8000:8000"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    healthcheck:
+      # The image has no curl: Python's standard library asks /ready.
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/ready', timeout=3)"
+      interval: 5s
+      timeout: 5s
+      retries: 24
+
+  worker:
+    <<: *app
+    command: ["worker"]
+    environment:
+      <<: *app-env
+      DELPHI_SIM_DATABASE_URL: postgresql://delphi_sim:dev-only-sim@postgres:5432/delphi
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+
+  # Vite with hot reload, proxying /api to the api service (frontend/vite.config.ts).
+  frontend:
+    image: node:22-alpine@sha256:0e1754758c2df4cfa3e68d59e2e1b7374bb7fd9ea6328eaaacf15cc934af8202
+    working_dir: /src/frontend
+    command: ["sh", "-c", "corepack enable && pnpm install --frozen-lockfile && pnpm dev --host 0.0.0.0"]
+    environment:
+      DELPHI_API_ORIGIN: http://api:8000
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+    ports: ["127.0.0.1:5173:5173"]
+    volumes:
+      - ./frontend:/src/frontend
+      - frontend-modules:/src/frontend/node_modules  # Linux modules, not the host's
+    depends_on:
+      api: { condition: service_healthy }
+
+configs:
+  postgres-roles:
+    content: |
+      CREATE ROLE delphi_app LOGIN PASSWORD 'dev-only-app';
+      CREATE ROLE delphi_sim LOGIN PASSWORD 'dev-only-sim';
+
 volumes:
   pgdata:
+  frontend-modules:

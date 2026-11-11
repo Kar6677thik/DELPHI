@@ -54,6 +54,14 @@ fe-test:
 fe-dev:
     pnpm dev
 
+# The whole stack from the production image: api :8000, Vite :5173 (docs/23 §10)
+dev:
+    docker compose up --build
+
+# Load the `test` dataset with the personas into the running stack
+seed-test:
+    docker compose exec api delphi seed --if-empty --profile test --personas
+
 # Enable the repository's git hooks (commit authorship rule)
 hooks:
     git config core.hooksPath .githooks

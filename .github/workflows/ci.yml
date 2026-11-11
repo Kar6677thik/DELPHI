@@ -1,5 +1,6 @@
-# CI (docs/23 §3): backend, frontend and contract jobs. The secrets, e2e and image-scan jobs
-# arrive with the rest of M0 (#10). The commit-policy check is in policy.yml. This workflow never writes to the repository.
+# CI (docs/23 §3): backend, frontend, contract and e2e jobs. Secret and image scanning arrive
+# with the security review (#127). The commit-policy check is in policy.yml. This workflow never
+# writes to the repository.
 name: ci
 
 # Runs once per PR update (not also on the branch push, which doubled every run), and from
@@ -115,3 +116,39 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Generated API types are up to date
         run: pnpm check:api
+
+  # End to end (docs/21 §4): the production image in the compose stack (compose.yaml), and the
+  # Playwright journeys against it. For now the M0 login smoke test; the story journeys join as
+  # their milestones land.
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Start the stack (postgres, migrate, api, worker)
+        run: docker compose up --build --detach --wait --wait-timeout 300 api worker
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          package_json_file: frontend/package.json
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: frontend/.nvmrc
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Install
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+      - name: Install Chromium
+        working-directory: frontend
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Journeys
+        working-directory: frontend
+        env:
+          E2E_BASE_URL: http://localhost:8000
+        run: pnpm e2e
+      - name: Stack logs (on failure)
+        if: failure()
+        run: docker compose logs --no-color --timestamps
+      - name: Stop the stack
+        if: always()
+        run: docker compose down --volumes
