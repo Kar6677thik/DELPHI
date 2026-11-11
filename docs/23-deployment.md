@@ -77,7 +77,8 @@ deploy/README.md                   # the bootstrap runbook (§6)
 3. `contract`: the generated TS types match `backend/openapi.json` (the backend checks the file
    against the code).
 4. `e2e`: `docker compose up --build --wait api worker` (the production image, §10) →
-   Playwright (Chromium) against `http://localhost:8000` → the stack's logs on failure. In M0
+   Playwright (Chromium, run inside the pinned `mcr.microsoft.com/playwright` image of the same
+   version, so no apt step) against `http://localhost:8000` → the stack's logs on failure. In M0
    it runs the login smoke test (`frontend/e2e/login.spec.ts`); the story journeys of doc 21
    §4 join it as their milestones land.
 5. `secrets` (gitleaks) and `image-scan` (Trivy on a no-push build) arrive with the security
