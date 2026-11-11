@@ -121,7 +121,9 @@ jobs:
   # Playwright journeys against it. For now the M0 login smoke test; the story journeys join as
   # their milestones land.
   e2e:
-    runs-on: ubuntu-latest
+    # Pinned: Playwright installs Chromium's system packages only on the Ubuntu releases it
+    # supports, and ubuntu-latest moved to 26.04 before Playwright 1.55 did.
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
