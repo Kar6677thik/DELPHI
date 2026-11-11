@@ -16,6 +16,7 @@ real LLM, fixed seeds.
 | Contract | pytest | `openapi.json` up to date; generated TS types up to date | every PR |
 | Architecture | import-linter | doc 04 §4.1 contracts | every PR |
 | Frontend unit | Vitest + Testing Library | components (HypothesisBar, CandidatesTable, MoneyText, forms) | every PR |
+| Slow | pytest `-m slow` with `DELPHI_RUN_SLOW=1` and PostgreSQL 16 | minutes-long acceptance checks, e.g. FR-SIM-02 (the `eval` profile's stats within ±10%) | nightly at 20:30 UTC and on demand (`.github/workflows/nightly.yml`), not on PRs |
 | E2E | Playwright (Chromium) against the docker compose stack, `DELPHI_LLM_PROVIDER=template`, `test`+personas dataset | E2E-S1…S5, login/RBAC, demo reset, accessibility scan | PRs to `main` and `main` |
 | Load | Locust | §5 | M9 and before demos (manual) |
 | Security | gitleaks, pip-audit, pnpm audit, Trivy, bandit | | every PR (Trivy on image builds) |
