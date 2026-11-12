@@ -9,6 +9,7 @@ from fastapi import APIRouter, Request, Response
 from pydantic import BaseModel
 
 from delphi.api.routers import API_PREFIX
+from delphi.kb.store import kb_readiness
 from delphi.platform.health import CheckStatus, check_readiness
 from delphi.platform.wiring import Platform
 
@@ -50,7 +51,9 @@ def health(request: Request) -> HealthView:
 )
 def ready(request: Request, response: Response) -> ReadinessView:
     p = _platform(request)
-    result = check_readiness(p.engine, p.migration_head, p.settings.ready_db_timeout_ms)
+    result = check_readiness(
+        p.engine, p.migration_head, p.settings.ready_db_timeout_ms, extra={"kb": kb_readiness}
+    )
     if not result.ready:
         response.status_code = 503
     return ReadinessView(

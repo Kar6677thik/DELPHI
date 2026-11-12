@@ -10,7 +10,7 @@ from datetime import timedelta
 from uuid import UUID
 
 import pytest
-from sqlalchemy import func, inspect, select
+from sqlalchemy import func, inspect, select, text
 
 from delphi.kb.model import KnowledgeBase
 from delphi.sensing.config import load_sensing_config
@@ -21,7 +21,11 @@ from delphi.sensing.features import (
     payment_feature_names,
     to_us,
 )
-from delphi.sensing.history import load_account_snapshot, load_payment_snapshot
+from delphi.sensing.history import (
+    complaints_naming,
+    load_account_snapshot,
+    load_payment_snapshot,
+)
 from delphi.sensing.offline import OfflineAccountHistories, OfflineHistories, load_bank_frames
 from delphi.sim import api as bank
 from delphi.sim.dataset import generate_dataset
@@ -148,5 +152,54 @@ def test_online_and_offline_account_features_agree(
             for i in inspect(app).get_indexes(table, schema="bank")
         }
         assert {"complaints_counterparty_account_ids_idx", "devices_fingerprint_idx"} <= indexes
+        # The complaints query must be one the GIN index can serve (`@>`, not `= ANY`). The
+        # `test` tables are small, so sequential scans are turned off to see the plan it allows.
+        with app.connect() as conn:
+            conn.execute(text("SET enable_seqscan = off"))
+            query = complaints_naming(sample[0], end).compile(dialect=conn.dialect)
+            plan = "\n".join(
+                str(line) for (line,) in conn.exec_driver_sql(f"EXPLAIN {query}", query.params)
+            )
+        assert "complaints_counterparty_account_ids_idx" in plan, plan
     finally:
         app.dispose()
+
+
+def test_another_customers_device_is_new_on_both_paths(
+    create_database: Callable[[], str], kb: KnowledgeBase
+) -> None:
+    """docs/13 §3 (the #140 review): a payment made on a device the bank has long known under
+    another customer is on a new device for this customer, online and offline alike."""
+    url = create_database()
+    upgrade(url)
+    sim = engine_as(url, "delphi_sim")
+    p, a, d = bank.payments, bank.accounts, bank.devices
+    with sim.begin() as conn:
+        write_dataset(conn, generate_dataset(load_generator_config(), "test", kb=kb))
+        payment, payer, at = conn.execute(
+            select(p.c.id, a.c.customer_id, p.c.initiated_at)
+            .join(a, a.c.id == p.c.payer_account_id)
+            .where(a.c.customer_id.is_not(None), p.c.device_id.is_not(None))
+            .order_by(p.c.initiated_at.desc(), p.c.id)
+            .limit(1)
+        ).one()
+        device = conn.execute(  # another customer's device, seen well before the payment
+            select(d.c.id)
+            .where(d.c.customer_id != payer, d.c.first_seen_at < at - timedelta(days=10))
+            .order_by(d.c.id)
+            .limit(1)
+        ).scalar_one()
+        conn.execute(p.update().where(p.c.id == payment).values(device_id=device))
+    sim.dispose()
+
+    config = load_sensing_config().features
+    app = engine_as(url, "delphi_app")
+    try:
+        with app.connect() as conn:
+            online = build_payment_features(*load_payment_snapshot(conn, payment, config), config)
+            offline = OfflineHistories(load_bank_frames(conn), config)
+            batch = build_payment_features(*offline.snapshot(str(payment)), config)
+    finally:
+        app.dispose()
+    for features in (online, batch):
+        assert features["device_age_days"] == 0.0 and features["is_new_device"] == 1.0

@@ -24,8 +24,11 @@ from delphi.api.contract import OPENAPI_FILE, openapi_document
 from delphi.kb.canonical import content_sha256
 from delphi.kb.issues import KbValidationError
 from delphi.kb.loader import load_and_validate
+from delphi.kb.model import KnowledgeBase
+from delphi.kb.store import active_version, ensure_kb_v1
 from delphi.platform.accounts import BootstrapError, ensure_bootstrap_admin
-from delphi.platform.db import alembic_config, make_engine
+from delphi.platform.clock import SystemClock
+from delphi.platform.db import alembic_config, make_engine, make_session_factory
 from delphi.platform.errors import DelphiError
 from delphi.platform.events import EventHub
 from delphi.platform.jobs import JobRegistry
@@ -35,6 +38,7 @@ from delphi.platform.settings import Settings, SettingsError, libpq_url, load_se
 from delphi.platform.wiring import Platform, build_platform
 from delphi.platform.worker import build_registry, install_stop_handlers, run_worker
 from delphi.probes.registry import CLASSIFIER_NAMES
+from delphi.sensing.jobs import register_sensing_jobs
 from delphi.sim.api import PROFILES, dataset_exists, request_dataset
 from delphi.sim.dataset import generate_dataset
 from delphi.sim.generator_config import load_generator_config
@@ -165,22 +169,37 @@ def _api(settings: Settings) -> int:
     return 0
 
 
-def worker_registry(platform: Platform) -> tuple[JobRegistry, Engine | None]:
-    """The worker's handlers: the platform's, plus the simulator's when the worker has its
+def _active_kb(platform: Platform) -> KnowledgeBase:
+    """The ACTIVE KB version from the database (TD-3 repaid by #15)."""
+    with platform.sessions() as session:
+        active = active_version(session)
+    if active is None:
+        raise SettingsError("no ACTIVE KB version: run `delphi migrate` first (docs/07 §1)")
+    return active.kb
+
+
+def worker_registry(
+    platform: Platform, *, kb_source: Callable[[Platform], KnowledgeBase] = _active_kb
+) -> tuple[JobRegistry, Engine | None]:
+    """The worker's handlers: the platform's and sensing's, plus the simulator's when it has its
     `delphi_sim` pool (`DELPHI_SIM_DATABASE_URL`, docs/17 §2). The api never gets that pool.
-    Returns the sim engine too, for the caller to dispose of."""
+    The simulator's jobs use the ACTIVE KB (``kb_source``). Returns the sim engine too, for the
+    caller to dispose of."""
     registry = build_registry(platform)
+    register_sensing_jobs(
+        registry, engine=platform.engine, sessions=platform.sessions, clock=platform.clock
+    )
     settings = platform.settings
     if settings.sim_database_url is None:
         log.warning("worker.sim_jobs_disabled", reason="DELPHI_SIM_DATABASE_URL is not set")
         return registry, None
+    kb = kb_source(platform)
     sim_engine = make_engine(
         settings.sim_database_url,
         pool_size=settings.db_pool_size,
         connect_timeout_s=settings.db_connect_timeout_s,
         application_name="delphi-worker-sim",
     )
-    kb = load_and_validate(_REPO_KB_DIR, CLASSIFIER_NAMES)  # KB v1 until #15 (TD-3)
     register_sim_jobs(
         registry,
         sim_engine=sim_engine,
@@ -232,7 +251,13 @@ def _seed(settings: Settings, args: argparse.Namespace) -> int:
         return 1
     finally:
         platform.close()
-    state = "queued" if queued.created else "already queued"
+    state = (
+        "queued"
+        if queued.created
+        else "queued again (it had failed)"
+        if queued.requeued
+        else "already queued"
+    )
     print(f"GENERATE_DATASET job {queued.job_id} {state} ({args.profile}, seed {seed})")
     return 0
 
@@ -241,7 +266,22 @@ def _migrate(settings: Settings) -> int:
     if not settings.migrations_dir.is_dir():
         raise SettingsError(f"DELPHI_MIGRATIONS_DIR: {settings.migrations_dir} is not a directory")
     command.upgrade(alembic_config(settings.migrations_dir, settings.effective_migrate_url), "head")
-    # Loading KB v1 when no KB version exists is added with the KB versions table (#15).
+    # Then KB v1, if no KB version exists yet (docs/07 §1, docs/23 §4): idempotent, so the
+    # migrate Job can run on every deploy.
+    try:
+        kb = load_and_validate(_REPO_KB_DIR, CLASSIFIER_NAMES)
+    except KbValidationError as exc:
+        for issue in exc.issues:
+            print(f"delphi migrate: KB v1: {issue}", file=sys.stderr)
+        return 1
+    engine = make_engine(settings.effective_migrate_url, application_name="delphi-migrate")
+    try:
+        with make_session_factory(engine).begin() as session:
+            created = ensure_kb_v1(session, SystemClock(), kb)
+    finally:
+        engine.dispose()
+    if created is not None:
+        log.info("migrate.kb_v1_loaded", kb_version_id=created, content_sha256=content_sha256(kb))
     log.info("migrate.done")
     return 0
 

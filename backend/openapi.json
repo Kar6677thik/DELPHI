@@ -78,6 +78,37 @@
         }
       }
     },
+    "/api/v1/status": {
+      "get": {
+        "tags": [
+          "platform"
+        ],
+        "summary": "Read Status",
+        "operationId": "read_status_api_v1_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusView"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An RFC 9457 problem (docs/16 §1)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/auth/login": {
       "post": {
         "tags": [
@@ -697,10 +728,274 @@
           }
         }
       }
+    },
+    "/api/v1/kb/versions": {
+      "get": {
+        "tags": [
+          "kb"
+        ],
+        "summary": "Read Kb Versions",
+        "description": "Newest first, without the content.",
+        "operationId": "read_kb_versions_api_v1_kb_versions_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KbVersionPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An RFC 9457 problem (docs/16 §1)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/kb/versions/{version_id}": {
+      "get": {
+        "tags": [
+          "kb"
+        ],
+        "summary": "Read Kb Version",
+        "operationId": "read_kb_version_api_v1_kb_versions__version_id__get",
+        "parameters": [
+          {
+            "name": "version_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Version Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KbVersionView"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An RFC 9457 problem (docs/16 §1)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/kb/versions/{version_id}/diff": {
+      "get": {
+        "tags": [
+          "kb"
+        ],
+        "summary": "Read Kb Diff",
+        "description": "What changed from ``against`` (default: the parent) to this version.",
+        "operationId": "read_kb_diff_api_v1_kb_versions__version_id__diff_get",
+        "parameters": [
+          {
+            "name": "version_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Version Id"
+            }
+          },
+          {
+            "name": "against",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "default: the version's parent",
+              "title": "Against"
+            },
+            "description": "default: the version's parent"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KbDiffView"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An RFC 9457 problem (docs/16 §1)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/kb/versions/{version_id}/export": {
+      "get": {
+        "tags": [
+          "kb"
+        ],
+        "summary": "Export Kb Version",
+        "description": "The version as the `kb/` YAML tree, zipped (docs/07 §1).",
+        "operationId": "export_kb_version_api_v1_kb_versions__version_id__export_get",
+        "parameters": [
+          {
+            "name": "version_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Version Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The YAML tree",
+            "content": {
+              "application/zip": {}
+            }
+          },
+          "default": {
+            "description": "An RFC 9457 problem (docs/16 §1)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/sensing/train": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Train Sensing",
+        "description": "Queue a `TRAIN_SENSING` job on the dataset in the bank (202 with the job). 409\n`INVALID_STATE_TRANSITION` without a dataset, 409 `JOB_ALREADY_RUNNING` while one runs. A\nmodel whose gate fails is stored as FAILED_GATE and the ACTIVE one is kept (docs/13 §4).",
+        "operationId": "train_sensing_api_v1_admin_sensing_train_post",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobView"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An RFC 9457 problem (docs/16 §1)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "ArtifactKind": {
+        "type": "string",
+        "enum": [
+          "PRIOR",
+          "ANOMALY",
+          "MULE"
+        ],
+        "title": "ArtifactKind",
+        "description": "The sensing models (docs/13 §1)."
+      },
       "AuditVerifyView": {
         "properties": {
           "ok": {
@@ -825,6 +1120,15 @@
           "profile"
         ],
         "title": "DatasetRequest"
+      },
+      "DiffOp": {
+        "type": "string",
+        "enum": [
+          "added",
+          "removed",
+          "changed"
+        ],
+        "title": "DiffOp"
       },
       "HealthView": {
         "properties": {
@@ -996,6 +1300,281 @@
         ],
         "title": "JobView"
       },
+      "KbChangeView": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "op": {
+            "$ref": "#/components/schemas/DiffOp"
+          },
+          "before": {
+            "title": "Before"
+          },
+          "after": {
+            "title": "After"
+          }
+        },
+        "type": "object",
+        "required": [
+          "path",
+          "op"
+        ],
+        "title": "KbChangeView"
+      },
+      "KbDiffView": {
+        "properties": {
+          "version_id": {
+            "type": "integer",
+            "title": "Version Id"
+          },
+          "against_id": {
+            "type": "integer",
+            "title": "Against Id"
+          },
+          "changes": {
+            "items": {
+              "$ref": "#/components/schemas/KbChangeView"
+            },
+            "type": "array",
+            "title": "Changes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "version_id",
+          "against_id",
+          "changes"
+        ],
+        "title": "KbDiffView"
+      },
+      "KbStatus": {
+        "type": "string",
+        "enum": [
+          "CANDIDATE",
+          "SHADOW",
+          "ACTIVE",
+          "RETIRED",
+          "REJECTED"
+        ],
+        "title": "KbStatus",
+        "description": "The KB version status machine (docs/07 §1)."
+      },
+      "KbVersionPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/KbVersionSummaryView"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "KbVersionPage"
+      },
+      "KbVersionSummaryView": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "status": {
+            "$ref": "#/components/schemas/KbStatus"
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
+          },
+          "content_sha256": {
+            "type": "string",
+            "title": "Content Sha256"
+          },
+          "change_summary": {
+            "type": "string",
+            "title": "Change Summary"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "activated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Activated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "parent_id",
+          "content_sha256",
+          "change_summary",
+          "created_by",
+          "created_at",
+          "activated_at"
+        ],
+        "title": "KbVersionSummaryView"
+      },
+      "KbVersionView": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "status": {
+            "$ref": "#/components/schemas/KbStatus"
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
+          },
+          "content_sha256": {
+            "type": "string",
+            "title": "Content Sha256"
+          },
+          "change_summary": {
+            "type": "string",
+            "title": "Change Summary"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "activated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Activated At"
+          },
+          "approved_by": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved By"
+          },
+          "retired_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retired At"
+          },
+          "rollback_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rollback Reason"
+          },
+          "content": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Content"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "parent_id",
+          "content_sha256",
+          "change_summary",
+          "created_by",
+          "created_at",
+          "activated_at",
+          "approved_by",
+          "retired_at",
+          "rollback_reason",
+          "content"
+        ],
+        "title": "KbVersionView"
+      },
       "LoginRequest": {
         "properties": {
           "username": {
@@ -1053,6 +1632,24 @@
           "permissions"
         ],
         "title": "MeView"
+      },
+      "ModelStatus": {
+        "properties": {
+          "version": {
+            "type": "integer",
+            "title": "Version"
+          },
+          "gate_passed": {
+            "type": "boolean",
+            "title": "Gate Passed"
+          }
+        },
+        "type": "object",
+        "required": [
+          "version",
+          "gate_passed"
+        ],
+        "title": "ModelStatus"
       },
       "Permission": {
         "type": "string",
@@ -1205,6 +1802,68 @@
           "ADMIN"
         ],
         "title": "Role"
+      },
+      "StatusView": {
+        "properties": {
+          "dataset_ready": {
+            "type": "boolean",
+            "title": "Dataset Ready"
+          },
+          "models_ready": {
+            "type": "boolean",
+            "title": "Models Ready"
+          },
+          "seed_job_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seed Job Id"
+          },
+          "seed_progress": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seed Progress"
+          },
+          "models": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ModelStatus"
+            },
+            "propertyNames": {
+              "$ref": "#/components/schemas/ArtifactKind"
+            },
+            "type": "object",
+            "title": "Models"
+          },
+          "models_below_gate": {
+            "items": {
+              "$ref": "#/components/schemas/ArtifactKind"
+            },
+            "type": "array",
+            "title": "Models Below Gate"
+          }
+        },
+        "type": "object",
+        "required": [
+          "dataset_ready",
+          "models_ready",
+          "seed_job_id",
+          "seed_progress",
+          "models",
+          "models_below_gate"
+        ],
+        "title": "StatusView"
       },
       "UpdateUser": {
         "properties": {

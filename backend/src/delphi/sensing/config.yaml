@@ -25,7 +25,7 @@ features:                      # docs/13 §2–3, the payment features
 
 accounts:                      # docs/13 §6, the account features the mule scorer reads
   inbound_payers_hours: 48     # inbound_distinct_payers_48h
-  flow_days: 7                 # the *_7d features; also median_dwell_minutes_7d's cap
+  flow_days: 7                 # the *_7d features; also median_dwell_minutes_7d with no dwell
   device_share_days: 30        # device_shared_accounts_30d
   account_age_cap_days: 3650
   amount_floor_inr: 100        # outbound_to_inbound_ratio_7d's inbound floor

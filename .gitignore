@@ -35,3 +35,7 @@ Thumbs.db
 
 # The operator's private kustomize overlay: it holds server details (docs/23 §4, §6)
 deploy/k8s/overlays/local/
+
+# Playwright (frontend/e2e)
+frontend/playwright-report/
+frontend/test-results/

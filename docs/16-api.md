@@ -22,7 +22,7 @@ documents its error body as a `default` response of `application/problem+json` w
 | Concurrency | Mutable aggregates return `ETag: "<version>"`. Mutations need `If-Match`; a mismatch returns `412 VERSION_CONFLICT` |
 | Errors | RFC 9457 `application/problem+json`: `{type, title, status, detail, code, instance, request_id, errors?: [{path, code, message}]}` |
 | Request id | `X-Request-Id` is accepted or generated, and echoed in the response and the logs |
-| Rate limits | Login: 5 failures / 15 min per (username, IP) → `429 RATE_LIMITED`. Global: 20 req/s per session, token bucket with burst 40 |
+| Rate limits | Login: 5 failures / 15 min per (username, IP) → `429 RATE_LIMITED`. Global: 20 req/s per session, token bucket with burst 40 (`DELPHI_RATE_LIMIT_PER_S`, `DELPHI_RATE_LIMIT_BURST`) → `429 RATE_LIMITED` with `Retry-After`. Every `/api/` request takes a token except `/health` and `/ready`; a caller without a session is keyed by its client address. The SSE stream is one request. In process memory, like the login throttle (one api replica) |
 
 ### Error codes (stable)
 
@@ -44,11 +44,11 @@ Permission names refer to doc 19 §3.
 |---|---|---|
 | GET `/health` | public | `{status:"ok", version:"<git sha>", started_at}`. Liveness; no DB access |
 | GET `/ready` | public | 200 only if the DB is reachable, the migrations are at head and (from M1) an ACTIVE KB exists; else 503 with the failing checks. It deliberately does **not** depend on dataset or models, so the first deploy can become healthy before seeding finishes (doc 23 §4) |
-| GET `/status` | any | `{dataset_ready, models_ready, seed_job_id, seed_progress}`. The UI shows an "Initialising…" banner with progress until both are true |
+| GET `/status` | `view` (every role) | `{dataset_ready, models_ready, seed_job_id, seed_progress, models, models_below_gate}`. The UI shows an "Initialising…" banner with progress until both are true. `seed_job_id` is the latest `GENERATE_DATASET` job until a dataset exists, then the latest `TRAIN_SENSING` job. `models` gives each ACTIVE model's `{version, gate_passed}`; `models_below_gate` lists the kinds activated below their gate (doc 13 §4), for the Overview page's "sensing below quality gate" warning. `models_ready` needs an ACTIVE PRIOR, ANOMALY and MULE model |
 | POST `/auth/login` | public | `{username, password}` → 204 + cookie |
 | POST `/auth/logout` | any | 204 |
 | GET `/auth/me` | any | `{id, username, display_name, role, permissions[]}` |
-| GET `/events/stream` | `view` | SSE (§3). Query `topics=guardian,cases,chase,jobs,scout,kb` |
+| GET `/events/stream` | `view` | SSE (§3). Query `topics=guardian,cases,chase,jobs,scout,kb,sensing,sim` |
 
 ### Guardian
 
@@ -115,9 +115,9 @@ Permission names refer to doc 19 §3.
 | POST `/typology-drafts/{id}/shadow` | `fde` | requires BACKTESTED |
 | POST `/typology-drafts/{id}/promote` | `fde` | four-eyes; requires shadow count |
 | POST `/typology-drafts/{id}/reject` | `fde` | `{reason}` |
-| GET `/kb/versions`, GET `/kb/versions/{id}` | `view` | `content`, `content_sha256`, `status`, lineage |
-| GET `/kb/versions/{id}/diff?against={id}` | `view` | structured diff |
-| GET `/kb/versions/{id}/export` | `view` | zip of the YAML tree |
+| GET `/kb/versions`, GET `/kb/versions/{id}` | `view` | `content`, `content_sha256`, `status`, lineage. The list is newest first, keyset-paged, without `content` |
+| GET `/kb/versions/{id}/diff?against={id}` | `view` | structured diff from `against` (default: the parent; a version with no parent needs `against`, else `422`) to `{id}`: `{version_id, against_id, changes: [{path, op, before, after}]}`. `path` is a JSON Pointer into `content`; `op` is `added`, `removed` or `changed`. Objects are compared key by key, lists element by element; a list whose length changed is one `changed` entry |
+| GET `/kb/versions/{id}/export` | `view` | zip of the YAML tree, laid out as `kb/` (doc 07 §2); loading it gives the same `content_sha256` |
 | POST `/kb/versions` | `fde` | manual edit: `{parent_id, patch (losses/costs/guardrails/classifier thresholds only), change_summary}` → CANDIDATE |
 | POST `/kb/versions/{id}/shadow` | `fde` | CANDIDATE→SHADOW |
 | POST `/kb/versions/{id}/promote` | `fde` | CANDIDATE→ACTIVE (allowed producers only, doc 07 §1) or SHADOW→ACTIVE; `409 KB_STALE_PARENT` if parent ≠ ACTIVE |
@@ -148,7 +148,7 @@ Permission names refer to doc 19 §3.
 |---|---|---|
 | GET/POST `/admin/users`, PATCH `/admin/users/{id}` | `admin` | Create `{username, display_name, password, role}`; a taken username is 422. PATCH `{display_name?, role?, disabled?, password?}` with `If-Match` (ETag `"<version>"`): a stale one is 412, a missing one 422. Disabling, a role change or a password reset ends the user's sessions at once. Removing the last enabled ADMIN (disable or demote) is `409 INVALID_STATE_TRANSITION`. Every change is audited |
 | POST `/admin/datasets` | `admin` | `{profile, seed?}` → 202 with the `GENERATE_DATASET` job. One dataset per database (doc 17 §3): 409 `JOB_ALREADY_RUNNING` while one is being generated, 409 `INVALID_STATE_TRANSITION` once one is there |
-| POST `/admin/sensing/train` | `admin` | → job |
+| POST `/admin/sensing/train` | `admin` | `Idempotency-Key` → `202` with the `TRAIN_SENSING` job, on the dataset in the bank. `409 INVALID_STATE_TRANSITION` without a dataset, `409 JOB_ALREADY_RUNNING` while one is queued or running (doc 13 §7) |
 | POST `/admin/demo/scenarios/{story}/run` | `demo:drive` | story ∈ `S1,S2,S3,S4`; `{mode}` |
 | POST `/admin/demo/reset` | `admin` | → job |
 | GET `/jobs/{id}` | `view` | `{id, type, status, progress (0–1), result, error, attempts, created_at, finished_at}` |
@@ -166,6 +166,7 @@ default all) selects event types by prefix:
 - `jobs` → `job.*`
 - `scout` → `scout.*`
 - `kb` → `kb.*`
+- `sensing` → `artifact.*`
 - `sim` → `sim.*`
 
 An unknown topic, or a `Last-Event-ID` that is not an event id, is `422 VALIDATION_FAILED`.
@@ -179,7 +180,8 @@ data: {"type": "...", "entity_id": "...", "at": "...", "payload": {...}}
 
 Event types: `guardian.session.updated`, `guardian.session.decided`, `case.opened`,
 `case.updated`, `evidence.narrative_ready`, `campaign.updated`, `chase.updated`,
-`chase.lien.updated`, `job.updated`, `scout.cluster.created`, `kb.version.changed`,
+`chase.lien.updated`, `job.updated`, `scout.cluster.created`, `kb.version.changed`, `artifact.activated` (a sensing model became
+ACTIVE: the api and the worker reload it, docs/13 §7),
 `sim.transfer` (demo feed). An `: open` comment is sent as soon as the stream opens (some
 proxies hold the response head until the first body bytes), and a heartbeat comment (`: ping`)
 every 15 s. Reconnect with

@@ -42,6 +42,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Status */
+        get: operations["read_status_api_v1_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/login": {
         parameters: {
             query?: never;
@@ -238,10 +255,115 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/kb/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Kb Versions
+         * @description Newest first, without the content.
+         */
+        get: operations["read_kb_versions_api_v1_kb_versions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/kb/versions/{version_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Kb Version */
+        get: operations["read_kb_version_api_v1_kb_versions__version_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/kb/versions/{version_id}/diff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Kb Diff
+         * @description What changed from ``against`` (default: the parent) to this version.
+         */
+        get: operations["read_kb_diff_api_v1_kb_versions__version_id__diff_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/kb/versions/{version_id}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export Kb Version
+         * @description The version as the `kb/` YAML tree, zipped (docs/07 §1).
+         */
+        get: operations["export_kb_version_api_v1_kb_versions__version_id__export_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/sensing/train": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Train Sensing
+         * @description Queue a `TRAIN_SENSING` job on the dataset in the bank (202 with the job). 409
+         *     `INVALID_STATE_TRANSITION` without a dataset, 409 `JOB_ALREADY_RUNNING` while one runs. A
+         *     model whose gate fails is stored as FAILED_GATE and the ACTIVE one is kept (docs/13 §4).
+         */
+        post: operations["train_sensing_api_v1_admin_sensing_train_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * ArtifactKind
+         * @description The sensing models (docs/13 §1).
+         * @enum {string}
+         */
+        ArtifactKind: "PRIOR" | "ANOMALY" | "MULE";
         /** AuditVerifyView */
         AuditVerifyView: {
             /** Ok */
@@ -285,6 +407,11 @@ export interface components {
              */
             seed?: number | null;
         };
+        /**
+         * DiffOp
+         * @enum {string}
+         */
+        DiffOp: "added" | "removed" | "changed";
         /** HealthView */
         HealthView: {
             /**
@@ -345,6 +472,90 @@ export interface components {
             /** Finished At */
             finished_at: string | null;
         };
+        /** KbChangeView */
+        KbChangeView: {
+            /** Path */
+            path: string;
+            op: components["schemas"]["DiffOp"];
+            /** Before */
+            before?: unknown;
+            /** After */
+            after?: unknown;
+        };
+        /** KbDiffView */
+        KbDiffView: {
+            /** Version Id */
+            version_id: number;
+            /** Against Id */
+            against_id: number;
+            /** Changes */
+            changes: components["schemas"]["KbChangeView"][];
+        };
+        /**
+         * KbStatus
+         * @description The KB version status machine (docs/07 §1).
+         * @enum {string}
+         */
+        KbStatus: "CANDIDATE" | "SHADOW" | "ACTIVE" | "RETIRED" | "REJECTED";
+        /** KbVersionPage */
+        KbVersionPage: {
+            /** Items */
+            items: components["schemas"]["KbVersionSummaryView"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
+        /** KbVersionSummaryView */
+        KbVersionSummaryView: {
+            /** Id */
+            id: number;
+            status: components["schemas"]["KbStatus"];
+            /** Parent Id */
+            parent_id: number | null;
+            /** Content Sha256 */
+            content_sha256: string;
+            /** Change Summary */
+            change_summary: string;
+            /** Created By */
+            created_by: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Activated At */
+            activated_at: string | null;
+        };
+        /** KbVersionView */
+        KbVersionView: {
+            /** Id */
+            id: number;
+            status: components["schemas"]["KbStatus"];
+            /** Parent Id */
+            parent_id: number | null;
+            /** Content Sha256 */
+            content_sha256: string;
+            /** Change Summary */
+            change_summary: string;
+            /** Created By */
+            created_by: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Activated At */
+            activated_at: string | null;
+            /** Approved By */
+            approved_by: string | null;
+            /** Retired At */
+            retired_at: string | null;
+            /** Rollback Reason */
+            rollback_reason: string | null;
+            /** Content */
+            content: {
+                [key: string]: unknown;
+            };
+        };
         /** LoginRequest */
         LoginRequest: {
             /** Username */
@@ -366,6 +577,13 @@ export interface components {
             role: components["schemas"]["Role"];
             /** Permissions */
             permissions: components["schemas"]["Permission"][];
+        };
+        /** ModelStatus */
+        ModelStatus: {
+            /** Version */
+            version: number;
+            /** Gate Passed */
+            gate_passed: boolean;
         };
         /**
          * Permission
@@ -425,6 +643,23 @@ export interface components {
          * @enum {string}
          */
         Role: "VIEWER" | "INVESTIGATOR" | "FDE_ENGINEER" | "ADMIN";
+        /** StatusView */
+        StatusView: {
+            /** Dataset Ready */
+            dataset_ready: boolean;
+            /** Models Ready */
+            models_ready: boolean;
+            /** Seed Job Id */
+            seed_job_id: string | null;
+            /** Seed Progress */
+            seed_progress: number | null;
+            /** Models */
+            models: {
+                [key: string]: components["schemas"]["ModelStatus"];
+            };
+            /** Models Below Gate */
+            models_below_gate: components["schemas"]["ArtifactKind"][];
+        };
         /**
          * UpdateUser
          * @description Only the fields present change.
@@ -523,6 +758,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ReadinessView"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    read_status_api_v1_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatusView"];
                 };
             };
             /** @description An RFC 9457 problem (docs/16 §1) */
@@ -900,6 +1164,165 @@ export interface operations {
                 "application/json": components["schemas"]["DatasetRequest"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobView"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    read_kb_versions_api_v1_kb_versions_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KbVersionPage"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    read_kb_version_api_v1_kb_versions__version_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                version_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KbVersionView"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    read_kb_diff_api_v1_kb_versions__version_id__diff_get: {
+        parameters: {
+            query?: {
+                /** @description default: the version's parent */
+                against?: number | null;
+            };
+            header?: never;
+            path: {
+                version_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KbDiffView"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    export_kb_version_api_v1_kb_versions__version_id__export_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                version_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The YAML tree */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/zip": unknown;
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    train_sensing_api_v1_admin_sensing_train_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             202: {

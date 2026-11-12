@@ -16,6 +16,7 @@ from delphi.sensing.features import (
     CustomerHistory,
     PaymentView,
     build_payment_features,
+    circular_median,
     payment_feature_names,
     prior_feature_names,
     to_us,
@@ -153,6 +154,58 @@ def test_hour_deviation_is_circular(config: FeatureConfig) -> None:
     early = to_us(datetime(2026, 7, 1, 19, 0, tzinfo=UTC))  # 00:30 IST the next day
     f = build_payment_features(_payment(initiated_at_us=early), history, config)
     assert f["hour_deviation"] == pytest.approx(1.0)
+
+
+def test_hour_deviation_uses_a_circular_median(config: FeatureConfig) -> None:
+    """A customer who pays around midnight: the linear median of [23.5, 23.7, 0.5, 0.6] is
+    about 12, which would make a 23:40 payment look 12 hours off (#140 review)."""
+    utc = [  # IST is UTC+05:30
+        datetime(2026, 6, 27, 18, 0, tzinfo=UTC),  # 23:30 IST
+        datetime(2026, 6, 28, 18, 12, tzinfo=UTC),  # 23:42 IST
+        datetime(2026, 6, 29, 19, 0, tzinfo=UTC),  # 00:30 IST
+        datetime(2026, 6, 30, 19, 6, tzinfo=UTC),  # 00:36 IST
+    ]
+    history = _history(
+        payment_at_us=np.array([to_us(t) for t in utc], dtype=np.int64),
+        payment_amount_paise=np.array([100] * 4, dtype=np.int64),
+        payment_payee=(OTHER,) * 4,
+    )
+    at = to_us(datetime(2026, 7, 1, 18, 10, tzinfo=UTC))  # 23:40 IST
+    f = build_payment_features(_payment(initiated_at_us=at), history, config)
+    # The circular median is about 00:06; 23:40 is about 0.43 h from it.
+    assert f["hour_deviation"] == pytest.approx(0.1 + 24 - (23 + 40 / 60), abs=1e-6)
+
+
+@pytest.mark.parametrize(
+    ("hours", "median"),
+    [
+        ([5.0], 5.0),
+        ([1.0, 2.0, 3.0], 2.0),
+        ([23.5, 23.7, 0.5, 0.6], 0.1),  # cut at the empty afternoon, not at midnight
+        ([22.0, 23.0, 1.0], 23.0),
+        ([12.0, 12.0, 12.0], 12.0),
+    ],
+)
+def test_circular_median(hours: list[float], median: float) -> None:
+    assert circular_median(np.array(hours)) == pytest.approx(median)
+
+
+def test_a_device_of_another_customer_is_new_to_this_one(config: FeatureConfig) -> None:
+    """The snapshot holds only the customer's own devices, so a fraudster's phone the bank has
+    known for months is new to the victim (docs/13 §3, the #140 review)."""
+    f = build_payment_features(_payment(device_id="fraudster-phone"), _history(), config)
+    assert f["device_age_days"] == 0.0 and f["is_new_device"] == 1.0
+
+
+def test_paid_before_is_answered_from_the_first_payment_index(config: FeatureConfig) -> None:
+    history = _history()
+    assert history.first_payment_index == {OTHER: 0, PAYEE: 1}
+    # PAYEE was saved 200 days ago and paid 20 days ago: not new.
+    assert build_payment_features(_payment(), history, config)["is_new_payee"] == 0.0
+    # Saved 10 days ago and never paid before as_of: new (docs/13 §3, the 30-day rule).
+    unpaid = _history(payee_added_at_us={PAYEE: _at(days=10), OTHER: _at(days=3)})
+    unpaid = replace(unpaid, payment_payee=(OTHER,) * 5)
+    assert build_payment_features(_payment(), unpaid, config)["is_new_payee"] == 1.0
 
 
 def test_a_limit_increase_counts_for_a_day(config: FeatureConfig) -> None:
