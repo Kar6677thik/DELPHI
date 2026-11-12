@@ -5,3 +5,51 @@ anomaly:                       # docs/13 §5
   contamination: auto
   random_state: 7
   n_quantiles: 10001           # training-score quantiles stored in the artifact
+
+prior:                         # docs/13 §4, the LightGBM multiclass prior model
+  classes: [GENUINE, ATO, APP_DIGITAL_ARREST, APP_INVESTMENT, MULE]   # the model hypotheses
+  num_leaves: 31
+  learning_rate: 0.05
+  n_estimators: 400            # the most boosting rounds; early stopping picks fewer
+  early_stopping_rounds: 50    # gap: docs/13 §4 names early stopping but not its patience
+  seed: 7
+  # The matured window's temporal split in parts (2/3, 1/6, 1/6): validation and test get
+  # whole days rounded down, and train gets the rest.
+  split_parts: {train: 4, validation: 1, test: 1}
+  temperature_bounds: [0.05, 20.0]       # the search range for the temperature T
+  ece_bins: 15                 # equal-width bins on the max probability
+  top_contributions: 5         # pred_contrib entries kept for the DD pack and the monitor
+  # docs/05 §8: when a payment has several observed labels, the first source listed wins.
+  label_precedence:
+    [INVESTIGATOR_DISPOSITION, OUTREACH_CONFIRMED, CUSTOMER_COMPLAINT, REGISTRY_LISTING, NO_COMPLAINT_60D]
+  gate:
+    max_ece: 0.05
+    min_macro_auc: 0.85
+    enforced_profiles: [demo, eval]      # `test` is reported only
+
+features:                      # docs/13 §2–3, the payment features
+  local_utc_offset_minutes: 330  # IST, which has no daylight saving (docs/14 §2)
+  amount_floor_inr: 100        # amount_z_30d's std floor and sum_24h_ratio_30d's mean floor
+  payee_age_cap_days: 365
+  payee_account_age_cap_days: 3650
+  device_age_cap_days: 365
+  new_device_days: 7           # is_new_device; the same as the KB's DEVICE_POSTURE threshold
+  new_payee_hours: 24          # is_new_payee (docs/13 §3, amended)
+  baseline_days: 30            # the 30-day behavioural baseline window
+  # channel_* one-hot, in this order: the channels the bank's payments use.
+  channels: [IMPS, NEFT, UPI_PUSH, UPI_COLLECT_APPROVAL, CASH_OUT]
+  # Gap: the bank records no limit changes yet, so limit_change_24h stays 0 until it does.
+  limit_increase_event_types: []
+  # docs/13 §6: a payee account with no mule score yet is scored at this until the mule
+  # scorer (#91) fills bank.account_scores.
+  mule_score_fallback: 0.10
+
+accounts:                      # docs/13 §6, the account features the mule scorer reads
+  inbound_payers_hours: 48     # inbound_distinct_payers_48h
+  flow_days: 7                 # the *_7d features; also median_dwell_minutes_7d with no dwell
+  device_share_days: 30        # device_shared_accounts_30d
+  account_age_cap_days: 3650
+  amount_floor_inr: 100        # outbound_to_inbound_ratio_7d's inbound floor
+  cash_out_channel: CASH_OUT
+  minimal_kyc_level: MINIMAL
+  executed_status: EXECUTED    # money moves only for executed payments

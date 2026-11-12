@@ -2,9 +2,9 @@
 
 Under KB v1, at least 70% of UPI_COLLECT_REFUND sessions must end with P(UNEXPLAINED) at or
 above the Scout routing threshold (0.35). The sessions' prior comes from the trained sensing
-model (docs/13 §4), so the check runs once ``delphi.sensing.prior`` exists (M3, #89, #36).
-Until then it is
-skipped, and the harness itself is exercised with a fixture prior.
+model (docs/13 §4) and the anomaly percentile (§5). Both modules exist (#89, #90); the check runs
+once #36 wires them into ``_sensing_prior`` (``SENSING_PRIOR_WIRED``). Until then it is skipped,
+and the harness itself is exercised with a fixture prior.
 
 If the check fails, tune only the collect-refund telemetry and answers in ``sim/config`` (never
 the KB) and record it in the generator changelog (docs/14 §5.4).
@@ -110,6 +110,10 @@ def run_collect_refund_sessions(
     return results
 
 
+# #36 sets this once ``_sensing_prior`` returns the trained models' p_model and q.
+SENSING_PRIOR_WIRED = False
+
+
 def _sensing_prior(sensing: ModuleType) -> PriorFn:
     """The trained sensing model's p_model and q for a collect-refund session (docs/13)."""
     raise NotImplementedError(
@@ -123,6 +127,8 @@ def test_s4_collect_refund_sessions_reach_unexplained(
     sensing = pytest.importorskip(
         "delphi.sensing.prior", reason="needs the sensing model's prior: M3, #36 (docs/14 §5.4)"
     )
+    if not SENSING_PRIOR_WIRED:
+        pytest.skip("the trained prior and q are not wired into the S-4 harness yet: #36")
     threshold = kb.config.engine.unexplained_routing_threshold
     results = run_collect_refund_sessions(guardian, load_response_models(), _sensing_prior(sensing))
     share = sum(p >= threshold for p in results) / len(results)

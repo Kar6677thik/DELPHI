@@ -31,6 +31,13 @@ build_account_features(account, history: AccountHistory, as_of) -> dict[str, flo
 `as_of` is strictly the payment's initiation time. Only data with timestamp < `as_of` may be
 used (leakage guard; a unit test injects a future event and asserts it is ignored).
 
+In code (#87): `delphi.sensing.features.build_payment_features` is the one function;
+`delphi.sensing.history.load_payment_snapshot` is the online repository (the existing indexes on
+payments by payer and time, logins and CRM events by customer and time, payees, devices and
+accounts by customer cover its queries); `delphi.sensing.offline.OfflineHistories` builds every
+customer's snapshot from dataframes. Both read the `bank` tables through `delphi.sim.api`, never
+`sim_truth`.
+
 ## 3. Payment features (v1)
 
 Behavioural baseline windows ("behavioural twin"): 10 min, 24 h, 30 days, lifetime.
@@ -59,6 +66,30 @@ Behavioural baseline windows ("behavioural twin"): 10 min, 24 h, 30 days, lifeti
 | `channel_*` | one-hot of channel | ✔ | ✔ |
 | `session_duration_s` | from session telemetry | ✔ | ✔ |
 | `remote_access_active` | from telemetry | ✘ (probe input) | ✔ |
+
+Where the table is silent (gap fills, #87):
+
+- Windows count the customer's earlier payments from any of their accounts, whatever their
+  status, never the payment being scored. Local time is IST (UTC+05:30, no daylight saving).
+- With no earlier payment, `amount_z_30d` and `hour_deviation` are 0 and
+  `amount_ratio_max_lifetime` is 1. The z-score uses the population std of the 30-day window.
+- `hour_deviation` is the circular distance from the *circular* median local hour of the earlier
+  payments: the hours are cut at the largest empty arc of the clock before taking the median.
+  A customer who pays around midnight ([23.5, 23.7, 0.5, 0.6]) has a median near 0.1 h, not
+  the linear median's 12 h, so a 23:40 payment deviates by about 0.4 h.
+- `sum_24h_ratio_30d` divides the 24 h sum by the 30-day daily mean, floored at ₹100 like the
+  z-score's std.
+- A payee that was never saved is new; a payee or device first seen at or after `as_of` is not
+  there yet.
+- `device_age_days` counts only the customer's own devices (`bank.devices.customer_id`). A device
+  recorded under another customer has never been this customer's, so it is new to them (age 0,
+  `is_new_device` = 1), however long the bank has known it: a fraudster's old phone is new to
+  the victim, which is the account-takeover case DEVICE_POSTURE is there to catch.
+- `login_new_city`: the last login before the payment is from a city no earlier login used. A
+  customer's first login is not a new city (TD-8).
+- `limit_change_24h` stays 0: the bank records no limit changes yet (the CRM has SIM-swap and
+  lost-device events only). `sensing/config.yaml` lists the event types that would count.
+- `payee_p_mule` is 0.10, the §6 fallback, until the mule scorer (#91) writes `account_scores`.
 
 **Double-count guard (no exceptions).** Any feature that is an input to a passive-probe
 classifier is an *observation*, and is excluded from the prior model. Otherwise the engine
@@ -104,6 +135,30 @@ does not intersect `PROBE_INPUT_FEATURES`.
     The demo must always have a model.
 - The evaluation's own metrics (doc 22) use `sim_truth`. The gate does not.
 
+**Implementation** (`delphi.sensing.prior`, settings in `sensing/config.yaml` `prior:`). Like the
+anomaly detector, the module trains and scores; choosing the rows from the database and storing
+the artifact belong to `TRAIN_SENSING` (#88). Gaps the text above leaves open, filled as follows:
+
+- **Observed labels:** `observed_labels` keeps the labels known by the cutoff, the doc 05 §8
+  precedence choosing between several. Labels that are not model classes (`FRAUD_OTHER`, an
+  unpromoted typology) are left out, like unlabelled payments.
+- **Split:** the matured window is whole days from the history start; validation and test each
+  get ⌊days/6⌋ and train the rest (`split_parts`).
+- **Class weights:** `n / (K_present · n_c)` per training row, over the classes present in
+  train. A class with no training rows (on `test`, MULE: mule accounts are labelled through the
+  registry, and their own payments mature as GENUINE, doc 14 §7) gets no weight.
+- **Early stopping:** on the validation split's unweighted multiclass log loss, patience 50
+  rounds (`early_stopping_rounds`), keeping the best iteration. Training is deterministic
+  (LightGBM `deterministic`, one thread, `seed`).
+- **Temperature:** fitted by bounded search over log T in `temperature_bounds`
+  ([0.05, 20]). With no validation rows, T = 1 and there is no early stopping.
+- **Metrics:** a class with no positives (or no negatives) in the test split has AUC `null`,
+  and macro AUC averages the classes that have one. An undefined macro AUC, or no test split,
+  fails the gate where it is enforced.
+- **Contributions:** LightGBM `pred_contrib` for one class, divided by T (so they add up, with
+  the bias, to that class's calibrated logit). By default, for the most probable class; the top
+  `top_contributions` by absolute value, ties in feature order.
+
 ## 5. Anomaly detector
 
 - scikit-learn `IsolationForest(n_estimators=200, contamination="auto", random_state=7)` on the
@@ -116,7 +171,18 @@ does not intersect `PROBE_INPUT_FEATURES`.
 - Account features: `inbound_distinct_payers_48h`, `inbound_count_7d`, `inbound_sum_7d_log`,
   `median_dwell_minutes_7d`, `outbound_to_inbound_ratio_7d`, `account_age_days`,
   `kyc_minimal`, `device_shared_accounts_30d`, `cash_out_share_7d`, `complaints_linked`
-  (as of the time).
+  (as of the time). They come from `build_account_features` over an `AccountHistory`, through
+  the same online and offline paths as the payment features (#87; migration 0009 indexes
+  complaints by counterparty and devices by fingerprint). Where this is silent:
+  - flows (inbound, outbound, dwell, cash-out share) count *executed* payments, by execution
+    time; `inbound_sum_7d_log` is log10(1 + ₹ sum);
+  - `median_dwell_minutes_7d`: the median time from each 7-day credit to the account's next
+    debit; credits not yet followed by one are left out, and with none it is the whole window;
+  - `outbound_to_inbound_ratio_7d` floors the inbound sum at ₹100; `cash_out_share_7d` is the
+    share of the 7-day debit amount cashed out;
+  - `device_shared_accounts_30d` counts other accounts that paid, in the last 30 days, from a
+    device fingerprint this account paid from in those 30 days;
+  - `complaints_linked` counts complaints that name the account as a counterparty.
 - LightGBM binary (num_leaves 15, n_estimators 300, seed 7); isotonic calibration on validation.
 - Labels: accounts labelled MULE (registry listing, investigator disposition, complaint) vs
   accounts with ≥ 30 days of activity and no fraud label.
