@@ -3,8 +3,9 @@ import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vitest/config';
 
 // The api serves the built app at / and the API at /api/v1 on the same origin (docs/18,
-// ADR-0008). In development, Vite proxies /api to `uv run delphi api`.
-const API_ORIGIN = 'http://localhost:8000';
+// ADR-0008). In development, Vite proxies /api to `uv run delphi api`, or to the compose
+// stack's `api` service (DELPHI_API_ORIGIN, compose.yaml).
+const API_ORIGIN = process.env.DELPHI_API_ORIGIN ?? 'http://localhost:8000';
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],

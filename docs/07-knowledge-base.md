@@ -10,8 +10,11 @@ It is **detection-as-code** (research §9.7, ADR-0006).
   `kb_versions.content`, together with `content_sha256`.
   Canonical JSON means UTF-8, keys sorted, no insignificant whitespace, and floats written with
   `repr()` round-trip precision.
-- **KB v1** is authored as YAML under `kb/` in the repo. `delphi seed` loads, validates and
-  inserts it as version 1 with status `ACTIVE`.
+- **KB v1** is authored as YAML under `kb/` in the repo. `delphi migrate`, after the schema
+  upgrade, loads, validates and inserts it as version 1 with status `ACTIVE` when no KB version
+  exists yet, so it is idempotent and runs on every deploy (doc 23 §4). It is audited as
+  `kb.version.created`. The api and the worker read the ACTIVE version from the database, never
+  the YAML; reading a version re-checks its `content_sha256`.
 - Later versions are created **inside the app**, by the learning loop (doc 12) and by typology
   promotion (doc 11). Each has a `parent_id`, a `change_summary` and `created_by`.
 - `GET /api/v1/kb/versions/{id}/export` returns the version as the same YAML tree (zip). The

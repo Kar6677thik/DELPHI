@@ -1,0 +1,51 @@
+# Nightly: the `slow` tests that PR CI skips (docs/21 §1, #59), such as FR-SIM-02's acceptance
+# check (the `eval` profile's stats within ±10% of the configured rates, 7–12 min). Also on
+# demand from the Actions tab. A failure shows as a red run on `main`; nothing is deployed or
+# written. This workflow never writes to the repository.
+name: nightly
+
+on:
+  schedule:
+    - cron: "30 20 * * *" # 20:30 UTC (02:00 IST), outside the working day
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+jobs:
+  slow:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      postgres:
+        # postgres:16.15; the same major as production (docs/24 §3)
+        image: postgres:16@sha256:5db6dac2ef5dcff512f4f00a009c3c332b9f2f28f24277175bf3e4a3d02ef83a
+        env:
+          POSTGRES_PASSWORD: ci-only-not-a-secret
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s
+          --health-retries 10
+    env:
+      # Slow tests that need a database get one, as in PR CI (docs/21 §1).
+      DELPHI_TEST_DATABASE_URL: postgresql://postgres:ci-only-not-a-secret@localhost:5432/postgres
+      DELPHI_REQUIRE_INTEGRATION: "1"
+      DELPHI_RUN_SLOW: "1"
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          working-directory: backend
+      - name: Install
+        run: uv sync --frozen
+      - name: Slow tests
+        run: uv run pytest -m slow -v --durations=10

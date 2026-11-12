@@ -1,0 +1,1 @@
+{% if f.event is none %}No SIM swap or lost device was reported for {{ subject }} in the {{ f.window_days }} days before {{ as_of | when }} [{{ record_id }}].{% else %}A {{ f.event | event }} was reported for {{ subject }} {{ f.days_ago }} day{{ "s" if f.days_ago != 1 }} before {{ as_of | when }} [{{ record_id }}].{% endif %}
