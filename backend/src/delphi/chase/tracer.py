@@ -8,11 +8,13 @@ applied in time order:
 - a debit of ``x``: ``τ_out = round(x · T / B)``, with ``B`` before the debit, banker's rounding
   to the paisa, 0 when ``B`` is 0. ``T −= τ_out``, and the payment carries ``τ_out`` to its payee;
 - a debit on the cash-out channel: the taint leaves the banking system (cash-out leakage);
+- a debit whose credit is not visible yet (the visibility lag, docs/10 §2): the taint is in
+  flight, still recoverable, and counted apart from leakage;
 - an account whose taint drops below ``min_trace_paise`` is no longer followed: what it held is
   recorded as pruned.
 
 Taint is moved in whole paise, so it is conserved exactly:
-``Σ T_now + leakage + pruned = initial`` (a property test checks it).
+``Σ T_now + leakage + in_flight + pruned = initial`` (a property test checks it).
 
 Balances come from the ledger itself (``balance_after_paise − delta_paise`` is the balance before
 each entry), so an account first reached mid-way is traced with its real balance. A payment's
@@ -55,9 +57,10 @@ class TaintFlow:
 
     payment_id: str
     from_account_id: str
-    to_account_id: str | None  # None: cashed out
+    to_account_id: str | None  # None: cashed out, or in flight
     at_us: int
     taint_paise: int
+    in_flight: bool = False  # the payee's credit is not visible yet
 
 
 @dataclass(slots=True)
@@ -66,6 +69,7 @@ class TraceResult:
     taint_now: dict[str, int] = field(default_factory=dict)  # accounts still holding taint
     flows: list[TaintFlow] = field(default_factory=list)
     leakage_paise: int = 0  # cashed out
+    in_flight_paise: int = 0  # debited, but the credit is not visible yet
     pruned_paise: int = 0  # below the trace threshold, no longer followed
     depth: dict[str, int] = field(default_factory=dict)  # first-hop accounts are 1
 
@@ -78,6 +82,36 @@ def _haircut(amount: int, taint: int, balance: int) -> int:
     if balance <= 0 or taint <= 0:
         return 0
     return min(round(amount * taint / balance), taint)  # round(): banker's rounding
+
+
+def _send(
+    result: TraceResult,
+    carried: dict[str, int],
+    debit: LedgerMove,
+    credit: LedgerMove | None,
+    out: int,
+    *,
+    cash_out_channel: str,
+) -> None:
+    """Record ``out`` paise of taint leaving ``debit``'s account: cashed out, in flight (no
+    visible credit yet) or carried to the payee's credit."""
+    to = credit.account_id if credit is not None else None
+    cashed = debit.channel == cash_out_channel
+    in_flight = not cashed and to is None
+    result.flows.append(
+        TaintFlow(
+            debit.payment_id, debit.account_id, None if cashed else to, debit.at_us, out, in_flight
+        )
+    )
+    if cashed:
+        result.leakage_paise += out
+    elif in_flight:
+        result.in_flight_paise += out
+    else:
+        assert to is not None
+        carried[debit.payment_id] = carried.get(debit.payment_id, 0) + out
+        depth = result.depth.get(debit.account_id, 1) + 1
+        result.depth[to] = min(result.depth.get(to, depth), depth)
 
 
 def trace(
@@ -122,20 +156,7 @@ def trace(
             out = _haircut(amount, taint[debit.account_id], balance)
             if out:
                 taint[debit.account_id] -= out
-                to = credit.account_id if credit is not None else None
-                cashed = debit.channel == cash_out_channel or to is None
-                result.flows.append(
-                    TaintFlow(
-                        payment_id, debit.account_id, None if cashed else to, debit.at_us, out
-                    )
-                )
-                if cashed:
-                    result.leakage_paise += out
-                else:
-                    carried[payment_id] = carried.get(payment_id, 0) + out
-                    assert to is not None
-                    depth = result.depth.get(debit.account_id, 1) + 1
-                    result.depth[to] = min(result.depth.get(to, depth), depth)
+                _send(result, carried, debit, credit, out, cash_out_channel=cash_out_channel)
             settle(debit.account_id)
         if credit is not None and payment_id in carried:
             arriving = carried.pop(payment_id)
@@ -152,5 +173,7 @@ def trace(
 
 
 def conservation_gap(result: TraceResult) -> int:
-    """``initial − (Σ T_now + leakage + pruned)``: 0 when taint is conserved."""
-    return result.initial_paise - (result.traced_paise + result.leakage_paise + result.pruned_paise)
+    """``initial − (Σ T_now + leakage + in_flight + pruned)``: 0 when taint is conserved."""
+    return result.initial_paise - (
+        result.traced_paise + result.leakage_paise + result.in_flight_paise + result.pruned_paise
+    )

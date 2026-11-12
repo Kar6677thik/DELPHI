@@ -91,6 +91,26 @@ def test_cash_out_is_leakage() -> None:
     assert result.flows[-1].to_account_id is None
 
 
+def test_a_payment_whose_credit_is_not_visible_yet_is_in_flight_not_lost() -> None:
+    """docs/10 §2–3: with the visibility lag, a debit can be visible before its credit. The
+    money is still recoverable, so it is counted as in flight, apart from cash-out leakage."""
+    bank = Bank()
+    bank.fund("victim", 50_000_00)
+    source = bank.pay("victim", "m1", 50_000_00)
+    forward = bank.pay("m1", "m2", 20_000_00)
+    visible = [m for m in bank.moves if not (m.payment_id == forward and m.delta_paise > 0)]
+    result = trace(
+        [SourcePayment(source, "m1", 50_000_00)],
+        visible,
+        min_trace_paise=MIN,
+        cash_out_channel=CASH,
+    )
+    assert result.in_flight_paise == 20_000_00 and result.leakage_paise == 0
+    assert result.taint_now == {"m1": 30_000_00} and conservation_gap(result) == 0
+    flow = result.flows[-1]
+    assert flow.in_flight and flow.to_account_id is None
+
+
 def test_small_remainders_are_pruned() -> None:
     bank = Bank()
     bank.fund("victim", 20_000_00)
@@ -163,12 +183,17 @@ def test_a_source_whose_credit_is_not_visible_still_taints_its_payee() -> None:
     ),
     source_share=st.integers(1, 100),
     prune=st.sampled_from([0, 50, MIN]),
+    hidden=st.sets(st.integers(0, 50), max_size=5),
 )
 def test_taint_is_conserved_and_never_exceeds_the_balance(
-    transfers: list[tuple[int, int, int, bool]], source_share: int, prune: int
+    transfers: list[tuple[int, int, int, bool]],
+    source_share: int,
+    prune: int,
+    hidden: set[int],
 ) -> None:
-    """The conservation property (docs/10 §3): Σ T_now + leakage + pruned = initial, exactly,
-    and no account holds more taint than money."""
+    """The conservation property (docs/10 §3): Σ T_now + leakage + in flight + pruned = initial,
+    exactly, and no account holds more taint than money. ``hidden`` payments' credits are not
+    visible yet, so their taint is in flight."""
     bank = Bank()
     for account in range(6):
         bank.fund(f"a{account}", 1_000_00)
@@ -181,9 +206,11 @@ def test_taint_is_conserved_and_never_exceeds_the_balance(
         x = bank.balances[f"a{payer}"] * percent // 100
         if x > 0:
             bank.pay(f"a{payer}", f"a{payee}", x, channel=CASH if cash else "IMPS")
+    gone = {f"p{i}" for i in hidden}
+    visible = [m for m in bank.moves if not (m.payment_id in gone and m.delta_paise > 0)]
     result = trace(
         [SourcePayment(source, "a0", amount)],
-        bank.moves,
+        visible,
         min_trace_paise=prune,
         cash_out_channel=CASH,
     )
