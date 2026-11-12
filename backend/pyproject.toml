@@ -138,6 +138,7 @@ forbidden_modules = [
 name = "nothing imports the api layer except the CLI (docs/04 §4.1 rule 4)"
 type = "forbidden"
 source_modules = [
+  "delphi.chase",
   "delphi.engine",
   "delphi.kb",
   "delphi.llm",
@@ -153,6 +154,7 @@ name = "platform holds no business logic: it imports no feature module"
 type = "forbidden"
 source_modules = ["delphi.platform"]
 forbidden_modules = [
+  "delphi.chase",
   "delphi.engine",
   "delphi.kb",
   "delphi.llm",

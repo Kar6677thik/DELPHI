@@ -36,9 +36,40 @@ prune: stop following an account once T < min_trace_paise (₹500)
 ```
 
 Outputs: per-account current taint `T_now`; per-edge taint flows (for the graph); total cash-out
-leakage; hop depth per account (first-hop = 1). Integer arithmetic: compute in float64 and round
-each τ_out to paise with banker's rounding. The conservation check (Σ T_now + leakage + pruned =
-initial taint, ± hops × 1 paise) is a property test.
+leakage; taint in flight (debited, credit not yet visible); hop depth per account (first-hop =
+1). Integer arithmetic: compute in float64 and round each τ_out to paise with banker's rounding.
+The conservation check (Σ T_now + leakage + in flight + pruned = initial taint, ± hops × 1 paise)
+is a property test.
+
+**Implementation** (`delphi.chase.tracer`, a pure function; `delphi.chase.ledger` loads its inputs
+through the `bank` tables `delphi.sim.api` re-exports, up to `now − visibility_lag`, never
+`sim_truth`). Gaps the rule above leaves open, filled as follows:
+
+- **Reading the ledger outwards from the frontier**, not scanning it. Each source's payee is
+  reached when the source executes. Each round reads the reached accounts' entries from the
+  time they were reached (index `(account_id, at)`), then the credits of the payments they made
+  (index `payment_id`). Each payee becomes reached at its credit's time, and the next round
+  reads it. The rounds stop when nothing new is reached. A cash-out payment's payee is not
+  followed. This gives exactly the result of scanning every entry since t0 (an integration test
+  compares both). On `demo`, tracing all 2,140 executed frauds at once reads 3,466 entries and
+  takes about 0.2 s (NFR-04: 5 s).
+
+- **Balances come from the ledger:** B before a debit is `balance_after_paise + x`, so an account
+  first reached mid-way is traced with its real balance; nothing is replayed from t0.
+- **A payment's debit is applied before its credit**, whatever their entry ids (a payment's
+  entries are grouped at its first entry's time), so taint never arrives before it has left.
+- **Taint moves in whole paise:** τ_out is rounded once, on the debit, and the payee is credited
+  exactly that amount, so conservation holds **exactly** (gap 0, not ± hops paise); the property
+  test asserts 0. τ_out is capped at T.
+- **Pruning** happens whenever an account's T changes and lands in (0, min_trace_paise): what it
+  held is added to `pruned` and the account is dropped. Its later debits carry no taint.
+- **Cash-out:** the cash-out payee is not credited with taint, and the flow is recorded with no
+  payee.
+- **In flight:** with the visibility lag, a payment's debit can be visible before its credit.
+  Its taint is counted as `in_flight` (still recoverable), not as leakage, and the flow is
+  marked `in_flight`. The next trace, with the credit visible, carries it on to the payee.
+- **Sources:** only EXECUTED source payments carry money. A source whose credit falls outside the
+  visible ledger still taints its payee with the full amount (depth 1).
 
 ## 4. Candidate scoring
 
