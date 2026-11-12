@@ -71,6 +71,7 @@ def test_ready_is_503_when_database_is_down(client: TestClient) -> None:
         "checks": {
             "database": {"status": "failed", "detail": "database unreachable"},
             "migrations": {"status": "failed", "detail": "database unreachable"},
+            "kb": {"status": "failed", "detail": "database unreachable"},
         },
     }
 

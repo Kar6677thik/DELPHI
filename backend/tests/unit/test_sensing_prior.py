@@ -17,6 +17,7 @@ from delphi.sensing.prior import (
     PriorInputError,
     PriorModel,
     Split,
+    class_reliability,
     class_weights,
     encode_labels,
     expected_calibration_error,
@@ -96,6 +97,17 @@ def test_temperature_undoes_overconfident_logits() -> None:
     assert fit_temperature(3.0 * true_logits, labels, CONFIG.temperature_bounds) == pytest.approx(
         3.0, rel=0.1
     )
+
+
+def test_class_reliability_compares_predicted_and_observed_shares() -> None:
+    p = np.array([[0.75, 0.25]] * 4)
+    report = class_reliability(p, np.array([0, 0, 0, 1]), ("GENUINE", "ATO"), 15)
+    assert report["GENUINE"] == pytest.approx(
+        {"mean_predicted": 0.75, "observed_share": 0.75, "ece": 0.0}
+    )
+    shifted = class_reliability(p, np.array([0, 0, 0, 0]), ("GENUINE", "ATO"), 15)
+    assert shifted["ATO"]["mean_predicted"] == 0.25 and shifted["ATO"]["observed_share"] == 0
+    assert shifted["ATO"]["ece"] == pytest.approx(0.25)
 
 
 def test_the_gate_is_enforced_only_on_demo_and_eval() -> None:

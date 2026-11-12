@@ -2,21 +2,31 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
 from sqlalchemy import create_engine
 
 from delphi.cli import worker_registry
+from delphi.kb.loader import load_and_validate
+from delphi.kb.model import KnowledgeBase
 from delphi.platform.clock import SystemClock
 from delphi.platform.db import make_session_factory
 from delphi.platform.jobs import JobType
 from delphi.platform.settings import Settings
 from delphi.platform.wiring import Platform
+from delphi.probes.registry import CLASSIFIER_NAMES
 from delphi.sim.generator_config import load_generator_config
 from delphi.sim.jobs import DatasetParams
 
 URL = "postgresql://delphi_app:x@localhost:5432/delphi"  # never connected to here
+KB_DIR = Path(__file__).resolve().parents[3] / "kb"
+
+
+def _repo_kb() -> KnowledgeBase:
+    # The worker reads the ACTIVE KB from the database; with no database here, use KB v1.
+    return load_and_validate(KB_DIR, CLASSIFIER_NAMES)
 
 
 def _platform(**settings: Any) -> Platform:
@@ -34,7 +44,10 @@ def _platform(**settings: Any) -> Platform:
 def test_the_worker_registers_generate_dataset_only_with_its_sim_pool() -> None:
     registry, sim = worker_registry(_platform())
     assert sim is None and JobType.GENERATE_DATASET not in registry.handlers
-    registry, sim = worker_registry(_platform(sim_database_url=URL.replace("app", "sim")))
+    assert JobType.TRAIN_SENSING in registry.handlers  # sensing needs no sim pool (#88)
+    registry, sim = worker_registry(
+        _platform(sim_database_url=URL.replace("app", "sim")), kb_source=lambda _: _repo_kb()
+    )
     try:
         assert JobType.GENERATE_DATASET in registry.handlers
         assert JobType.RETENTION_SWEEP in registry.handlers  # the platform's are kept

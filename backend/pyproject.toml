@@ -7,6 +7,7 @@ dependencies = [
   "alembic>=1.14",
   "argon2-cffi>=23.1",
   "fastapi>=0.115",
+  "jinja2>=3.1",
   "lightgbm>=4.5",
   "numpy>=2.1",
   "pandas>=2.2",
@@ -109,6 +110,7 @@ type = "forbidden"
 source_modules = ["delphi.engine"]
 forbidden_modules = [
   "delphi.kb.loader",
+  "delphi.kb.store",
   "delphi.kb.validate",
   "delphi.probes",
   "delphi.platform",
@@ -128,6 +130,7 @@ forbidden_modules = [
   "delphi.api",
   "delphi.cli",
   "delphi.kb.loader",
+  "delphi.kb.store",
   "delphi.kb.validate",
 ]
 
@@ -137,6 +140,7 @@ type = "forbidden"
 source_modules = [
   "delphi.engine",
   "delphi.kb",
+  "delphi.llm",
   "delphi.probes",
   "delphi.platform",
   "delphi.sensing",
@@ -148,7 +152,14 @@ forbidden_modules = ["delphi.api", "delphi.cli"]
 name = "platform holds no business logic: it imports no feature module"
 type = "forbidden"
 source_modules = ["delphi.platform"]
-forbidden_modules = ["delphi.engine", "delphi.kb", "delphi.probes", "delphi.sensing", "delphi.sim"]
+forbidden_modules = [
+  "delphi.engine",
+  "delphi.kb",
+  "delphi.llm",
+  "delphi.probes",
+  "delphi.sensing",
+  "delphi.sim",
+]
 
 [[tool.importlinter.contracts]]
 name = "only sim and evaluation import ground truth (docs/04 §4.1 rule 5)"

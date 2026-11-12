@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 from uuid import UUID
 
 import numpy as np
-from sqlalchemy import Connection, any_, or_, select
+from sqlalchemy import Connection, Select, select
 
 from delphi.sensing.config import AccountFeatureConfig, FeatureConfig
 from delphi.sensing.features import (
@@ -91,7 +91,7 @@ def load_payment_snapshot(
     d = bank.devices
     devices = conn.execute(
         select(d.c.id, d.c.first_seen_at).where(
-            or_(d.c.customer_id == customer_id, d.c.id == row.device_id),
+            d.c.customer_id == customer_id,  # another customer's device is new to this one
             d.c.first_seen_at < as_of,
         )
     ).all()
@@ -126,12 +126,23 @@ def load_payment_snapshot(
     return payment, history
 
 
+def complaints_naming(account_id: UUID, as_of: datetime) -> Select[tuple[datetime]]:
+    """The times of the complaints reported before ``as_of`` that name ``account_id`` as a
+    counterparty. It uses ``@>``, which the GIN index serves; ``= ANY`` would scan the table."""
+    c = bank.complaints
+    return (
+        select(c.c.reported_at)
+        .where(c.c.counterparty_account_ids.contains([account_id]), c.c.reported_at < as_of)
+        .order_by(c.c.reported_at)
+    )
+
+
 def load_account_snapshot(
     conn: Connection, account_id: UUID, as_of: datetime, config: AccountFeatureConfig
 ) -> AccountHistory:
     """The account's history as of ``as_of`` (docs/13 §6). ``LookupError`` if it is unknown.
     Device use is read for the last ``device_share_days`` only, which is all the feature uses."""
-    a, p, d, c = bank.accounts, bank.payments, bank.devices, bank.complaints
+    a, p, d = bank.accounts, bank.payments, bank.devices
     account = conn.execute(
         select(a.c.opened_at, a.c.kyc_level).where(a.c.id == account_id)
     ).one_or_none()
@@ -167,11 +178,7 @@ def load_account_snapshot(
         if prints
         else []
     )
-    complaints = conn.execute(
-        select(c.c.reported_at)
-        .where(any_(c.c.counterparty_account_ids) == account_id, c.c.reported_at < as_of)
-        .order_by(c.c.reported_at)
-    ).all()
+    complaints = conn.execute(complaints_naming(account_id, as_of)).all()
     return AccountHistory(
         account_id=str(account_id),
         opened_at_us=to_us(account.opened_at),

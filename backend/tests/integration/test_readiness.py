@@ -3,17 +3,23 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 from delphi.api.app import create_app
+from delphi.kb.loader import load_and_validate
+from delphi.kb.store import ensure_kb_v1
 from delphi.platform.clock import SystemClock
 from delphi.platform.db import make_session_factory, migration_head
 from delphi.platform.settings import Settings
 from delphi.platform.wiring import Platform
+from delphi.probes.registry import CLASSIFIER_NAMES
 
-from ._db import MIGRATIONS_DIR, engine_as
+from ._db import MIGRATIONS_DIR, engine_as, upgrade
+
+KB_DIR = Path(__file__).resolve().parents[3] / "kb"
 
 
 def _client(url: str, *, role: str | None = "delphi_app") -> TestClient:
@@ -31,9 +37,23 @@ def _client(url: str, *, role: str | None = "delphi_app") -> TestClient:
     return TestClient(create_app(platform))
 
 
+@pytest.fixture(scope="module")
+def ready_url(create_database: Callable[[], str]) -> str:
+    """A database `delphi migrate` has run on: at head, with KB v1 ACTIVE (#15)."""
+    url = create_database()
+    upgrade(url)
+    engine = engine_as(url)
+    try:
+        with make_session_factory(engine).begin() as session:
+            ensure_kb_v1(session, SystemClock(), load_and_validate(KB_DIR, CLASSIFIER_NAMES))
+    finally:
+        engine.dispose()
+    return url
+
+
 @pytest.fixture
-def ready_client(migrated_url: str) -> Iterator[TestClient]:
-    with _client(migrated_url) as client:
+def ready_client(ready_url: str) -> Iterator[TestClient]:
+    with _client(ready_url) as client:
         yield client
 
 
@@ -45,6 +65,7 @@ def test_ready_when_database_is_at_head(ready_client: TestClient) -> None:
         "checks": {
             "database": {"status": "ok", "detail": None},
             "migrations": {"status": "ok", "detail": None},
+            "kb": {"status": "ok", "detail": None},
         },
     }
 

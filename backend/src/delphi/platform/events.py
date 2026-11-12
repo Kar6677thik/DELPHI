@@ -32,14 +32,13 @@ import psycopg
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
+from delphi.platform.locks import OUTBOX_LOCK_KEY
 from delphi.platform.logging import get_logger
 from delphi.platform.tables import outbox_events
 
 log = get_logger(__name__)
 
 CHANNEL = "delphi_events"
-# pg_advisory_xact_lock key that serialises publishers (42 is the audit chain's, docs/17 §4).
-OUTBOX_LOCK_KEY = 43
 # The most rows one read takes from the outbox; the hub reads again until it has caught up.
 FETCH_BATCH = 500
 
@@ -58,6 +57,7 @@ class EventType(StrEnum):
     JOB_UPDATED = "job.updated"
     SCOUT_CLUSTER_CREATED = "scout.cluster.created"
     KB_VERSION_CHANGED = "kb.version.changed"
+    ARTIFACT_ACTIVATED = "artifact.activated"
     SIM_TRANSFER = "sim.transfer"
 
 
@@ -69,6 +69,7 @@ TOPIC_PREFIXES: Mapping[str, tuple[str, ...]] = {
     "jobs": ("job.",),
     "scout": ("scout.",),
     "kb": ("kb.",),
+    "sensing": ("artifact.",),
     "sim": ("sim.",),
 }
 

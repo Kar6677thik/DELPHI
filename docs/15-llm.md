@@ -110,8 +110,38 @@ for audit (doc 17 §6).
 
 Each source has a template in `llm/templates/<purpose>/<SOURCE_KEY>.j2` (Jinja2, autoescape),
 which renders the deterministic facts. Example (`INBOUND_FAN_IN`):
-"{{ m }} unrelated payers credited {{ account }} in the 48 h before {{ as_of }}
-[{{ record_id }}]." Templates are the reference for the numeric-fidelity test.
+"{{ f.unrelated_payers }} payers with no prior relation to {{ subject }} credited it in the
+{{ f.window_h }} h before {{ as_of }} [{{ record_id }}]." Templates are the reference for the
+numeric-fidelity test: a unit test checks that every template's output passes §5.
+
+**The `EVIDENCE_NARRATIVE` payload (the contract evidence adapters follow, #102):**
+`{source_key, record_id, subject, as_of, facts}`. `record_id` is the evidence record's id (the
+citation), `subject` a pseudonym (`ACC-…5678`, `delphi.llm.minimise.pseudonym`), `as_of` an
+RFC 3339 time, and `facts` holds, per source, exactly these fields (from the doc 09 §4 rules):
+
+| Source | `facts` |
+|---|---|
+| `BENEFICIARY_DEVICE_SHARING` | `shared_accounts` int, `window_days` int (30) |
+| `INBOUND_FAN_IN` | `unrelated_payers` int, `window_h` int (48) |
+| `PASS_THROUGH_DWELL` | `median_dwell_minutes` number or null (no credits), `credits` int, `window_days` int (7), `departure_share` number (0.8) |
+| `ACCOUNT_PROFILE` | `account_age_days` int, `kyc_level` str |
+| `LINKED_COMPLAINTS` | `complaints` int |
+| `CRM_CONTACT_HISTORY` | `event` (`SIM_SWAP_REPORTED`, `DEVICE_LOST_REPORTED` or null), `days_ago` int or null, `window_days` int (14) |
+| `LOGIN_GEO_VELOCITY` | `last_city` str or null, `speed_kmh` number or null (null: no impossible travel), `new_city` bool, `window_h` int (24) |
+| `PAYEE_RELATIONSHIP` | `prior_payments` int, `max_prior_amount_paise` int or null |
+| `CUSTOMER_OUTREACH_CALL` | `result` str (the outreach outcome code), `note` str or null |
+
+`CASE_SUMMARY` takes `{records: [<narrative payload>, …]}` and cites them all; its template joins
+their sentences, keeping the whole sentences that fit 1,200 chars. `TYPOLOGY_DESCRIPTION` takes
+`{record_id, suggested_name, stats: {cases, traits: [str]}}`. `QUESTION_VARIANTS` has no
+template: without a model, no variants are drafted.
+
+**Implementation** (#104): `delphi.llm.port` (the port), `template`, `validators`, `minimise`,
+`prompts` (`prompts/<PURPOSE>/v1.md`), and `service.LlmService`, which runs the fallback chain
+and records every attempt (model or template) in `llm_calls`. The daily budget counts model
+tokens only. The validators read numbers as written (Indian grouping, `₹`, `%`, decimals) and
+skip citation brackets, dates and clock times; ₹ amounts match `*_paise` facts / 100, and
+percentages match fractions × 100.
 
 ## 8. Evaluation of the LLM path (`just llm-eval`, manual, costs money)
 

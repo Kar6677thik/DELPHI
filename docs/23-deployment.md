@@ -36,7 +36,7 @@ verify: poll https://delphi.karthiksurkanti.in/api/v1/health until .version == t
 
 ```
 Dockerfile                         # multi-stage: frontend build → python runtime
-compose.yaml                       # local development (PostgreSQL; api/worker later)
+compose.yaml                       # local development and the CI e2e stack (§10)
 .github/workflows/ci.yml           # PR CI, and reused by deploy.yml (workflow_call)
 .github/workflows/deploy.yml       # workflow_dispatch only: guard → ci → publish → deploy → verify
 deploy/k8s/base/                   # what the bootstrap applies (namespace delphi)
@@ -76,8 +76,16 @@ deploy/README.md                   # the bootstrap runbook (§6)
    `pnpm audit --prod` → build.
 3. `contract`: the generated TS types match `backend/openapi.json` (the backend checks the file
    against the code).
-4. Later in M0: `secrets` (gitleaks), `image-scan` (Trivy on a no-push build), and `e2e`
-   (compose + Playwright).
+4. `e2e`: `docker compose up --build --wait api worker` (the production image, §10) →
+   Playwright (Chromium, run inside the pinned `mcr.microsoft.com/playwright` image of the same
+   version, so no apt step) against `http://localhost:8000` → the stack's logs on failure. In M0
+   it runs the login smoke test (`frontend/e2e/login.spec.ts`); the story journeys of doc 21
+   §4 join it as their milestones land.
+5. `secrets` (gitleaks) and `image-scan` (Trivy on a no-push build) arrive with the security
+   review (#127).
+
+`nightly.yml` runs the `slow` tests (doc 21 §1) at 20:30 UTC and on `workflow_dispatch`, with
+a `postgres:16` service; it never deploys or writes.
 
 `policy.yml` (`commit-policy`) checks every PR's commits and description for AI attribution.
 All third-party actions are pinned to a full commit SHA. `permissions: contents: read` by
@@ -251,9 +259,11 @@ same k3s release, including the exfiltration case, which is now denied.
   from the image's `kb/` if no KB version exists (idempotent, from #15). So `/ready` can pass on
   the very first deploy.
 - **`delphi-seed-<sha7>`** runs `delphi seed --if-empty --profile demo`. It is idempotent: the
-  job key names the profile and seed, and `--if-empty` does nothing once a dataset exists. It
-  enqueues `GENERATE_DATASET` (and `TRAIN_SENSING` once sensing exists, M3) and exits; the
-  worker does the work.
+  job key names the profile and seed, and `--if-empty` does nothing once a dataset exists. If
+  that seed job had FAILED, it is queued again with a fresh set of attempts (as
+  `POST /jobs/{id}/retry` does), so the next deploy retries it (#78). It enqueues
+  `GENERATE_DATASET` (and `TRAIN_SENSING` once sensing exists, M3) and exits; the worker does
+  the work.
 
 **First deploy order:**
 1. migrate (schema + KB v1);
@@ -291,6 +301,10 @@ to start, exit code 2, naming the variable, if one is missing or invalid.
 | `DELPHI_SESSION_IDLE_H` / `DELPHI_SESSION_ABSOLUTE_DAYS` | `12` / `7` | api | doc 19 §2 |
 | `DELPHI_LOGIN_MAX_FAILURES` / `DELPHI_LOGIN_WINDOW_MIN` | `5` / `15` | api | doc 16 §1 |
 | `DELPHI_DATASET_PROFILES` | `test,demo,eval` | api, worker | ConfigMap: `test,demo` on the home server (the `eval` dataset needs about 3.8 GiB; §4). `POST /admin/datasets`, `delphi seed` and `GENERATE_DATASET` refuse other profiles |
+| `DELPHI_RATE_LIMIT_PER_S` / `DELPHI_RATE_LIMIT_BURST` | `20` / `40` | api | doc 16 §1 |
+| `DELPHI_LLM_PROVIDER` | `template` | api, worker | `anthropic` or `template` (the kill switch, doc 15 §3). With `template` no model is called |
+| `DELPHI_LLM_MODEL` / `DELPHI_LLM_DAILY_TOKEN_BUDGET` | `claude-opus-5-5` / `2000000` | api, worker | doc 15 §3. Above the budget, calls fall back to the template until 00:00 UTC |
+| `ANTHROPIC_API_KEY` | unset | api, worker | Secret `delphi-app` (#3). Never logged |
 | `DELPHI_BOOTSTRAP_ADMIN_USERNAME` / `DELPHI_BOOTSTRAP_ADMIN_PASSWORD` | unset | api | Secret `delphi-app`. Required only while `users` is empty: the api then creates this ADMIN, or exits with code 2 if they are unset (doc 19 §2) |
 
 Later milestones add their settings to this table (`DELPHI_LLM_*`, `DELPHI_TIME_MODE`) together
@@ -401,6 +415,11 @@ and the run summary shows its digest.
 
 ## 10. Local development
 
-`compose.yaml` services: `postgres`, `api` (hot reload, `uv run delphi api --reload`),
-`worker`, `frontend` (Vite dev server with a proxy to `api`). `just dev` starts them;
-`just seed-test` loads the `test` profile. The developer's LLM provider defaults to `template`.
+`compose.yaml` services: `postgres` (it creates the `delphi_app` and `delphi_sim` login roles
+on a fresh volume), `migrate` (runs once, then exits), `api` (:8000), `worker` and `frontend`
+(the Vite dev server, hot reload, proxying `/api` to `api`). `migrate`, `api` and `worker` run
+the production image (read-only root filesystem, non-root), so local runs and the CI e2e job
+test what deploys; `docker compose watch` rebuilds them when `backend/` or `kb/` changes, in
+place of a reloading dev server. `just dev` starts the stack; `just seed-test` loads the `test`
+profile with the personas. Passwords in the file are local defaults, never reused. The
+developer's LLM provider defaults to `template`.

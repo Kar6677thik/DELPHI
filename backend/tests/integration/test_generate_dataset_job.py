@@ -94,6 +94,21 @@ def stack(create_database: Callable[[], str], kb: KnowledgeBase) -> Iterator[Sta
     sim.dispose()
 
 
+def _train_jobs(stack: Stack) -> list[dict[str, Any]]:
+    with stack.queue.sessions() as s:
+        rows = s.execute(select(jobs.c.params).where(jobs.c.type == JobType.TRAIN_SENSING.value))
+        return [dict(params) for (params,) in rows]
+
+
+def test_the_job_queues_sensing_training_on_its_dataset(stack: Stack) -> None:
+    """docs/13 §7: the seed dataset is followed by one TRAIN_SENSING job (#88)."""
+    job_id = stack.enqueue("seed-test", profile="test")
+    stack.run_next()
+    result = stack.job(job_id)["result"]
+    assert _train_jobs(stack) == [{"dataset_id": result["dataset_id"]}]
+    assert result["train_job_id"]
+
+
 def test_the_job_writes_the_dataset_its_record_and_the_manifest(
     stack: Stack, kb: KnowledgeBase
 ) -> None:
@@ -104,8 +119,8 @@ def test_the_job_writes_the_dataset_its_record_and_the_manifest(
     result = job["result"]
     assert result["profile"] == "test" and result["seed"] == 1
     assert result["generator_version"] == load_config().generator_version
-    for table in bank.metadata.tables.values():
-        assert stack.count(table.fullname) == result["rows"][table.name], table.name
+    for table in bank.metadata.tables.values():  # account_scores: written by sensing, not here
+        assert stack.count(table.fullname) == result["rows"].get(table.name, 0), table.name
     with stack.sim.connect() as conn:
         record = conn.execute(select(datasets)).mappings().one()
         stored = conn.execute(select(persona_manifests.c.manifest)).scalar_one()
@@ -123,6 +138,7 @@ def test_a_retried_attempt_returns_the_committed_dataset(stack: Stack) -> None:
     first = stack.job(job_id)["result"]
     again = stack.registry.handlers[JobType.GENERATE_DATASET](stack.context(job_id))
     assert again == first
+    assert _train_jobs(stack) == [{"dataset_id": first["dataset_id"]}]  # queued once (#88)
     with stack.sim.connect() as conn:
         assert conn.execute(select(func.count()).select_from(datasets)).scalar_one() == 1
 

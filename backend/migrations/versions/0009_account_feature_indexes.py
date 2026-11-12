@@ -1,20 +1,24 @@
 """Indexes for the online account features.
 
-Revision ID: 0006
-Revises: 0005
+Revision ID: 0009
+Revises: 0008
 Create Date: 2026-11-10
 
 `delphi.sensing.history.load_account_snapshot` (docs/13 §6, #87) finds the complaints that name
 an account as a counterparty, and the other devices that share a fingerprint with the account
 holder's. Neither had an index. Expand/contract (docs/17 §1): this migration only adds indexes.
+
+The GIN index serves `counterparty_account_ids @> ARRAY[:id]`, the form the query uses (GIN does
+not serve `:id = ANY(...)`). Plain `CREATE INDEX` blocks writes while it builds; both tables are
+small, so that is fine here, but it is not a pattern for `bank.payments`.
 """
 
 from __future__ import annotations
 
 from alembic import op
 
-revision = "0006"
-down_revision = "0005"
+revision = "0009"
+down_revision = "0008"
 branch_labels = None
 depends_on = None
 

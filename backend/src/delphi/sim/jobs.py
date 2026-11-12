@@ -23,7 +23,8 @@ from sqlalchemy import Connection, Engine, exists, func, select
 from delphi.kb.model import KnowledgeBase
 from delphi.platform.clock import Clock
 from delphi.platform.ids import uuid7
-from delphi.platform.jobs import JobContext, JobRegistry, JobType
+from delphi.platform.jobs import JobContext, JobRegistry, JobType, enqueue
+from delphi.platform.locks import DATASET_WRITE_LOCK_KEY
 from delphi.sim import bank
 from delphi.sim.catalog import READY, datasets
 from delphi.sim.dataset import generate_dataset
@@ -34,8 +35,6 @@ from delphi.sim.stats import StatsReport, dataset_stats
 from delphi.sim.truth import persona_manifests
 from delphi.sim.writer import write_dataset
 
-# pg_advisory_xact_lock key that serialises dataset writes (42: the audit chain, 43: the outbox).
-DATASET_WRITE_LOCK_KEY = 44
 # Progress reported as the job goes (docs/16 §2): started, generated, written.
 PROGRESS_STARTED = 0.05
 PROGRESS_GENERATED = 0.6
@@ -129,7 +128,7 @@ class GenerateDatasetJob:
         with self.sim_engine.connect() as conn:
             done = _committed(conn, ctx.job.id)
         if done is not None:
-            return done
+            return self._then_train(ctx, done)
         self._report(ctx, PROGRESS_STARTED)
         config = params.config(self.config)
         dataset = generate_dataset(
@@ -145,7 +144,7 @@ class GenerateDatasetJob:
             conn.execute(select(func.pg_advisory_xact_lock(DATASET_WRITE_LOCK_KEY)))
             done = _committed(conn, ctx.job.id)
             if done is not None:
-                return done
+                return self._then_train(ctx, done)
             rows = dict(write_dataset(conn, dataset))
             now = self.clock.now()
             dataset_id = uuid7(unix_ms=int(now.timestamp() * 1000))
@@ -170,7 +169,20 @@ class GenerateDatasetJob:
                     )
                 )
             self._report(ctx, PROGRESS_WRITTEN)  # raising here rolls the write back
-        return _summary(row)
+        return self._then_train(ctx, _summary(row))
+
+    def _then_train(self, ctx: JobContext, summary: dict[str, Any]) -> dict[str, Any]:
+        """Queue ``TRAIN_SENSING`` on the dataset just written (docs/13 §7: the seed job trains
+        once after generation). The key names the dataset, so a retried job queues it once."""
+        with ctx.queue.sessions.begin() as session:
+            queued = enqueue(
+                session,
+                self.clock,
+                JobType.TRAIN_SENSING,
+                idempotency_key=f"TRAIN_SENSING:dataset-{summary['dataset_id']}",
+                params={"dataset_id": summary["dataset_id"]},
+            )
+        return {**summary, "train_job_id": str(queued.job_id)}
 
     @staticmethod
     def _report(ctx: JobContext, progress: float) -> None:

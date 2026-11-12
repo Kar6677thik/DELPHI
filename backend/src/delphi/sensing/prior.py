@@ -264,11 +264,39 @@ def expected_calibration_error(probabilities: FloatMatrix, labels: IntArray, bin
     return float(total / len(labels))
 
 
+def class_reliability(
+    probabilities: FloatMatrix, labels: IntArray, classes: Sequence[str], ece_bins: int
+) -> dict[str, dict[str, float]]:
+    """Per class: the mean predicted probability against the observed share (calibration in
+    the large), and a one-vs-rest ECE over ``ece_bins`` bins of that class's probability.
+
+    The max-probability ECE is dominated by GENUINE; this shows whether the fraud classes are
+    calibrated too. Inverse-frequency weights shift the class priors, and a single temperature
+    cannot undo that, so the fraud classes may read high here.
+    """
+    result: dict[str, dict[str, float]] = {}
+    for i, c in enumerate(classes):
+        p = probabilities[:, i]
+        hit = (labels == i).astype(np.float64)
+        which = np.minimum((p * ece_bins).astype(np.int64), ece_bins - 1)
+        ece = sum(
+            float(mask.sum() * abs(hit[mask].mean() - p[mask].mean()))
+            for mask in (which == b for b in range(ece_bins))
+            if mask.any()
+        )
+        result[c] = {
+            "mean_predicted": float(p.mean()),
+            "observed_share": float(hit.mean()),
+            "ece": ece / len(labels),
+        }
+    return result
+
+
 def split_metrics(
     probabilities: FloatMatrix, labels: IntArray, classes: Sequence[str], ece_bins: int
 ) -> dict[str, Any]:
     """Per-class one-vs-rest AUC (``None`` when the split lacks positives or negatives), macro
-    AUC over the classes that have one, multiclass log loss and ECE."""
+    AUC over the classes that have one, multiclass log loss, ECE, and per-class reliability."""
     auc: dict[str, float | None] = {}
     for i, c in enumerate(classes):
         positives = labels == i
@@ -285,6 +313,7 @@ def split_metrics(
         "macro_auc": float(np.mean(defined)) if defined else None,
         "log_loss": float(log_loss(labels, probabilities, labels=list(range(len(classes))))),
         "ece": expected_calibration_error(probabilities, labels, ece_bins),
+        "class_reliability": class_reliability(probabilities, labels, classes, ece_bins),
     }
 
 
