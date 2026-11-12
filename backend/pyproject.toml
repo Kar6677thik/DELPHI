@@ -7,6 +7,7 @@ dependencies = [
   "alembic>=1.14",
   "argon2-cffi>=23.1",
   "fastapi>=0.115",
+  "jinja2>=3.1",
   "numpy>=2.1",
   "prometheus-client>=0.21",
   "psycopg[binary]>=3.2",
@@ -106,6 +107,7 @@ type = "forbidden"
 source_modules = ["delphi.engine"]
 forbidden_modules = [
   "delphi.kb.loader",
+  "delphi.kb.store",
   "delphi.kb.validate",
   "delphi.probes",
   "delphi.platform",
@@ -125,6 +127,7 @@ forbidden_modules = [
   "delphi.api",
   "delphi.cli",
   "delphi.kb.loader",
+  "delphi.kb.store",
   "delphi.kb.validate",
 ]
 
@@ -135,6 +138,7 @@ source_modules = [
   "delphi.chase",
   "delphi.engine",
   "delphi.kb",
+  "delphi.llm",
   "delphi.probes",
   "delphi.platform",
   "delphi.sensing",
@@ -150,6 +154,7 @@ forbidden_modules = [
   "delphi.chase",
   "delphi.engine",
   "delphi.kb",
+  "delphi.llm",
   "delphi.probes",
   "delphi.sensing",
   "delphi.sim",

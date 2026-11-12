@@ -95,8 +95,8 @@ Choices the list above leaves open:
   `balance_after_paise ≥ 0`; `delta_paise ≠ 0`.
 - `login_events`, `crm_events` and `ledger_entries` are event logs: `at` is their creation time.
   Every other table has `created_at` (§1).
-- `account_scores` is created in M3 with `delphi.model_artifacts`, which its foreign key needs
-  (docs/tech-debt.md TD-7).
+- `account_scores` is created by migration 0007 with `delphi.model_artifacts`, which its
+  foreign key needs (TD-7, #88). The mule scorer writes it; the generator never does.
 
 ### `delphi` schema
 
@@ -174,8 +174,11 @@ question_variants(id, probe_key, language, text, options jsonb, status, generate
                   llm_call_id null, reviewed_by null, reviewed_at null, included_in_kb_version null)
 variant_exposures(customer_id, variant_id, last_shown_at, primary key(customer_id, variant_id))
 
-model_artifacts(id, kind, version, status, trained_at, training_cutoff, metrics jsonb,
-                feature_list jsonb, blob bytea, sha256)
+model_artifacts(id, kind (PRIOR|ANOMALY|MULE), version, status (ACTIVE|RETIRED|FAILED_GATE),
+                gate_passed bool, dataset_id null, job_id null, trained_at, training_cutoff,
+                metrics jsonb, feature_list jsonb, blob bytea, sha256, activated_at null,
+                retired_at null)   unique (kind, version); partial unique (kind) where ACTIVE
+                -- migration 0007
 datasets(id, job_id unique → jobs, profile (test|demo|eval), seed, generator_version,
          status (READY), stats jsonb, seed_completed_at null, created_at)   -- migration 0005
 evaluations(id, job_id, dataset_id, policies jsonb, seed, metrics jsonb, created_at)
@@ -187,8 +190,9 @@ jobs(id, type, status (QUEUED|RUNNING|SUCCEEDED|FAILED|CANCELLED), params jsonb,
    idx (status, run_after)
 outbox_events(id bigint identity, type, entity_id, payload jsonb, at)   idx (at)
 ops_backup_runs(id bigint identity, finished_at, file_name, size_bytes, status)  -- written by the backup CronJob
-llm_calls(id, purpose, provider, model, prompt_version, request_redacted jsonb, response jsonb null,
-          status, validation jsonb, input_tokens, output_tokens, latency_ms, created_at)
+llm_calls(id, purpose, provider, model null, prompt_version, request_redacted jsonb null,
+          response jsonb null, status, validation jsonb, input_tokens, output_tokens, latency_ms,
+          created_at)   -- migration 0008; one row per attempt, the model's and the template's
 audit_log(id bigint identity, at, actor_type (USER|SYSTEM|ENGINE|LLM|JOB), actor_id null, action,
           entity_type, entity_id, payload jsonb, prev_hash bytea, hash bytea)
 ```
@@ -232,8 +236,10 @@ definitions; only `delphi.sim` and `delphi.evaluation` may import it (doc 04 §4
 
 `hash = SHA-256(prev_hash || canonical_json({at, actor_type, actor_id, action, entity_type,
 entity_id, payload}))`, and the genesis `prev_hash` is 32 zero bytes. Writes take a transaction
-advisory lock (`pg_advisory_xact_lock(42)`), so the chain is serial. Other advisory lock keys:
-43 for outbox publishing (doc 04 §5.5), 44 for the bootstrap admin. Verifying a window checks
+advisory lock (`pg_advisory_xact_lock(42)`), so the chain is serial. Every advisory lock key
+lives in `delphi.platform.locks`, and a test checks that they are distinct (#78): 42 the audit
+chain, 43 outbox publishing (doc 04 §5.5), 44 the bootstrap admin, 45 dataset requests, 46
+dataset writes, 47 loading KB v1, 48 storing a sensing model artifact. Verifying a window checks
 that its first entry links to the entry just before the window (or to the genesis hash), so a
 deleted or edited earlier entry is caught too. `GET
 /admin/audit/verify?from=&to=` recomputes the chain. The DD pack verifies the entries for its

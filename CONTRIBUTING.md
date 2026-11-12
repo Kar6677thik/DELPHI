@@ -36,6 +36,18 @@ export DELPHI_DATABASE_URL=postgresql://postgres:dev-only@localhost:5432/delphi
 uv run delphi migrate && uv run delphi api   # http://localhost:8000/api/v1/ready
 ```
 
+Or run the whole stack in Docker, from the production image (docs/23 §10):
+
+```sh
+docker compose up --build   # postgres, migrate, api :8000, worker, Vite :5173 (hot reload)
+docker compose exec api delphi seed --if-empty --profile test --personas
+```
+
+Sign in at http://localhost:5173 as `admin` / `dev-only-admin-pw`. `docker compose watch`
+rebuilds the api and worker when `backend/` or `kb/` changes. If you used the older,
+postgres-only compose file, run `docker compose down -v` once, so Postgres creates the app's
+login roles on a fresh volume.
+
 The integration tests create and drop their own databases on the server you point them at, so
 never point `DELPHI_TEST_DATABASE_URL` at a database you care about. All settings are listed in
 [docs/23 §4.1](docs/23-deployment.md#41-process-settings).

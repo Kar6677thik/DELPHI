@@ -106,3 +106,23 @@ audit_log = Table(
     Column("prev_hash", LargeBinary, nullable=False),
     Column("hash", LargeBinary, nullable=False),
 )
+
+# Migration 0008 (#104). Platform-owned like the audit log, so RETENTION_SWEEP can null the
+# bodies after 30 days without importing `delphi.llm`.
+llm_calls = Table(
+    "llm_calls",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("purpose", Text, nullable=False),
+    Column("provider", Text, nullable=False),
+    Column("model", Text),
+    Column("prompt_version", Text, nullable=False),
+    Column("request_redacted", JSONB),
+    Column("response", JSONB),
+    Column("status", Text, nullable=False),
+    Column("validation", JSONB, nullable=False),
+    Column("input_tokens", Integer, nullable=False),
+    Column("output_tokens", Integer, nullable=False),
+    Column("latency_ms", Integer, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+)

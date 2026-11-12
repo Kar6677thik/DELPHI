@@ -13,12 +13,25 @@ from delphi.api.problems import (
     document_problem_media_type,
     install_problem_handlers,
 )
+from delphi.api.rate_limit import RateLimitMiddleware
 from delphi.api.request_context import RequestContextMiddleware
-from delphi.api.routers import API_PREFIX, admin, auth, datasets, events, jobs, platform
+from delphi.api.routers import (
+    API_PREFIX,
+    admin,
+    auth,
+    datasets,
+    events,
+    jobs,
+    kb,
+    platform,
+    sensing,
+    status,
+)
 from delphi.api.spa import install_spa
 from delphi.api.web_security import WebSecurityMiddleware
 from delphi.platform.auth_sessions import LoginThrottle
 from delphi.platform.events import EventHub
+from delphi.platform.rate_limit import TokenBuckets
 from delphi.platform.wiring import Platform
 
 
@@ -55,15 +68,24 @@ def create_app(resources: Platform, *, event_hub: EventHub | None = None) -> Fas
     install_problem_handlers(app)
     document_problem_media_type(app)
     # Starlette runs the last-added middleware first: the request id wraps everything, so even
-    # a CSRF rejection carries one.
+    # a CSRF rejection or a 429 carries one, and every response gets the security headers.
+    app.state.rate_limit = TokenBuckets(
+        resources.clock, rate=s.rate_limit_per_s, burst=s.rate_limit_burst
+    )
+    app.add_middleware(
+        RateLimitMiddleware, buckets=app.state.rate_limit, client_ip_header=s.client_ip_header
+    )
     app.add_middleware(WebSecurityMiddleware, public_origin=s.public_origin)
     app.add_middleware(RequestContextMiddleware)
     app.include_router(platform.router)
+    app.include_router(status.router)
     app.include_router(auth.router)
     app.include_router(events.router)
     app.include_router(jobs.router)
     app.include_router(admin.router)
     app.include_router(datasets.router)
+    app.include_router(kb.router)
+    app.include_router(sensing.router)
     # Last: the SPA catch-all must not shadow any API route.
     install_spa(app, resources.settings.static_dir)
     return app

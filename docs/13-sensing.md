@@ -135,8 +135,19 @@ does not intersect `PROBE_INPUT_FEATURES`.
 - `TRAIN_SENSING` job → `model_artifacts` rows: `{id, kind (PRIOR|ANOMALY|MULE), version,
   trained_at, training_cutoff, metrics, feature_list, blob (bytea, joblib), sha256, status
   (ACTIVE|RETIRED|FAILED_GATE)}`.
-- The seed job trains once after dataset generation. Retraining is manual
-  (`POST /admin/sensing/train`).
+- The seed job trains once after dataset generation: `GENERATE_DATASET` queues
+  `TRAIN_SENSING` on the dataset it wrote (key `TRAIN_SENSING:dataset-<id>`, so once). Retraining
+  is manual (`POST /admin/sensing/train`; `409 JOB_ALREADY_RUNNING` while one runs).
+- **Implementation** (#88): `delphi.sensing.artifacts` stores each model and applies the gate
+  rules of §4: a passed gate makes it ACTIVE and retires the previous one; a failed gate stores
+  it as FAILED_GATE and keeps the previous ACTIVE one; the first artifact of a kind is activated
+  anyway, with `gate_passed = false`. Each activation publishes `artifact.activated`. The
+  `TRAIN_SENSING` job (`delphi.sensing.jobs`) runs one trainer per kind, each in its own
+  transaction, so a retried job skips the kinds it already stored. A trainer takes a
+  `TrainingRequest` (a `delphi_app` connection and the dataset) and returns a `TrainedModel`
+  (blob, metrics, feature list, training cutoff, gate result); it picks its own rows and cutoff.
+  Kinds without a trainer yet are skipped and listed in the job result. Reading a blob checks
+  its SHA-256.
 - The model is loaded at api/worker start and on an `artifact.activated` event. Inference
   p95 ≤ 20 ms per payment (NFR-03).
 - **Retraining with a promoted typology:** if the ACTIVE KB has typologies that are not model

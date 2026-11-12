@@ -33,7 +33,7 @@ comes with a due-diligence trail.
 | G-4 | Recover more money after a loss by ranking liens on expected recoverable ₹ and freezing only the traced amount | Golden-hour recovery ratio, tracing delay |
 | G-5 | Learn from probe outcomes and fix selective-label bias | Label coverage, likelihood-table convergence |
 | G-6 | Discover a previously unknown fraud pattern live | Unknown-pattern time-to-typology |
-| G-7 | Run as a live, public, continuously deployed demo on the owner's home server | Push to `main` is live within 15 minutes |
+| G-7 | Run as a live, public demo on the owner's home server, deployed on demand | An approved deploy of `main` is live and verified within 15 minutes (ADR-0015) |
 
 ## 4. Non-goals (explicitly out of scope)
 
@@ -97,5 +97,6 @@ The PoC succeeds when:
 1. All five demo stories pass as automated e2e tests against the deployed build (doc 21).
 2. The evaluation (doc 22) report is generated reproducibly from a fixed seed, and the headline
    targets are either met or honestly reported as not met.
-3. Every push to `main` deploys automatically, and the deployment is verified (doc 23).
+3. Any commit on `main` can be deployed by a manual, owner-approved run, and the deployment is
+   verified (doc 23, ADR-0015).
 4. Milestones M0–M9 are closed against their exit criteria (doc 25).

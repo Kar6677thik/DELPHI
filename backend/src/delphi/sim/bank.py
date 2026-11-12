@@ -191,3 +191,14 @@ sim_phone_risk = Table(
     Column("category", Text, nullable=False),
     _ts("created_at"),
 )
+
+# Created by migration 0007 with `delphi.model_artifacts`, which its foreign key names (TD-7).
+# The mule scorer writes it (MULE_SWEEP, docs/13 §6); the generator never does.
+account_scores = Table(
+    "account_scores",
+    metadata,
+    Column("account_id", Uuid, primary_key=True),
+    Column("p_mule", Float, nullable=False),
+    _ts("computed_at"),
+    Column("model_artifact_id", Uuid, nullable=False),
+)
