@@ -31,6 +31,13 @@ build_account_features(account, history: AccountHistory, as_of) -> dict[str, flo
 `as_of` is strictly the payment's initiation time. Only data with timestamp < `as_of` may be
 used (leakage guard; a unit test injects a future event and asserts it is ignored).
 
+In code (#87): `delphi.sensing.features.build_payment_features` is the one function;
+`delphi.sensing.history.load_payment_snapshot` is the online repository (the existing indexes on
+payments by payer and time, logins and CRM events by customer and time, payees, devices and
+accounts by customer cover its queries); `delphi.sensing.offline.OfflineHistories` builds every
+customer's snapshot from dataframes. Both read the `bank` tables through `delphi.sim.api`, never
+`sim_truth`.
+
 ## 3. Payment features (v1)
 
 Behavioural baseline windows ("behavioural twin"): 10 min, 24 h, 30 days, lifetime.
@@ -59,6 +66,30 @@ Behavioural baseline windows ("behavioural twin"): 10 min, 24 h, 30 days, lifeti
 | `channel_*` | one-hot of channel | ✔ | ✔ |
 | `session_duration_s` | from session telemetry | ✔ | ✔ |
 | `remote_access_active` | from telemetry | ✘ (probe input) | ✔ |
+
+Where the table is silent (gap fills, #87):
+
+- Windows count the customer's earlier payments from any of their accounts, whatever their
+  status, never the payment being scored. Local time is IST (UTC+05:30, no daylight saving).
+- With no earlier payment, `amount_z_30d` and `hour_deviation` are 0 and
+  `amount_ratio_max_lifetime` is 1. The z-score uses the population std of the 30-day window.
+- `hour_deviation` is the circular distance from the *circular* median local hour of the earlier
+  payments: the hours are cut at the largest empty arc of the clock before taking the median.
+  A customer who pays around midnight ([23.5, 23.7, 0.5, 0.6]) has a median near 0.1 h, not
+  the linear median's 12 h, so a 23:40 payment deviates by about 0.4 h.
+- `sum_24h_ratio_30d` divides the 24 h sum by the 30-day daily mean, floored at ₹100 like the
+  z-score's std.
+- A payee that was never saved is new; a payee or device first seen at or after `as_of` is not
+  there yet.
+- `device_age_days` counts only the customer's own devices (`bank.devices.customer_id`). A device
+  recorded under another customer has never been this customer's, so it is new to them (age 0,
+  `is_new_device` = 1), however long the bank has known it: a fraudster's old phone is new to
+  the victim, which is the account-takeover case DEVICE_POSTURE is there to catch.
+- `login_new_city`: the last login before the payment is from a city no earlier login used. A
+  customer's first login is not a new city (TD-8).
+- `limit_change_24h` stays 0: the bank records no limit changes yet (the CRM has SIM-swap and
+  lost-device events only). `sensing/config.yaml` lists the event types that would count.
+- `payee_p_mule` is 0.10, the §6 fallback, until the mule scorer (#91) writes `account_scores`.
 
 **Double-count guard (no exceptions).** Any feature that is an input to a passive-probe
 classifier is an *observation*, and is excluded from the prior model. Otherwise the engine
