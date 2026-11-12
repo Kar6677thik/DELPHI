@@ -17,8 +17,12 @@ Where docs/13 §3 is silent (the gap fills, also listed there):
   status, and never the payment being scored;
 - with no earlier payment, ``amount_z_30d`` and ``hour_deviation`` are 0 and
   ``amount_ratio_max_lifetime`` is 1;
-- ``hour_deviation`` is the circular distance from the median local hour of the earlier
-  payments;
+- ``hour_deviation`` is the circular distance from the circular median local hour of the
+  earlier payments: the hours are cut at the largest empty arc of the clock, so a customer who
+  pays around midnight has a median near midnight, not near noon;
+- ``device_age_days`` counts only the customer's own devices (``bank.devices.customer_id``). A
+  device recorded under another customer has never been this customer's, so it is new to them
+  (age 0): the account-takeover case DEVICE_POSTURE is there to catch;
 - ``sum_24h_ratio_30d`` divides by the 30-day daily mean, floored like the z-score's std;
 - ``login_new_city`` is 0 when the last login is the customer's first (TD-8);
 - ``limit_change_24h`` stays 0: the bank records no limit changes yet.
@@ -137,6 +141,14 @@ class CustomerHistory:
     login_at_us: IntArray = field(default_factory=_empty)
     login_city: tuple[str, ...] = ()
     limit_increase_at_us: IntArray = field(default_factory=_empty)
+    # Derived: each payee's first index in ``payment_payee`` ("paid before?" in O(1)).
+    first_payment_index: Mapping[str, int] = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        first: dict[str, int] = {}
+        for i, payee in enumerate(self.payment_payee):
+            first.setdefault(payee, i)
+        object.__setattr__(self, "first_payment_index", first)
 
 
 def _days(us: int) -> float:
@@ -146,6 +158,19 @@ def _days(us: int) -> float:
 def _local_hours(at_us: IntArray | int, offset_minutes: int) -> NDArray[np.float64]:
     local = np.asarray(at_us, dtype=np.int64) + offset_minutes * _US_PER_MINUTE
     return (local % _US_PER_DAY).astype(np.float64) / _US_PER_HOUR
+
+
+def circular_median(hours: NDArray[np.float64]) -> float:
+    """The median of clock hours, cut at the largest empty arc of the 24-hour clock.
+
+    The hours are rotated so the cut is at 0, the ordinary median is taken, and the result is
+    rotated back. [23.5, 23.7, 0.5, 0.6] gives about 0.1, not the linear median's 12.
+    """
+    ordered = np.sort(np.asarray(hours, dtype=np.float64) % _HOURS_PER_DAY)
+    gaps = np.diff(ordered, append=ordered[0] + _HOURS_PER_DAY)  # the last one wraps around
+    cut = ordered[(int(np.argmax(gaps)) + 1) % len(ordered)]
+    rotated = (ordered - cut) % _HOURS_PER_DAY
+    return float((np.median(rotated) + cut) % _HOURS_PER_DAY)
 
 
 def _since(at_us: IntArray, start_us: int, end: int) -> slice:
@@ -177,7 +202,7 @@ def build_payment_features(
 
     hour = float(_local_hours(as_of, config.local_utc_offset_minutes))
     if n:
-        median = float(np.median(_local_hours(at, config.local_utc_offset_minutes)))
+        median = circular_median(_local_hours(at, config.local_utc_offset_minutes))
         gap = abs(hour - median) % _HOURS_PER_DAY
         hour_deviation = min(gap, _HOURS_PER_DAY - gap)
     else:
@@ -187,7 +212,7 @@ def build_payment_features(
     payee = payment.payee_account_id
     added = history.payee_added_at_us.get(payee)
     saved = added is not None and added < as_of
-    ever_paid = payee in history.payment_payee[:n]
+    ever_paid = history.first_payment_index.get(payee, n) < n
     if not saved:
         is_new_payee = True
         payee_age_us = 0
@@ -200,7 +225,7 @@ def build_payment_features(
     week_ago = as_of - _NEW_PAYEES_DAYS * _US_PER_DAY
     new_payees_7d = sum(1 for t in history.payee_added_at_us.values() if week_ago <= t < as_of)
 
-    # The device the session runs on.
+    # The device the session runs on: only the customer's own devices have an age.
     first_seen = history.device_first_seen_us.get(payment.device_id or "")
     device_age_us = as_of - first_seen if first_seen is not None and first_seen < as_of else 0
     device_age_days = min(_days(device_age_us), config.device_age_cap_days)

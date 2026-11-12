@@ -73,11 +73,18 @@ Where the table is silent (gap fills, #87):
   status, never the payment being scored. Local time is IST (UTC+05:30, no daylight saving).
 - With no earlier payment, `amount_z_30d` and `hour_deviation` are 0 and
   `amount_ratio_max_lifetime` is 1. The z-score uses the population std of the 30-day window.
-- `hour_deviation` is the circular distance from the median local hour of the earlier payments.
+- `hour_deviation` is the circular distance from the *circular* median local hour of the earlier
+  payments: the hours are cut at the largest empty arc of the clock before taking the median.
+  A customer who pays around midnight ([23.5, 23.7, 0.5, 0.6]) has a median near 0.1 h, not
+  the linear median's 12 h, so a 23:40 payment deviates by about 0.4 h.
 - `sum_24h_ratio_30d` divides the 24 h sum by the 30-day daily mean, floored at ₹100 like the
   z-score's std.
 - A payee that was never saved is new; a payee or device first seen at or after `as_of` is not
   there yet.
+- `device_age_days` counts only the customer's own devices (`bank.devices.customer_id`). A device
+  recorded under another customer has never been this customer's, so it is new to them (age 0,
+  `is_new_device` = 1), however long the bank has known it: a fraudster's old phone is new to
+  the victim, which is the account-takeover case DEVICE_POSTURE is there to catch.
 - `login_new_city`: the last login before the payment is from a city no earlier login used. A
   customer's first login is not a new city (TD-8).
 - `limit_change_24h` stays 0: the bank records no limit changes yet (the CRM has SIM-swap and

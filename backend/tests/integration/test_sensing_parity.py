@@ -6,6 +6,7 @@ from __future__ import annotations
 import math
 import random
 from collections.abc import Callable
+from datetime import timedelta
 from uuid import UUID
 
 import pytest
@@ -94,3 +95,43 @@ def test_a_payment_without_a_customer_has_no_snapshot(
                 load_payment_snapshot(conn, UUID(int=1), config)
     finally:
         app.dispose()
+
+
+def test_another_customers_device_is_new_on_both_paths(
+    create_database: Callable[[], str], kb: KnowledgeBase
+) -> None:
+    """docs/13 §3 (the #140 review): a payment made on a device the bank has long known under
+    another customer is on a new device for this customer, online and offline alike."""
+    url = create_database()
+    upgrade(url)
+    sim = engine_as(url, "delphi_sim")
+    p, a, d = bank.payments, bank.accounts, bank.devices
+    with sim.begin() as conn:
+        write_dataset(conn, generate_dataset(load_generator_config(), "test", kb=kb))
+        payment, payer, at = conn.execute(
+            select(p.c.id, a.c.customer_id, p.c.initiated_at)
+            .join(a, a.c.id == p.c.payer_account_id)
+            .where(a.c.customer_id.is_not(None), p.c.device_id.is_not(None))
+            .order_by(p.c.initiated_at.desc(), p.c.id)
+            .limit(1)
+        ).one()
+        device = conn.execute(  # another customer's device, seen well before the payment
+            select(d.c.id)
+            .where(d.c.customer_id != payer, d.c.first_seen_at < at - timedelta(days=10))
+            .order_by(d.c.id)
+            .limit(1)
+        ).scalar_one()
+        conn.execute(p.update().where(p.c.id == payment).values(device_id=device))
+    sim.dispose()
+
+    config = load_sensing_config().features
+    app = engine_as(url, "delphi_app")
+    try:
+        with app.connect() as conn:
+            online = build_payment_features(*load_payment_snapshot(conn, payment, config), config)
+            offline = OfflineHistories(load_bank_frames(conn), config)
+            batch = build_payment_features(*offline.snapshot(str(payment)), config)
+    finally:
+        app.dispose()
+    for features in (online, batch):
+        assert features["device_age_days"] == 0.0 and features["is_new_device"] == 1.0

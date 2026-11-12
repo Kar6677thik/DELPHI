@@ -13,7 +13,7 @@ from __future__ import annotations
 from uuid import UUID
 
 import numpy as np
-from sqlalchemy import Connection, or_, select
+from sqlalchemy import Connection, select
 
 from delphi.sensing.config import FeatureConfig
 from delphi.sensing.features import CustomerHistory, PaymentView, to_us
@@ -83,7 +83,7 @@ def load_payment_snapshot(
     d = bank.devices
     devices = conn.execute(
         select(d.c.id, d.c.first_seen_at).where(
-            or_(d.c.customer_id == customer_id, d.c.id == row.device_id),
+            d.c.customer_id == customer_id,  # another customer's device is new to this one
             d.c.first_seen_at < as_of,
         )
     ).all()

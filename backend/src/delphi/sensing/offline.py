@@ -10,7 +10,7 @@ The parity test checks that these snapshots give the online path's features.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
@@ -174,9 +174,6 @@ class OfflineHistories:
         by_customer = {k: g for k, g in own.groupby("customer_id", sort=False)}
         payees = _by(frames.payees, "customer_id")
         devices = frames.devices.assign(first_us=_us(frames.devices["first_seen_at"]))
-        self._first_seen: dict[str, int] = dict(
-            zip(devices["id"], devices["first_us"].tolist(), strict=True)
-        )
         devices_by = _by(devices, "customer_id")
         logins = frames.logins.assign(at_us=_us(frames.logins["at"])).sort_values(
             ["at_us", "id"], kind="stable"
@@ -222,10 +219,6 @@ class OfflineHistories:
             raise LookupError(f"payment {payment_id} is not made by a customer of the bank")
         history = self._histories[row.customer_id]
         device = row.device_id
-        if device is not None and device not in history.device_first_seen_us:
-            first = self._first_seen.get(device)
-            if first is not None:  # a device recorded under another customer
-                history = _with_device(history, device, first)
         payment = PaymentView(
             id=payment_id,
             payer_account_id=row.payer_account_id,
@@ -258,8 +251,3 @@ def _ints(frame: pd.DataFrame | None, column: str) -> IntArray:
     if frame is None:
         return np.zeros(0, dtype=np.int64)
     return np.asarray(frame[column].to_numpy(), dtype=np.int64)
-
-
-def _with_device(history: CustomerHistory, device: str, first_seen_us: int) -> CustomerHistory:
-    seen = {**history.device_first_seen_us, device: first_seen_us}
-    return replace(history, device_first_seen_us=seen)
