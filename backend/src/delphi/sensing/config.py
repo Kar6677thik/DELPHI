@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 CONFIG_FILE = Path(__file__).resolve().parent / "config.yaml"
 
@@ -55,10 +55,57 @@ class AccountFeatureConfig(BaseModel):
     executed_status: str
 
 
+class SplitParts(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    train: int = Field(gt=0)
+    validation: int = Field(gt=0)
+    test: int = Field(gt=0)
+
+
+class PriorGate(BaseModel):
+    """docs/13 §4: the quality gate, enforced only on the listed profiles."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    max_ece: float = Field(gt=0, le=1)
+    min_macro_auc: float = Field(ge=0, le=1)
+    enforced_profiles: tuple[str, ...]
+
+
+class PriorConfig(BaseModel):
+    """The LightGBM multiclass prior model (docs/13 §4)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    classes: tuple[str, ...] = Field(min_length=2)
+    num_leaves: int = Field(gt=1)
+    learning_rate: float = Field(gt=0)
+    n_estimators: int = Field(gt=0)
+    early_stopping_rounds: int = Field(gt=0)
+    seed: int
+    split_parts: SplitParts
+    temperature_bounds: tuple[float, float]
+    ece_bins: int = Field(gt=0)
+    top_contributions: int = Field(gt=0)
+    label_precedence: tuple[str, ...] = Field(min_length=1)
+    gate: PriorGate
+
+    @model_validator(mode="after")
+    def _check(self) -> PriorConfig:
+        if len(set(self.classes)) != len(self.classes):
+            raise ValueError("prior classes must be distinct")
+        low, high = self.temperature_bounds
+        if not 0 < low < 1 < high:
+            raise ValueError("temperature_bounds must bracket 1 and be positive")
+        return self
+
+
 class SensingConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     anomaly: AnomalyConfig
+    prior: PriorConfig
     features: FeatureConfig
     accounts: AccountFeatureConfig
 
