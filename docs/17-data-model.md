@@ -118,11 +118,13 @@ guardian_sessions(id, payment_id unique → bank.payments, status, decision null
                   unexplained bool, mode (LIVE|AUTOPLAY|EVAL), runner (API|WORKER), rng_seed bigint,
                   started_at, decided_at null, case_id null, baseline_decisions jsonb,
                   dd_pack_complete bool, version)
+   -- migration 0010 (#94); case_id's foreign key to cases is added by the cases migration (#97)
 probe_runs(id, session_id, seq int, probe_key, mode (PASSIVE|ACTIVE), status, selected_by null,
            propensity null, eligible_set jsonb, candidates jsonb, lookahead_depth, voi_myopic_paise,
            net_value_paise, cost_paise, variant_id null, language null, raw_response jsonb,
            outcome null, posterior_before jsonb, posterior_after jsonb, info_yield_bits null,
            started_at, completed_at null, unique(session_id, seq), unique(session_id, probe_key))
+   partial unique (session_id) where status = 'AWAITING_CUSTOMER'   -- migration 0010
 
 cases(id, type, protocol, status, subject_payment_id null, subject_account_id null,
       guardian_session_id null, kb_version_id, prior_components jsonb, posterior jsonb,

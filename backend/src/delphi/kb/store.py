@@ -229,6 +229,14 @@ def active_version(conn: Connection | Session) -> StoredVersion | None:
     return _stored(row) if row is not None else None
 
 
+def active_version_id(conn: Connection | Session) -> int | None:
+    """The ACTIVE version's id, without loading its content (for pinning a session to it)."""
+    found: int | None = conn.execute(
+        select(kb_versions.c.id).where(kb_versions.c.status == KbStatus.ACTIVE.value)
+    ).scalar_one_or_none()
+    return found
+
+
 def kb_readiness(conn: Connection) -> CheckResult:
     """The ``/ready`` check (docs/16 §2): an ACTIVE KB version exists."""
     found = conn.execute(
