@@ -490,6 +490,18 @@ Label arrivals are delivered by the separate `LABEL_DELIVERY` job from
 `sim_truth.label_schedule` (doc 04 §5.4). `bank.sim_schedule` never holds labels, so the app
 role cannot see future labels.
 
+How delivery works (`delphi.sim.delivery`, #159):
+
+- A due label is copied into `delphi.labels` with `known_at = due_at`, mapped through the ACTIVE
+  KB at delivery (§7), and its schedule row is marked delivered. Delivery runs as `delphi_sim`
+  under one advisory lock and is idempotent: one label per (subject, source).
+- **At seed time**, `GENERATE_DATASET` delivers every label due by the end of the history, in the
+  transaction that writes the dataset, so a seeded bank already knows its history's labels and
+  `TRAIN_SENSING` can train on them straight away.
+- **Afterwards**, `LABEL_DELIVERY` delivers what falls due by the clock. On `test` and `eval` the
+  history ends at a fixed date in the past, so its first run delivers every remaining label.
+  That is harmless: the trainers keep only labels known by their training cutoff (doc 13 §4).
+
 **Story S-4 data.** The hidden scenario's natural rate (10 per 10k) is far too slow for a live
 demo. The `DEMO_STORY` S4 runner therefore **injects** 15 `UPI_COLLECT_REFUND` payments for
 15 pre-generated collect-refund victim customers (created at seed time, with no history of the

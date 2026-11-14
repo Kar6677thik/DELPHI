@@ -143,8 +143,9 @@ police_alert_drafts(id, case_id, status (DRAFT|SENT_SIMULATED|DISCARDED), payloa
                     acted_by null, acted_at null)
 campaigns(id, leading_hypothesis, case_count, f3_stage_max, expected_loss_paise,
           vulnerable_victims, rank_score, merged_into null, created_at, updated_at)
-labels(id, subject_type, subject_id, hypothesis_key, label_source, known_at,
-       unique(subject_type, subject_id, label_source))
+labels(id, subject_type, subject_id, hypothesis_key, label_source, known_at, created_at,
+       unique(subject_type, subject_id, label_source))   idx (subject_type, known_at)
+       -- migration 0011 (#159); delphi.platform.labels; filled by LABEL_DELIVERY (doc 14 §8)
 
 chase_operations(id, complaint_id null, source_payment_ids uuid[], status, reported_at,
                  reported_loss_paise, kb_version_id, golden_hour_ends_at, last_traced_at,

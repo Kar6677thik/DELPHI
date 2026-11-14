@@ -5,8 +5,10 @@ asking the worker for a dataset (docs/16 §2 `POST /admin/datasets`, docs/23 §4
 Feature modules read the simulated bank through these re-exported `bank` tables (the probes'
 sim adapters, sensing, the Navigator evidence rules), so the schema is defined once, in
 `delphi.sim.bank`. They are **read-only** for everyone but the simulator, except
-`account_scores`, which the mule scorer writes (docs/13 §6). Nothing from
-`sim_truth` is exported: this module reads no ground truth, so the api may import it.
+`account_scores`, which the mule scorer writes (docs/13 §6). `labels` (`delphi.labels`, #159) is
+what the bank has observed so far, delivered from the simulator's schedule by `LABEL_DELIVERY`;
+the sensing trainers read it. Nothing from `sim_truth` is exported: this module reads no ground
+truth, so the api may import it.
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ from sqlalchemy.orm import Session
 from delphi.platform.clock import Clock
 from delphi.platform.errors import DelphiError, InvalidStateTransitionError, ProblemCode
 from delphi.platform.jobs import Enqueued, JobStatus, JobType, enqueue, requeue_failed
+from delphi.platform.labels import labels  # the labels the bank has observed (#159)
 from delphi.platform.locks import DATASET_REQUEST_LOCK_KEY
 from delphi.platform.tables import jobs
 from delphi.sim.bank import (
@@ -56,6 +59,7 @@ __all__ = [
     "customers",
     "dataset_exists",
     "devices",
+    "labels",
     "ledger_entries",
     "login_events",
     "payees",
