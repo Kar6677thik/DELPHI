@@ -982,6 +982,168 @@
           }
         }
       }
+    },
+    "/api/v1/cases": {
+      "get": {
+        "tags": [
+          "cases"
+        ],
+        "summary": "Read Cases",
+        "description": "The case queue: soonest SLA first (``sort=sla_due_at``), or newest first.",
+        "operationId": "read_cases_api_v1_cases_get",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/CaseStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/CaseType"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Type"
+            }
+          },
+          {
+            "name": "protocol",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/CaseProtocol"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Protocol"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/CaseSort",
+              "default": "sla_due_at"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CasePage"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An RFC 9457 problem (docs/16 §1)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/cases/{case_id}": {
+      "get": {
+        "tags": [
+          "cases"
+        ],
+        "summary": "Read Case",
+        "operationId": "read_case_api_v1_cases__case_id__get",
+        "parameters": [
+          {
+            "name": "case_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Case Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaseView"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An RFC 9457 problem (docs/16 §1)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1024,6 +1186,244 @@
           "checked"
         ],
         "title": "AuditVerifyView"
+      },
+      "CasePage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CaseView"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "CasePage"
+      },
+      "CaseProtocol": {
+        "type": "string",
+        "enum": [
+          "STANDARD",
+          "COERCION"
+        ],
+        "title": "CaseProtocol"
+      },
+      "CaseSort": {
+        "type": "string",
+        "enum": [
+          "sla_due_at",
+          "opened_at"
+        ],
+        "title": "CaseSort",
+        "description": "The case queue's orders (docs/16): soonest SLA first, or newest first."
+      },
+      "CaseStatus": {
+        "type": "string",
+        "enum": [
+          "OPEN",
+          "IN_PROGRESS",
+          "DISPOSED"
+        ],
+        "title": "CaseStatus"
+      },
+      "CaseType": {
+        "type": "string",
+        "enum": [
+          "PAYMENT_HOLD",
+          "ACCOUNT_REVIEW"
+        ],
+        "title": "CaseType"
+      },
+      "CaseView": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "type": {
+            "$ref": "#/components/schemas/CaseType"
+          },
+          "protocol": {
+            "$ref": "#/components/schemas/CaseProtocol"
+          },
+          "status": {
+            "$ref": "#/components/schemas/CaseStatus"
+          },
+          "subject_payment_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Payment Id"
+          },
+          "subject_account_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Account Id"
+          },
+          "guardian_session_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Guardian Session Id"
+          },
+          "kb_version_id": {
+            "type": "integer",
+            "title": "Kb Version Id"
+          },
+          "leading_hypothesis": {
+            "type": "string",
+            "title": "Leading Hypothesis"
+          },
+          "posterior": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Posterior"
+          },
+          "prior_components": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Prior Components"
+          },
+          "recommended_decision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recommended Decision"
+          },
+          "risk_by_decision": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Risk By Decision"
+          },
+          "amount_at_stake_paise": {
+            "type": "integer",
+            "title": "Amount At Stake Paise"
+          },
+          "opened_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Opened At"
+          },
+          "sla_due_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Sla Due At"
+          },
+          "sla_breached": {
+            "type": "boolean",
+            "title": "Sla Breached"
+          },
+          "unexplained": {
+            "type": "boolean",
+            "title": "Unexplained"
+          },
+          "dd_pack_complete": {
+            "type": "boolean",
+            "title": "Dd Pack Complete"
+          },
+          "disposition": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disposition"
+          },
+          "disposed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disposed At"
+          },
+          "version": {
+            "type": "integer",
+            "title": "Version"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "type",
+          "protocol",
+          "status",
+          "subject_payment_id",
+          "subject_account_id",
+          "guardian_session_id",
+          "kb_version_id",
+          "leading_hypothesis",
+          "posterior",
+          "prior_components",
+          "recommended_decision",
+          "risk_by_decision",
+          "amount_at_stake_paise",
+          "opened_at",
+          "sla_due_at",
+          "sla_breached",
+          "unexplained",
+          "dd_pack_complete",
+          "disposition",
+          "disposed_at",
+          "version"
+        ],
+        "title": "CaseView"
       },
       "CheckStatus": {
         "type": "string",

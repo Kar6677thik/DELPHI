@@ -134,6 +134,10 @@ cases(id, type, protocol, status, subject_payment_id null, subject_account_id nu
       disposed_at null, dd_pack_complete bool, unexplained bool, version)
    partial unique (subject_payment_id) where status <> 'DISPOSED';
    partial unique (subject_account_id) where status <> 'DISPOSED' and type = 'ACCOUNT_REVIEW'
+   -- migration 0012 (#97). recommended_decision and risk_by_decision are null until the case
+   -- console evaluates the case (#103); campaign_id gets its foreign key with `campaigns` (M5).
+   -- CHECKs: the subject matches the type; DISPOSED ⇔ disposition and disposed_at; the
+   -- disposition fits the type. 0012 also adds guardian_sessions.case_id → cases.id.
 evidence_records(id, case_id, source_key, outcome, raw jsonb, record_refs jsonb, fetch_ms,
                  posterior_before, posterior_after, info_yield_bits, rank_at_request,
                  net_value_at_request_paise, requested_by, requested_at, narrative null,

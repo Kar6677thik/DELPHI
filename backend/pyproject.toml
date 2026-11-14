@@ -140,8 +140,10 @@ type = "forbidden"
 source_modules = [
   "delphi.chase",
   "delphi.engine",
+  "delphi.guardian",
   "delphi.kb",
   "delphi.llm",
+  "delphi.navigator",
   "delphi.probes",
   "delphi.platform",
   "delphi.sensing",
@@ -156,12 +158,20 @@ source_modules = ["delphi.platform"]
 forbidden_modules = [
   "delphi.chase",
   "delphi.engine",
+  "delphi.guardian",
   "delphi.kb",
   "delphi.llm",
+  "delphi.navigator",
   "delphi.probes",
   "delphi.sensing",
   "delphi.sim",
 ]
+
+[[tool.importlinter.contracts]]
+name = "navigator does not import guardian: Guardian opens cases through navigator.api (no cycle)"
+type = "forbidden"
+source_modules = ["delphi.navigator"]
+forbidden_modules = ["delphi.guardian"]
 
 [[tool.importlinter.contracts]]
 name = "only sim and evaluation import ground truth (docs/04 §4.1 rule 5)"
