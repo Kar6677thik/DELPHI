@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Literal, get_args
 from uuid import UUID
 
@@ -44,6 +44,7 @@ from delphi.sim.bank import (
     sim_registry_listings,
 )
 from delphi.sim.catalog import datasets
+from delphi.sim.generator_config import history_end, load_generator_config
 
 # The read-only `bank` tables re-exported for feature modules, and this facade's own API.
 __all__ = [
@@ -51,6 +52,7 @@ __all__ = [
     "PROFILES",
     "DatasetInfo",
     "DatasetProfile",
+    "HistoryWindow",
     "account_scores",
     "accounts",
     "complaints",
@@ -59,6 +61,7 @@ __all__ = [
     "customers",
     "dataset_exists",
     "devices",
+    "history_window",
     "labels",
     "ledger_entries",
     "login_events",
@@ -96,6 +99,25 @@ def current_dataset(conn: Connection | Session) -> DatasetInfo | None:
         select(datasets.c.id, datasets.c.profile, datasets.c.seed, datasets.c.created_at).limit(1)
     ).first()
     return DatasetInfo(row.id, row.profile, row.seed, row.created_at) if row is not None else None
+
+
+@dataclass(frozen=True, slots=True)
+class HistoryWindow:
+    """The dataset's generated history, as the sensing trainers need it (docs/13 §4): it runs
+    from ``start`` to ``end``, and a GENUINE label arrives ``maturity_days`` after a payment."""
+
+    start: datetime
+    end: datetime
+    maturity_days: int
+
+
+def history_window(dataset: DatasetInfo) -> HistoryWindow:
+    """docs/14 §2: `demo` ends its history when the dataset was generated (its ``created_at``);
+    `test` and `eval` at the generator's fixed epoch."""
+    config = load_generator_config()
+    profile = config.profiles[dataset.profile]
+    end = history_end(config, dataset.profile, created_at=dataset.created_at)
+    return HistoryWindow(end - timedelta(days=profile.history_days), end, profile.maturity_days)
 
 
 def request_dataset(

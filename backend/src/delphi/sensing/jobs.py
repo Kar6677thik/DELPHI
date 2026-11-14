@@ -32,6 +32,7 @@ from delphi.sensing.artifacts import (
     artifacts_of_job,
     store_artifact,
 )
+from delphi.sensing.trainers import train_prior_artifact
 from delphi.sim.api import DatasetInfo, current_dataset
 
 log = get_logger(__name__)
@@ -49,7 +50,7 @@ class TrainingRequest:
 Trainer = Callable[[TrainingRequest], TrainedModel]
 
 # Registered by #89 (PRIOR), #90 (ANOMALY) and #91 (MULE) as each lands.
-DEFAULT_TRAINERS: Mapping[ArtifactKind, Trainer] = {}
+DEFAULT_TRAINERS: Mapping[ArtifactKind, Trainer] = {ArtifactKind.PRIOR: train_prior_artifact}
 
 
 class LeaseLostError(RuntimeError):

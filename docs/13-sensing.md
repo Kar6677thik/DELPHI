@@ -214,6 +214,12 @@ the artifact belong to `TRAIN_SENSING` (#88). Gaps the text above leaves open, f
   (blob, metrics, feature list, training cutoff, gate result); it picks its own rows and cutoff.
   Kinds without a trainer yet are skipped and listed in the job result. Reading a blob checks
   its SHA-256.
+- **The PRIOR trainer** (`delphi.sensing.trainers.train_prior_artifact`, #159) reads the
+  payments and the labels the bank had observed (`delphi.labels`, delivered by
+  `LABEL_DELIVERY`, doc 14 §8) through `delphi.sim.api`, never `sim_truth`. Its training cutoff
+  is the end of the dataset's history (`sim.api.history_window`: the generation time for `demo`,
+  the fixed epoch for `test` and `eval`), so a retrain on the same dataset sees the same labels
+  however many have been delivered since. On `test`, seed plus training take about 5 s.
 - The model is loaded at api/worker start and on an `artifact.activated` event. Inference
   p95 ≤ 20 ms per payment (NFR-03).
 - **Retraining with a promoted typology:** if the ACTIVE KB has typologies that are not model
