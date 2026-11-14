@@ -1,7 +1,7 @@
 import { http, HttpResponse } from 'msw';
 
 import { CSRF_HEADER } from '../../src/api/client';
-import type { LoginRequest, Me, Permission } from '../../src/api/types';
+import type { CasePage, CaseView, LoginRequest, Me, Permission } from '../../src/api/types';
 
 /**
  * The auth API (docs/16 §2) as the tests see it: the real one's answers, in the real one's
@@ -82,7 +82,40 @@ export function problem(
   );
 }
 
+/** A case as `GET /cases` returns it (backend/src/delphi/api/routers/cases.py), opened at 10:00. */
+export function mockCase(overrides: Partial<CaseView> = {}): CaseView {
+  return {
+    id: '01930000-0000-7000-8000-000000000001',
+    type: 'PAYMENT_HOLD',
+    protocol: 'COERCION',
+    status: 'OPEN',
+    subject_payment_id: '01930000-0000-7000-8000-0000000000aa',
+    subject_account_id: null,
+    guardian_session_id: '01930000-0000-7000-8000-0000000000bb',
+    kb_version_id: 1,
+    leading_hypothesis: 'APP_DIGITAL_ARREST',
+    posterior: { APP_DIGITAL_ARREST: 0.71, GENUINE: 0.08, UNEXPLAINED: 0.1 },
+    prior_components: {},
+    recommended_decision: null,
+    risk_by_decision: null,
+    amount_at_stake_paise: 48_000_000,
+    opened_at: '2026-11-14T10:00:00Z',
+    sla_due_at: '2026-11-14T10:30:00Z',
+    sla_breached: false,
+    unexplained: false,
+    dd_pack_complete: false,
+    disposition: null,
+    disposed_at: null,
+    version: 1,
+    ...overrides,
+  };
+}
+
+/** The case queue the mock api serves; tests replace it with `server.use`. */
+export const MOCK_CASES: CasePage = { items: [mockCase()], next_cursor: null };
+
 export const handlers = [
+  http.get('/api/v1/cases', () => HttpResponse.json(MOCK_CASES)),
   http.post('/api/v1/auth/login', async ({ request }) => {
     if (request.headers.get(CSRF_HEADER) !== '1') {
       return problem(403, 'Forbidden', 'CSRF_REJECTED', 'Missing CSRF header.', request.url);
