@@ -57,7 +57,10 @@ PENDING_GUARDIAN ─► RELEASED ─► EXECUTED
                       ─► CANCELLED              (case CONFIRM_FRAUD)
 ```
 
-`EXECUTED` writes the ledger entries. In the simulation, `RELEASED` → `EXECUTED` is immediate.
+`EXECUTED` writes the ledger entries. In the simulation, `RELEASED` → `EXECUTED` is immediate
+when the payer can fund the payment. A released payment the payer cannot fund stays `RELEASED`,
+unexecuted and with no ledger entries; the session's decision is still `RELEASE` (owner decision,
+#94). Balances never go negative (`bank.accounts` CHECK).
 
 ## 4. Case (aggregate root: `Case`)
 

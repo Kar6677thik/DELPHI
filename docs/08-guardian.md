@@ -41,7 +41,31 @@ Research §9.3–9.4. Module `delphi.guardian`. Decision profile `GUARDIAN_PAYME
 ```
 
 Steps 4–9 run as one asyncio task per session in the api process. After every step the session
-row and its probe runs are committed. On api start-up, sessions in `PASSIVE_PROBING` or
+row and its probe runs are committed.
+
+**Implementation** (`delphi.guardian.service.GuardianService`, #94). One method per step, each in
+its own transaction:
+
+- `start` (steps 1–3) commits the CREATED session on its own first, so a later failure still has
+  a session to hold, then builds the prior from `PriorPort` (the sensing inference, #92):
+  `with_payer_mule` → `engine.build_prior`. It persists `p_model`, `q`, `u`, the KB-only shares,
+  the top features and the prior, and takes the fast path on `p_model(GENUINE)`.
+- `passive` (step 4) runs the eligible passive probes through `delphi.probes.api`. It runs only
+  for a CREATED session, so a resumed call is harmless. Each probe run stores VoI_1 and the net
+  value against the prior, for analytics (doc 06 §9).
+- `plan` (steps 5, 6, 8) either decides, or stores the chosen active probe as a PENDING probe run
+  carrying the candidates table, ready to issue. On STOP the last candidates table goes into the
+  `guardian.session.decided` audit entry, since the session row has no candidates column.
+- **RNG.** Each planning step draws from `default_rng([rng_seed, number of active runs so far])`,
+  a stream derived from the session's seed (doc 06 §10). A resumed or replayed session therefore
+  draws the same numbers without persisting generator state.
+- **The decision** (step 9) sets the payment's status through `sim.api.apply_guardian_decision`,
+  opens the case through `navigator.api.open_case` (idempotent for the same session), sets the
+  Scout flag, and writes the audit entry and the event in the same transaction.
+- **Fail-safe** (FR-GDN-13). Any error in a step rolls that step back, and `fail_safe` then decides
+  HOLD_FOR_REVIEW with terminal reason ENGINE_ERROR in a fresh transaction, without running the
+  engine: the payment is HELD and a STANDARD case is opened. A finished session is left alone.
+  Planning a session that isn't PLANNING is a caller error (409), not an engine error. On api start-up, sessions in `PASSIVE_PROBING` or
 `PLANNING` are resumed. Sessions stuck in `AWAITING_CUSTOMER` for longer than the timeout are
 resolved as timed out (FR-GDN-14).
 
