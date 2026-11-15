@@ -21,7 +21,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from concurrent.futures import Executor
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -112,7 +112,7 @@ class NextProbe:
     session: GuardianSessionRecord
     probe_run_id: UUID
     probe_key: str
-    plan: PlanResult
+    plan: PlanResult | None  # None when an earlier call already chose it (a resume)
 
 
 PlanOutcome = Decided | NextProbe
@@ -232,12 +232,18 @@ class GuardianService:
     async def passive(self, session_id: UUID) -> GuardianSessionRecord:
         """Step 4: every eligible passive probe in parallel, each with the KB's adapter timeout.
         A timeout or adapter error is an ERROR run with no update (FR-GDN-03); updates apply in
-        KB source order. Only a CREATED session is probed, so a resumed call is harmless."""
+        KB source order. A CREATED session is probed; so is one left in PASSIVE_PROBING by a
+        crash (its probe runs are written in the same transaction as the move to PLANNING, so
+        it has none). The results apply only if the session is still the one this call moved:
+        a cancel in the meantime wins (docs/08 §2)."""
         with self._sessions.begin() as s:
             ctx = self._load(s, session_id)
-            if ctx.record.status is not SessionStatus.CREATED:
+            if ctx.record.status is SessionStatus.CREATED:
+                probing = self._write(s, ctx.record, status=SessionStatus.PASSIVE_PROBING.value)
+            elif ctx.record.status is SessionStatus.PASSIVE_PROBING:
+                probing = self._write(s, ctx.record)  # a resume: claim it with a new version
+            else:
                 return ctx.record
-            self._write(s, ctx.record, status=SessionStatus.PASSIVE_PROBING.value)
             facts = self._facts(s, ctx)
             keys = [
                 k
@@ -268,6 +274,11 @@ class GuardianService:
             return self.fail_safe(session_id, exc)
 
         def apply(s: Session, ctx: _Context) -> GuardianSessionRecord:
+            if (
+                ctx.record.status is not SessionStatus.PASSIVE_PROBING
+                or ctx.record.version != probing.version
+            ):
+                return ctx.record  # cancelled, or claimed by a newer resume: not ours to apply
             losses = ctx.losses()
             prior = ctx.belief
             belief = prior
@@ -302,7 +313,7 @@ class GuardianService:
                 s.execute(update(probe_runs).where(probe_runs.c.id == run.id).values(**values))
             updated = self._write(
                 s,
-                _reload(s, session_id),
+                ctx.record,
                 status=SessionStatus.PLANNING.value,
                 posterior=ctx.as_dict(belief),
                 risk_by_decision=_risks(ctx.profile, risk_by_decision(belief, losses)),
@@ -318,13 +329,30 @@ class GuardianService:
         outcome: list[PlanOutcome] = []
 
         def step(s: Session, ctx: _Context) -> GuardianSessionRecord:
+            # One planner at a time per session: two calls (or a resume racing a live step)
+            # must not both add an active run (docs/05 §2).
+            s.execute(
+                select(guardian_sessions.c.id)
+                .where(guardian_sessions.c.id == session_id)
+                .with_for_update()
+            )
+            ctx = self._load(s, session_id)
             if ctx.record.status is not SessionStatus.PLANNING:
                 raise DelphiError(
                     f"Session {session_id} is {ctx.record.status}, not PLANNING.",
                     code=ProblemCode.INVALID_STATE_TRANSITION,
                 )
+            pending = s.execute(
+                select(probe_runs.c.id, probe_runs.c.probe_key).where(
+                    probe_runs.c.session_id == session_id,
+                    probe_runs.c.status == ProbeRunStatus.PENDING.value,
+                )
+            ).one_or_none()
+            if pending is not None:  # already chosen, not yet issued (a resume after a crash)
+                outcome.append(NextProbe(ctx.record, pending.id, pending.probe_key, None))
+                return ctx.record
             guardrails = ctx.version.kb.config.guardrails
-            if self._clock.now() - ctx.record.started_at > timedelta(
+            if _session_age(s, ctx.record, self._clock.now()) > timedelta(
                 seconds=guardrails.session_max_duration_s
             ):
                 decided = self._decide(s, ctx, ctx.belief, TerminalReason.SESSION_TIMEOUT)
@@ -391,14 +419,45 @@ class GuardianService:
         ENGINE_ERROR, in a fresh transaction, without running the engine. A finished session is
         left as it is."""
         log.error("guardian.engine_error", session_id=str(session_id), exc_info=error)
-        with self._sessions.begin() as s:
-            current = _reload(s, session_id)
-            if current.status in DONE:
-                return current
-            ctx = self._load(s, session_id)
-            return self._decide(
-                s, ctx, ctx.belief, TerminalReason.ENGINE_ERROR, decision="HOLD_FOR_REVIEW"
-            )
+        try:
+            with self._sessions.begin() as s:
+                current = _reload(s, session_id)
+                if current.status in DONE:
+                    return current
+                ctx = self._load(s, session_id)
+                return self._decide(
+                    s, ctx, ctx.belief, TerminalReason.ENGINE_ERROR, decision="HOLD_FOR_REVIEW"
+                )
+        except Exception as again:
+            # The full fail-safe failed too (e.g. the bank or the case step). End the session
+            # anyway, so nothing resumes it into a loop; the payment and the case are left to
+            # an operator (the error is logged and audited).
+            log.critical("guardian.fail_safe_failed", session_id=str(session_id), exc_info=again)
+            with self._sessions.begin() as s:
+                current = _reload(s, session_id)
+                if current.status in DONE:
+                    return current
+                now = self._clock.now()
+                _close_open_runs(s, session_id, "fail_safe", now)
+                decided = self._write(
+                    s,
+                    current,
+                    status=SessionStatus.DECIDED.value,
+                    decision="HOLD_FOR_REVIEW",
+                    terminal_reason=TerminalReason.ENGINE_ERROR.value,
+                    decided_at=now,
+                )
+                record(
+                    s,
+                    self._clock,
+                    actor_type=ActorType.ENGINE,
+                    actor_id=None,
+                    action="guardian.session.fail_safe_failed",
+                    entity_type="guardian_session",
+                    entity_id=str(session_id),
+                    payload={"error": type(again).__name__},
+                )
+                return decided
 
     # ------------------------------------------------------------------ the decision
 
@@ -428,6 +487,7 @@ class GuardianService:
             posterior.get(UNEXPLAINED, 0.0) >= kb.config.engine.unexplained_routing_threshold
         )
         now = self._clock.now()
+        _close_open_runs(s, ctx.record.id, reason.value, now)
         payment_status = bank.apply_guardian_decision(s, ctx.payment.id, decision, now)
         case_id = None
         if decision in navigator.HOLD_DECISIONS:
@@ -667,6 +727,47 @@ def _earlier_active_sessions(s: Session, ctx: _Context, clock: Clock) -> int:
                 gs.id != ctx.record.id,
                 gs.started_at >= clock.now() - FAIRNESS_WINDOW,
                 pr.mode == ProbeMode.ACTIVE.value,
+                pr.status != ProbeRunStatus.PENDING.value,  # chosen but never shown
             )
         ).scalar_one()
+    )
+
+
+COOLING_OFF_KEY = "COOLING_OFF"
+
+
+def _session_age(s: Session, current: GuardianSessionRecord, now: datetime) -> timedelta:
+    """The session's age for ``session_max_duration_s``, without the COOLING_OFF window
+    (docs/08 §2 step 7: that window does not count)."""
+    pr = probe_runs.c
+    windows = s.execute(
+        select(pr.raw_response, pr.started_at, pr.completed_at).where(
+            pr.session_id == current.id,
+            pr.probe_key == COOLING_OFF_KEY,
+            pr.status != ProbeRunStatus.PENDING.value,
+        )
+    ).all()
+    excluded = timedelta()
+    for raw, started, completed in windows:
+        issued = datetime.fromisoformat(raw["issued_at"]) if raw and "issued_at" in raw else started
+        excluded += (completed or now) - issued
+    return now - current.started_at - excluded
+
+
+def _close_open_runs(s: Session, session_id: UUID, reason: str, now: datetime) -> None:
+    """A finished session has no open probe run: one left PENDING or AWAITING_CUSTOMER when the
+    session ends becomes ERROR, marked with why (docs/05 §2)."""
+    s.execute(
+        update(probe_runs)
+        .where(
+            probe_runs.c.session_id == session_id,
+            probe_runs.c.status.in_(
+                [ProbeRunStatus.PENDING.value, ProbeRunStatus.AWAITING_CUSTOMER.value]
+            ),
+        )
+        .values(
+            status=ProbeRunStatus.ERROR.value,
+            raw_response={"closed_by": reason},
+            completed_at=now,
+        )
     )

@@ -443,3 +443,68 @@ def test_the_bank_refuses_bad_decisions_unknown_and_finished_payments(env: Env) 
         )
         with pytest.raises(DelphiError, match="not waiting for the Guardian"):
             bank.apply_guardian_decision(s, payment, "RELEASE", T0)
+
+
+# ---------------------------------------------------------------- review fixes (#169)
+
+
+def test_planning_again_returns_the_pending_probe_instead_of_adding_one(env: Env) -> None:
+    svc = env.service(FixedPrior(GENUINE, q=1.0, p_mule=None), UNSURE)
+    first = _run(env, svc, env.payment(50_000))
+    assert isinstance(first, NextProbe) and first.plan is not None
+    again = svc.plan(first.session.id)  # a resume after a crash between plan and issue
+    assert isinstance(again, NextProbe) and again.plan is None
+    assert (again.probe_run_id, again.probe_key) == (first.probe_run_id, first.probe_key)
+    with env.sessions() as s:
+        active = [r for r in list_probe_runs(s, first.session.id) if r.mode is ProbeMode.ACTIVE]
+    assert len(active) == 1
+
+
+def test_a_session_left_in_passive_probing_by_a_crash_is_resumed(env: Env) -> None:
+    svc = env.service(FixedPrior(GENUINE), CLEAN)
+    started = svc.start(env.payment(480_000), mode=SessionMode.LIVE, runner=Runner.API)
+    with env.owner.begin() as conn:  # the crash: moved to PASSIVE_PROBING, nothing applied
+        conn.execute(
+            guardian_sessions.update()
+            .where(guardian_sessions.c.id == started.id)
+            .values(status="PASSIVE_PROBING", version=guardian_sessions.c.version + 1)
+        )
+    resumed = asyncio.run(svc.passive(started.id))
+    assert resumed.status is SessionStatus.PLANNING
+    assert (
+        env.count("SELECT count(*) FROM delphi.probe_runs WHERE session_id = :s", s=started.id) == 5
+    )
+
+
+def test_a_decision_closes_the_open_probe_run(env: Env) -> None:
+    svc = env.service(FixedPrior(GENUINE, q=1.0, p_mule=None), UNSURE)
+    step = _run(env, svc, env.payment(50_000))
+    assert isinstance(step, NextProbe)
+    decided = svc.fail_safe(step.session.id, RuntimeError("injected"))
+    assert decided.terminal_reason is TerminalReason.ENGINE_ERROR
+    with env.owner.connect() as conn:
+        run = conn.execute(select(probe_runs).where(probe_runs.c.id == step.probe_run_id)).one()
+    assert (run.status, run.raw_response) == ("ERROR", {"closed_by": "ENGINE_ERROR"})
+
+
+def test_when_the_fail_safe_itself_fails_the_session_still_ends(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payment = env.payment(480_000)
+    svc = env.service(FixedPrior(GENUINE, raises=True), CLEAN)
+
+    def bank_down(*_args: object, **_kw: object) -> None:
+        raise ConnectionError("bank unavailable")
+
+    monkeypatch.setattr(service_module.bank, "apply_guardian_decision", bank_down)
+    record = svc.start(payment, mode=SessionMode.LIVE, runner=Runner.API)
+    assert (record.status, record.decision) == (SessionStatus.DECIDED, "HOLD_FOR_REVIEW")
+    assert record.terminal_reason is TerminalReason.ENGINE_ERROR and record.case_id is None
+    assert env.payment_row(payment).status == "PENDING_GUARDIAN"  # left to an operator
+    assert (
+        env.count(
+            "SELECT count(*) FROM delphi.audit_log"
+            " WHERE action = 'guardian.session.fail_safe_failed'"
+        )
+        == 1
+    )
