@@ -108,6 +108,12 @@ genuine_routine:
     categories: [GROCERY, RETAIL, FUEL, TELECOM, UTILITY, EDUCATION]
     amount_inr: {median: 1500, sigma: 1.3}   # from a snack to a school fee or an appliance
     channel: {UPI_PUSH: 0.75, IMPS: 0.20, NEFT: 0.05}
+  # #166: customers travel (work, family, holidays) and log in from the city they are in,
+  # so a login from a new city is no ATO tell. Gaps: a trip every 90 days on average
+  # (exponential gaps), 2–7 days long, to a uniformly chosen other city. Personas stay home.
+  travel:
+    mean_days: 90
+    days: {min: 2, max: 7}
 
 # How a session's §5.1 signals become session_telemetry values (gaps). The values are placed
 # on the right side of the KB's classifier thresholds (kb/engine.yaml `classifiers`), so the

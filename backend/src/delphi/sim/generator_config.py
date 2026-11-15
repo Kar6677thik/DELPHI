@@ -119,6 +119,13 @@ class NewMerchantPayeeConfig(NewPersonPayeeConfig):
     categories: tuple[str, ...]
 
 
+class TravelConfig(_Frozen):
+    """#166: genuine customers travel, so a login from a new city is no ATO tell."""
+
+    mean_days: float = Field(gt=0)  # exponential gaps between trips
+    days: Range  # a trip's length
+
+
 class GenuineRoutineConfig(_Frozen):
     daily_rate_gamma: dict[str, float]
     zipf_exponent: float = Field(ge=0)
@@ -132,6 +139,7 @@ class GenuineRoutineConfig(_Frozen):
     payroll_account_age_days: int = Field(ge=0)
     new_person_payee: NewPersonPayeeConfig
     new_merchant_payee: NewMerchantPayeeConfig
+    travel: TravelConfig
 
     @model_validator(mode="after")
     def _shapes(self) -> GenuineRoutineConfig:

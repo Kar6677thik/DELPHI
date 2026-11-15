@@ -254,6 +254,7 @@ class _Planner:
             a.id for a in population.accounts if a.is_merchant and a.merchant_category in everyday
         ]
         self.phones: dict[UUID, list[Device]] = {}  # each customer's genuine new phones
+        self.trips: dict[UUID, list[tuple[datetime, datetime, str]]] = {}  # (start, end, city)
         self.mule_customer: dict[UUID, Customer] = {}  # home-bank mule account → customer
         self.mule_device: dict[UUID, Device] = {}
         self.flow_streams: dict[int, np.random.Generator] = {}
@@ -319,6 +320,37 @@ class _Planner:
             return max(current, key=lambda d: d.first_seen_at)
         return original[int(rng.integers(len(original)))]
 
+    def _trips(self, customer: Customer) -> list[tuple[datetime, datetime, str]]:
+        """A customer's trips away from home (#166), from ``keyed_rng(seed, "travel", id)``:
+        exponential gaps, a uniform length, a city other than home. Personas stay home, so
+        their scripts are unchanged."""
+        trips = self.trips.get(customer.id)
+        if trips is not None:
+            return trips
+        trips = []
+        if customer.persona_key is None:
+            travel = self.routine.travel
+            rng = keyed_rng(self.seed, "travel", str(customer.id))
+            away = sorted(c for c in self.cfg.cities if c != customer.home_city)
+            at = self.pop.history_start
+            while True:
+                at += timedelta(days=float(rng.exponential(travel.mean_days)))
+                if at >= self.horizon:
+                    break
+                days = travel.days.min + rng.random() * (travel.days.max - travel.days.min)
+                end = at + timedelta(days=days)
+                trips.append((at, end, away[int(rng.integers(len(away)))]))
+                at = end
+        self.trips[customer.id] = trips
+        return trips
+
+    def _city_at(self, customer: Customer, at: datetime) -> str:
+        """Where the customer is at ``at``: on a trip, else at home."""
+        for start, end, city in self._trips(customer):
+            if start <= at < end:
+                return city
+        return customer.home_city
+
     def _session(
         self,
         rng: np.random.Generator,
@@ -337,7 +369,7 @@ class _Planner:
         payment_id = self.payment_ids.next()
         signals = draw_signals(rng, self.targets[scenario])
         telemetry = render_telemetry(rng, payment_id, signals, self.cfg.telemetry, self.thresholds)
-        city = city or customer.home_city
+        city = city or self._city_at(customer, at)
         login = login_before(
             rng,
             login_id=self.login_ids.next(),
