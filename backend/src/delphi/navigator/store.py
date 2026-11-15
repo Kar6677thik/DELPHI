@@ -90,6 +90,12 @@ class CaseRecord:
     dd_pack_complete: bool
     unexplained: bool
     version: int
+    # the disposition's details (docs/05 §4; #103), None until DISPOSED
+    disposition_typology: str | None = None
+    disposition_confidence: int | None = None
+    is_override: bool = False
+    override_rationale: str | None = None
+    disposed_by: UUID | None = None
 
     @staticmethod
     def of(row: Any) -> CaseRecord:
@@ -116,6 +122,11 @@ class CaseRecord:
             dd_pack_complete=row.dd_pack_complete,
             unexplained=row.unexplained,
             version=row.version,
+            disposition_typology=row.disposition_typology,
+            disposition_confidence=row.disposition_confidence,
+            is_override=row.is_override,
+            override_rationale=row.override_rationale,
+            disposed_by=row.disposed_by,
         )
 
 

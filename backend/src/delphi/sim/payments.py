@@ -121,21 +121,45 @@ def cancel_payment(conn: Connection | Session, payment_id: UUID, at: datetime) -
     return _transition(conn, payment_id, PaymentStatus.CANCELLED, at)
 
 
+# docs/05 §3: a case's disposition of a HELD payment.
+STATUS_FOR_CASE_DISPOSITION: dict[str, PaymentStatus] = {
+    "RELEASE": PaymentStatus.RELEASED,
+    "CONFIRM_FRAUD": PaymentStatus.CANCELLED,
+}
+
+
+def apply_case_disposition(
+    conn: Connection | Session, payment_id: UUID, decision: str, at: datetime
+) -> PaymentStatus:
+    """A held payment's case is disposed (docs/05 §3): RELEASE → RELEASED (executed at once when
+    the payer can fund it, as for the Guardian), CONFIRM_FRAUD → CANCELLED."""
+    target = STATUS_FOR_CASE_DISPOSITION.get(decision)
+    if target is None:
+        raise DelphiError(
+            f"{decision!r} does not dispose of a payment.", code=ProblemCode.VALIDATION_FAILED
+        )
+    return _transition(conn, payment_id, target, at, source=PaymentStatus.HELD)
+
+
 def _transition(
-    conn: Connection | Session, payment_id: UUID, target: PaymentStatus, at: datetime
+    conn: Connection | Session,
+    payment_id: UUID,
+    target: PaymentStatus,
+    at: datetime,
+    *,
+    source: PaymentStatus = PaymentStatus.PENDING_GUARDIAN,
 ) -> PaymentStatus:
     payment = conn.execute(
         select(payments.c.amount_paise, payments.c.payer_account_id, payments.c.payee_account_id)
-        .where(
-            payments.c.id == payment_id, payments.c.status == PaymentStatus.PENDING_GUARDIAN.value
-        )
+        .where(payments.c.id == payment_id, payments.c.status == source.value)
         .with_for_update()
     ).one_or_none()
     if payment is None:
         if get_payment(conn, payment_id) is None:
             raise NotFoundError(f"No payment {payment_id}.")
+        waiting = "waiting for the Guardian" if source is PaymentStatus.PENDING_GUARDIAN else "held"
         raise DelphiError(
-            f"Payment {payment_id} is not waiting for the Guardian.",
+            f"Payment {payment_id} is not {waiting}.",
             code=ProblemCode.INVALID_STATE_TRANSITION,
         )
     status, executed_at = target, None

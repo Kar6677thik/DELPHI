@@ -107,6 +107,11 @@ export function mockCase(overrides: Partial<CaseView> = {}): CaseView {
     dd_pack_complete: false,
     disposition: null,
     disposed_at: null,
+    disposition_typology: null,
+    disposition_confidence: null,
+    is_override: false,
+    override_rationale: null,
+    disposed_by: null,
     version: 1,
     ...overrides,
   };

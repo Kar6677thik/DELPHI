@@ -48,6 +48,7 @@ ACCESS: dict[tuple[str, str], str | Permission] = {
     ("GET", "/api/v1/kb/versions/{version_id}/export"): Permission.VIEW,
     ("GET", "/api/v1/cases"): Permission.VIEW,
     ("GET", "/api/v1/cases/{case_id}"): Permission.VIEW,
+    ("POST", "/api/v1/cases/{case_id}/disposition"): Permission.CASE_WRITE,
 }
 PASSWORD = "correct horse battery"
 BROWSER = {"X-Delphi-Csrf": "1", "Origin": "https://testserver"}

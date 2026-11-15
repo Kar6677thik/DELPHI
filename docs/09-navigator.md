@@ -46,6 +46,28 @@ triggers and the console come with M5 (#103, #109).
    CONFIRM_FRAUD), a free-text note, and a self-reported confidence of 1–5. An override
    requires a rationale (doc 05 §4).
 
+**Implementation** (#103):
+- `delphi.navigator.console` computes items 1–4 from the case's posterior with the planner
+  (Phase NAVIGATOR, the profile's depth, investigator-minute cost) and the doc 06 §12 WCMM. The
+  rows of item 2 keep the planner's order: eligible first, by net value. In the COERCION
+  protocol, `CUSTOMER_OUTREACH_CALL` is moved to the top with `pinned_by_protocol` until it has been
+  observed. The loss weighting uses the payer's vulnerability.
+- `GET /cases/{id}` returns these with the case. Evidence records (item 5) and the observed set
+  come with the evidence fetch (#102); until then the console plans with nothing observed.
+- `delphi.navigator.disposition.dispose` (`POST /cases/{id}/disposition`, item 6) checks:
+  - the `If-Match` version (412) and DISPOSED immutability (409);
+  - the decision against the profile, and that CONFIRM_FRAUD names one of the case's fraud
+    typologies;
+  - confidence 1–5;
+  - that an override of the recommendation, computed at that moment, has a rationale of at
+    least 20 characters.
+
+  It then moves the held payment (RELEASE executes it when the payer can fund it, else it stays
+  RELEASED; CONFIRM_FRAUD cancels it, doc 05 §3), records the label the bank now knows
+  (`INVESTIGATOR_DISPOSITION`: the typology, MULE, or GENUINE; doc 14 §7), and writes the audit
+  entry `case.disposed` and the event `case.updated`. The free-text note is kept in the audit
+  entry.
+
 ## 3. Evidence fetch flow
 
 ```
