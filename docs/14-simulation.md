@@ -397,7 +397,12 @@ outcome (a unit test checks every probe × outcome × scenario):
 - **Biometric:** MATCH, or CANCEL.
 - **Cooling-off:** the counts for the drawn outcome, sent just before its deadline.
 
-The answer timings are gap fills (named constants in the module). A story runner can register
+The answer timings are gap fills in `sim/config/customer.yaml` (live answers only, so they change
+no generated dataset); a test keeps them inside the KB thresholds, and all OTP attempts inside the
+deadline. A question without the option an outcome needs is refused, never answered with another
+outcome's key. **After a worker restart** a session waiting for a simulated answer is not asked
+again: its probe times out (doc 08 §2), so a step-up becomes FAILED_OR_ABANDONED and that session
+no longer replays identically. Evaluation runs (doc 22) must not restart mid-run. A story runner can register
 scripted answers per payment (the persona scripts, §6), and probes without a script use the
 response models. The Guardian's `SimCustomerChannel` sends the steps through
 `GuardianService.respond` and the `AnswerBoard`, the same contract as the mock phone.

@@ -23,10 +23,13 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any, NamedTuple
 from uuid import UUID
 
 import numpy as np
+import yaml
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import Engine, select
 
 from delphi.kb.model import ClassifierThresholds
@@ -56,13 +59,24 @@ HIGH_RISK_ANY = (
 )
 RECEIVING = "RECEIVING_REFUND_OR_PRIZE"
 
-# Answer timings in seconds (gap fills; docs/14 §5.2 gives outcomes, not raw timings). Each range
-# sits clearly on its side of the KB thresholds it is checked against below.
-QUICK_ANSWER_S = (2.0, 6.0)  # a biometric touch, a yes/no, the collect-intent check
-OTP_TYPING_S = (8.0, 20.0)
-MARGIN_S = 0.5  # how far a drawn latency stays from a classifier threshold
-SLOW_EXTRA_S = (2.0, 20.0)  # how much slower than a threshold a hesitant answer is
-COOLING_OFF_SLACK_S = 5.0  # answer this long before the cooling-off deadline
+CONFIG_FILE = Path(__file__).resolve().parent / "config" / "customer.yaml"
+
+
+class CustomerTimings(BaseModel):
+    """``sim/config/customer.yaml``: the answer timings, in seconds (gap fills)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    quick_answer_s: tuple[float, float]
+    otp_typing_s: tuple[float, float]
+    margin_s: float = Field(gt=0)
+    slow_extra_s: tuple[float, float]
+    cooling_off_slack_s: float = Field(gt=0)
+    min_latency_s: float = Field(gt=0)
+
+
+def load_timings(path: Path = CONFIG_FILE) -> CustomerTimings:
+    return CustomerTimings.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
 
 
 class AnswerStep(NamedTuple):
@@ -89,6 +103,7 @@ class SimulatedCustomer:
     thresholds: ClassifierThresholds
     seed: int
     history_start: datetime
+    timings: CustomerTimings = field(default_factory=load_timings)
     scripts: dict[UUID, dict[str, Sequence[AnswerStep]]] = field(default_factory=dict)
 
     def script(self, payment_id: UUID, answers: Mapping[str, Sequence[AnswerStep]]) -> None:
@@ -125,6 +140,7 @@ class SimulatedCustomer:
             options=options,
             otp_code=otp_code,
             timeout_s=timeout_s,
+            timings=self.timings,
         )
 
     def _truth(self, payment_id: UUID) -> _Truth:
@@ -152,14 +168,19 @@ def raw_answer(
     options: Sequence[str],
     otp_code: str | None,
     timeout_s: float,
+    timings: CustomerTimings | None = None,
 ) -> list[AnswerStep]:
     """A raw answer that the docs/08 §5 classifier turns back into ``outcome``."""
+    c = timings or load_timings()
+    quick, typing, slow_extra, margin = c.quick_answer_s, c.otp_typing_s, c.slow_extra_s, c.margin_s
 
     def between(low: float, high: float) -> float:
         return float(rng.uniform(low, high))
 
     def pick(keys: Sequence[str]) -> str:
-        offered = [k for k in keys if k in options] or list(options)
+        offered = [k for k in keys if k in options]
+        if not offered:  # another question bank: never answer with a key of another outcome
+            raise ValueError(f"{probe_key}: none of {list(keys)} is among the options shown")
         return offered[int(rng.integers(len(offered)))]
 
     def hesitant(threshold: float, *, fast_floor: float | None = None) -> tuple[float, int]:
@@ -167,13 +188,13 @@ def raw_answer(
         kinds = ["slow", "switch"] + (["fast"] if fast_floor is not None else [])
         kind = kinds[int(rng.integers(len(kinds)))]
         if kind == "slow":
-            return threshold + between(*SLOW_EXTRA_S), 0
+            return threshold + between(*slow_extra), 0
         if kind == "fast" and fast_floor is not None:
-            return between(MARGIN_S / 2, fast_floor - MARGIN_S), 0
-        return between(*QUICK_ANSWER_S), 1
+            return between(margin / 2, fast_floor - margin), 0
+        return between(*quick), 1
 
     if probe_key == "PURPOSE_QUESTION":
-        normal = (t.purpose_fast_s + MARGIN_S, t.purpose_slow_s - MARGIN_S)
+        normal = (t.purpose_fast_s + margin, t.purpose_slow_s - margin)
         if outcome == "BELIEVES_RECEIVING_MONEY":
             return [AnswerStep({"option_key": pick((RECEIVING,))}, between(*normal))]
         if outcome == "HIGH_RISK_PURPOSE":
@@ -186,31 +207,34 @@ def raw_answer(
         return [AnswerStep(option, between(*normal))]  # PLAUSIBLE_NORMAL_TIMING
     if probe_key.startswith("SPELL_BREAKER_"):
         if outcome == "ANSWERED_YES":
-            return [AnswerStep({"option_key": "YES"}, between(*QUICK_ANSWER_S))]
+            return [AnswerStep({"option_key": "YES"}, between(*quick))]
         if outcome == "HESITATION_OR_APP_SWITCH":
             latency, switches = hesitant(t.spell_breaker_hesitation_s)
             return [AnswerStep({"option_key": "NO"}, latency, switches)]
-        normal_no = between(QUICK_ANSWER_S[0], t.spell_breaker_hesitation_s - MARGIN_S)
+        normal_no = between(quick[0], t.spell_breaker_hesitation_s - margin)
         return [AnswerStep({"option_key": "NO"}, normal_no)]  # ANSWERED_NO_NORMAL
     if probe_key == "COLLECT_INTENT_CHECK":
         key = "YES_RECEIVING" if outcome == "EXPECTS_TO_RECEIVE" else "NO_I_AM_PAYING"
-        return [AnswerStep({"option_key": pick((key,))}, between(*QUICK_ANSWER_S))]
+        return [AnswerStep({"option_key": pick((key,))}, between(*quick))]
     if probe_key == "BIOMETRIC_STEP_UP":
         result = "MATCH" if outcome == "PASSED" else "CANCEL"
-        return [AnswerStep({"biometric": result}, between(*QUICK_ANSWER_S))]
+        return [AnswerStep({"biometric": result}, between(*quick))]
     if probe_key == "OTP_STEP_UP":
         if outcome == "PASSED" and otp_code is not None:
-            return [AnswerStep({"otp": otp_code}, between(*OTP_TYPING_S))]
+            return [AnswerStep({"otp": otp_code}, between(*typing))]
         wrong = _wrong_code(otp_code, rng)
+        per_attempt = min(typing[1], timeout_s / (t.otp_max_attempts + 1))
+        low = min(typing[0], per_attempt / 2)
         return [
-            AnswerStep({"otp": wrong}, between(*OTP_TYPING_S)) for _ in range(t.otp_max_attempts)
+            AnswerStep({"otp": wrong}, between(low, per_attempt)) for _ in range(t.otp_max_attempts)
         ]
     if probe_key == "COOLING_OFF":
         counts: dict[str, Any] = {"cancelled": outcome == "CANCELLED_BY_CUSTOMER"}
         if outcome == "PERSISTED_OR_ESCALATED":
             counts |= {"send_now_presses": t.cooling_off_send_now_presses}
         # the customer waits the window out (or cancels within it), then the answer arrives
-        return [AnswerStep({"cooling_off": counts}, max(timeout_s - COOLING_OFF_SLACK_S, 1.0))]
+        latency = max(timeout_s - c.cooling_off_slack_s, c.min_latency_s)
+        return [AnswerStep({"cooling_off": counts}, latency)]
     raise ValueError(f"{probe_key} has no simulated answer")
 
 

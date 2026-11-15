@@ -14,7 +14,7 @@ from delphi.probes.api import (
     CoolingOffObs,
     OtpObs,
 )
-from delphi.sim.customer import AnswerStep, raw_answer
+from delphi.sim.customer import AnswerStep, load_timings, raw_answer
 from delphi.sim.rng import keyed_rng
 from delphi.sim.scenarios import ScenarioType
 
@@ -114,3 +114,43 @@ def test_an_unknown_probe_has_no_simulated_answer(kb: KnowledgeBase) -> None:
             otp_code=None,
             timeout_s=TIMEOUT_S,
         )
+
+
+def test_all_wrong_otp_attempts_fit_inside_the_deadline(kb: KnowledgeBase) -> None:
+    for seed in range(50):
+        steps = raw_answer(
+            "OTP_STEP_UP",
+            "FAILED_OR_ABANDONED",
+            keyed_rng(seed, "otp"),
+            kb.config.classifiers,
+            scenario=ScenarioType.ATO,
+            options=(),
+            otp_code=CODE,
+            timeout_s=TIMEOUT_S,
+        )
+        assert len(steps) == kb.config.classifiers.otp_max_attempts
+        assert sum(s.latency_s for s in steps) < TIMEOUT_S
+
+
+def test_a_question_without_the_wanted_option_is_refused(kb: KnowledgeBase) -> None:
+    with pytest.raises(ValueError, match="none of"):
+        raw_answer(
+            "PURPOSE_QUESTION",
+            "BELIEVES_RECEIVING_MONEY",
+            keyed_rng(1, "x"),
+            kb.config.classifiers,
+            scenario=ScenarioType.UPI_COLLECT_REFUND,
+            options=("FAMILY_OR_FRIEND", "MEDICAL"),  # no RECEIVING_REFUND_OR_PRIZE offered
+            otp_code=None,
+            timeout_s=TIMEOUT_S,
+        )
+
+
+def test_the_timings_config_loads_and_stays_inside_the_kb_thresholds(kb: KnowledgeBase) -> None:
+    t, c = kb.config.classifiers, load_timings()
+    assert c.quick_answer_s[1] < t.spell_breaker_hesitation_s - c.margin_s
+    assert c.quick_answer_s[0] > t.purpose_fast_s  # quick answers are not "too fast" purposes
+    assert (
+        c.otp_typing_s[1] * t.otp_max_attempts
+        <= kb.config.guardrails.active_probe_response_timeout_s
+    )

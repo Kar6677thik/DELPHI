@@ -15,14 +15,13 @@ from datetime import datetime
 from typing import Any, Protocol
 from uuid import UUID
 
-from delphi.guardian.active import ClientSignals
+from delphi.guardian.active import MS_PER_S, ClientSignals
 from delphi.guardian.runner import AnswerBoard
 from delphi.guardian.service import GuardianService, IssuedProbe
 from delphi.platform.clock import Clock
 from delphi.platform.logging import get_logger
 
 log = get_logger(__name__)
-MS_PER_S = 1000
 
 
 class Answerer(Protocol):
@@ -65,18 +64,25 @@ class SimCustomerChannel:
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
+    async def aclose(self) -> None:
+        """Stop answering (worker shutdown); the sessions resume on the next start-up."""
+        tasks = list(self._tasks)
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
     async def _answer(self, issued: IssuedProbe) -> None:
         options = [o.key for o in issued.question.options] if issued.question else []
-        steps = await asyncio.to_thread(
-            self._answerer.answer,
-            payment_id=issued.session.payment_id,
-            probe_key=issued.probe_key,
-            options=options,
-            otp_code=issued.otp_code,
-            timeout_s=issued.timeout_s,
-            at=self._clock.now(),
-        )
         try:
+            steps = await asyncio.to_thread(
+                self._answerer.answer,
+                payment_id=issued.session.payment_id,
+                probe_key=issued.probe_key,
+                options=options,
+                otp_code=issued.otp_code,
+                timeout_s=issued.timeout_s,
+                at=self._clock.now(),
+            )
             for answer, latency_s, switches in steps:
                 shown_ms = int(self._clock.now().timestamp() * MS_PER_S)
                 await self._wait(latency_s)
@@ -86,7 +92,9 @@ class SimCustomerChannel:
                 )
                 if reply.completed:
                     break
-        except Exception as exc:  # e.g. the session ended meanwhile: the runner moves on
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # no truth, the session ended meanwhile: the runner moves on
             log.warning("guardian.sim_answer_failed", run=str(issued.probe_run_id), exc_info=exc)
         finally:
             self._board.answered(issued.probe_run_id)
