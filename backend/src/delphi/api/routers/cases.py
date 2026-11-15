@@ -113,7 +113,10 @@ def _decode_cursor(cursor: str, sort: CaseSort) -> CaseCursor:
         raw = json.loads(base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)))
         if raw["s"] != sort.value:
             raise ValueError("the cursor belongs to another sort order")
-        return CaseCursor(datetime.fromisoformat(raw["at"]), UUID(raw["id"]))
+        at = datetime.fromisoformat(raw["at"])
+        if at.tzinfo is None:
+            raise ValueError("the cursor's time has no zone")
+        return CaseCursor(at, UUID(raw["id"]))
     except (binascii.Error, ValueError, KeyError, TypeError):
         raise DelphiError("The cursor is not valid.", code=ProblemCode.VALIDATION_FAILED) from None
 

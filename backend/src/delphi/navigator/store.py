@@ -23,8 +23,10 @@ from sqlalchemy.orm import Session
 
 from delphi.kb.store import get_version
 from delphi.navigator.tables import cases
+from delphi.platform.audit import ActorType, record
 from delphi.platform.clock import Clock
 from delphi.platform.errors import DelphiError, ProblemCode
+from delphi.platform.events import EventType, publish
 from delphi.platform.ids import uuid7
 
 
@@ -135,13 +137,18 @@ def open_case(
     prior_components: Mapping[str, Any],
     amount_at_stake_paise: int,
     unexplained: bool,
-    time_scale: float = 1.0,
+    demo_time: bool = False,
 ) -> CaseRecord:
-    """A PAYMENT_HOLD case for a Guardian hold (docs/09 §1).
+    """A PAYMENT_HOLD case for a Guardian hold (docs/09 §1), in the caller's transaction.
 
     ``decision`` must be HOLD_FOR_REVIEW (protocol STANDARD) or PROTECTIVE_HOLD (COERCION). The
-    SLA comes from the KB version the session was pinned to; ``time_scale`` is the demo time
-    scale for time-scaled durations (docs/07, 1 outside DEMO time).
+    SLA comes from the KB version the session was pinned to, scaled by that version's
+    ``demo_time_scale`` in DEMO time (docs/07). Opening writes the audit entry and publishes
+    ``case.opened`` (docs/16 §3, docs/17 §4) with the case.
+
+    Idempotent for a retried Guardian transaction: if the payment already has an open case from
+    the same session, that case is returned and nothing is written again. An open case from
+    another session is refused (``CaseExistsError``).
     """
     protocol = HOLD_DECISIONS.get(decision)
     if protocol is None:
@@ -149,6 +156,15 @@ def open_case(
             f"A {decision} decision opens no case (docs/09 §1).",
             code=ProblemCode.VALIDATION_FAILED,
         )
+    if not posterior:
+        raise DelphiError(
+            "A case needs the session's posterior.", code=ProblemCode.VALIDATION_FAILED
+        )
+    existing = open_case_for_payment(session, payment_id)
+    if existing is not None:
+        if existing.guardian_session_id == guardian_session_id:
+            return existing
+        raise CaseExistsError(f"Payment {payment_id} already has an open case.")
     version = get_version(session, kb_version_id)
     if version is None:
         raise DelphiError(f"No KB version {kb_version_id}.", code=ProblemCode.VALIDATION_FAILED)
@@ -158,8 +174,11 @@ def open_case(
         if protocol is CaseProtocol.COERCION
         else sla.hold_review_sla_minutes
     )
+    scale = version.kb.config.time.demo_time_scale if demo_time else 1.0
     now = clock.now()
     case_id = uuid7(unix_ms=int(now.timestamp() * 1000))
+    sla_due_at = now + timedelta(minutes=minutes * scale)
+    leading = _leading(posterior, version.kb.hypothesis_order)
     try:
         with session.begin_nested():
             session.execute(
@@ -173,23 +192,43 @@ def open_case(
                     kb_version_id=kb_version_id,
                     prior_components=dict(prior_components),
                     posterior=dict(posterior),
-                    leading_hypothesis=_leading(posterior, version.kb.hypothesis_order),
+                    leading_hypothesis=leading,
                     amount_at_stake_paise=amount_at_stake_paise,
                     opened_at=now,
-                    sla_due_at=now + timedelta(minutes=minutes * time_scale),
+                    sla_due_at=sla_due_at,
                     is_override=False,
                     dd_pack_complete=False,
                     unexplained=unexplained,
                     version=1,
                 )
             )
-    except IntegrityError as exc:
+    except IntegrityError as exc:  # a concurrent open won the race
         if open_case_for_payment(session, payment_id) is not None:
             raise CaseExistsError(f"Payment {payment_id} already has an open case.") from None
         raise exc
-    record = get_case(session, case_id)
-    assert record is not None
-    return record
+    payload = {
+        "type": CaseType.PAYMENT_HOLD.value,
+        "protocol": protocol.value,
+        "decision": decision,
+        "payment_id": str(payment_id),
+        "guardian_session_id": str(guardian_session_id),
+        "leading_hypothesis": leading,
+        "sla_due_at": sla_due_at.isoformat(),
+    }
+    record(
+        session,
+        clock,
+        actor_type=ActorType.ENGINE,
+        actor_id=None,
+        action="case.opened",
+        entity_type="case",
+        entity_id=str(case_id),
+        payload=payload,
+    )
+    publish(session, EventType.CASE_OPENED, str(case_id), payload)
+    opened = get_case(session, case_id)
+    assert opened is not None
+    return opened
 
 
 def get_case(conn: Connection | Session, case_id: UUID) -> CaseRecord | None:

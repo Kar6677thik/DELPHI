@@ -136,8 +136,12 @@ cases(id, type, protocol, status, subject_payment_id null, subject_account_id nu
    partial unique (subject_account_id) where status <> 'DISPOSED' and type = 'ACCOUNT_REVIEW'
    -- migration 0012 (#97). recommended_decision and risk_by_decision are null until the case
    -- console evaluates the case (#103); campaign_id gets its foreign key with `campaigns` (M5).
-   -- CHECKs: the subject matches the type; DISPOSED ⇔ disposition and disposed_at; the
-   -- disposition fits the type. 0012 also adds guardian_sessions.case_id → cases.id.
+   -- CHECKs: the subject matches the type (a PAYMENT_HOLD names its Guardian session too, and a
+   -- composite FK (guardian_session_id, subject_payment_id) → guardian_sessions (id, payment_id)
+   -- keeps it the payment's own); DISPOSED ⇔ disposition and disposed_at; the disposition fits
+   -- the type; CONFIRM_FRAUD names its typology; disposition_confidence smallint 1–5; an
+   -- override has a rationale of ≥ 20 characters. 0012 also adds guardian_sessions.case_id →
+   -- cases.id, DEFERRABLE so demo reset can delete the pair in one transaction.
 evidence_records(id, case_id, source_key, outcome, raw jsonb, record_refs jsonb, fetch_ms,
                  posterior_before, posterior_after, info_yield_bits, rank_at_request,
                  net_value_at_request_paise, requested_by, requested_at, narrative null,
