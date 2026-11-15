@@ -65,8 +65,9 @@ its own transaction:
   a session to hold, then builds the prior from `PriorPort` (the sensing inference, #92):
   `with_payer_mule` → `engine.build_prior`. It persists `p_model`, `q`, `u`, the KB-only shares,
   the top features and the prior, and takes the fast path on `p_model(GENUINE)`.
-- `passive` (step 4) runs the eligible passive probes through `delphi.probes.api`. It runs only
-  for a CREATED session, so a resumed call is harmless. Each probe run stores VoI_1 and the net
+- `passive` (step 4) runs the eligible passive probes through `delphi.probes.api`, for a CREATED
+  session or one left in PASSIVE_PROBING by a crash (see "Concurrency and resume" below); any
+  other status makes it a no-op. Each probe run stores VoI_1 and the net
   value against the prior, for analytics (doc 06 §9).
 - `plan` (steps 5, 6, 8) either decides, or stores the chosen active probe as a PENDING probe run
   carrying the candidates table, ready to issue. On STOP the last candidates table goes into the
