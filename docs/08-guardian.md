@@ -73,6 +73,24 @@ its own transaction:
   engine: the payment is HELD and a STANDARD case is opened. A finished session is left alone.
   If that full fail-safe fails too (e.g. the bank step), the session still ends DECIDED
   HOLD_FOR_REVIEW / ENGINE_ERROR, with the payment and the case left to an operator and an
+  audit entry `guardian.session.fail_safe_failed`. Planning a session that isn't PLANNING is a
+  caller error (409), not an engine error.
+- **Active probes** (step 7). `issue` turns a PENDING run into AWAITING_CUSTOMER and returns
+  what the channel shows: the question variant (doc 07 §9, rotated over the payer's earlier
+  sessions), or a fresh OTP code (the run stores `sha256(probe_run_id:code)` and never the code;
+  a wrong attempt is masked too). `respond` checks the client signals (§4), classifies (§5),
+  updates and returns to PLANNING; a COOLING_OFF cancel ends the session. The run stores its
+  `deadline_at` (issue time + `timeout_s`): an answer after it is refused (409), and `timeout`
+  before it is refused. `timeout` fails a step-up (FAILED_OR_ABANDONED, with an update) and
+  records any other probe as TIMED_OUT with no update. `respond` and `timeout` need the session
+  to be AWAITING_CUSTOMER, so a finished session is never reopened. `cancel` ends the session
+  CANCELLED_BY_CUSTOMER with the payment CANCELLED, and closes the open run (ERROR, `closed_by`
+  CUSTOMER_CANCELLED). A bad answer, an
+  implausible timing or a wrong state is a caller error (400/409), never an ENGINE_ERROR hold.
+  The screen for each non-question active probe (OTP, BIOMETRIC, COOLING_OFF) is fixed in code
+  (`guardian.active`), since probes are code (ADR-0006). On api start-up, sessions in `PASSIVE_PROBING` or
+  If that full fail-safe fails too (e.g. the bank step), the session still ends DECIDED
+  HOLD_FOR_REVIEW / ENGINE_ERROR, with the payment and the case left to an operator and an
   audit entry `guardian.session.fail_safe_failed`.
   Planning a session that isn't PLANNING is a caller error (409), not an engine error. On api start-up, sessions in `PASSIVE_PROBING` or
 `PLANNING` are resumed. Sessions stuck in `AWAITING_CUSTOMER` for longer than the timeout are

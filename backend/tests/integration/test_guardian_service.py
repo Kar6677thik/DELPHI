@@ -93,6 +93,8 @@ def _observation(key: str, outcome: str, as_of: datetime) -> object:
             return PhoneRiskObs(None if outcome == "LOW_OR_UNKNOWN" else outcome)
         case "DEVICE_POSTURE", "KNOWN_DEVICE":
             return DevicePostureObs(False, False, as_of - timedelta(days=400), as_of)
+        case "DEVICE_POSTURE", "NEW_DEVICE":
+            return DevicePostureObs(False, False, as_of - timedelta(days=1), as_of)
         case "SESSION_BEHAVIOUR", "NORMAL":
             return SessionBehaviourObs(False, 2.0, 0.0)
         case "SESSION_BEHAVIOUR", "HESITANT_OR_PASTED":
@@ -172,6 +174,21 @@ class Env:
             )
         return payment
 
+    def another_payment(self, like: UUID, amount_inr: int) -> UUID:
+        """A second pending payment from the same payer to the same payee."""
+        payment = uuid4()
+        with self.owner.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO bank.payments (id, payer_account_id, payee_account_id,"
+                    " amount_paise, channel, initiated_at, status, origin)"
+                    " SELECT :p, payer_account_id, payee_account_id, :m, channel, :t,"
+                    " 'PENDING_GUARDIAN', origin FROM bank.payments WHERE id = :like"
+                ),
+                {"p": payment, "m": amount_inr * INR, "t": self.clock.now(), "like": like},
+            )
+        return payment
+
     def service(self, prior: FixedPrior, outcomes: Mapping[str, str], **kw: Any) -> GuardianService:
         fetch = fetchers(outcomes, kw.pop("slow", None))
         self._release = fetch.pop("_release")
@@ -195,8 +212,9 @@ class Env:
             return int(conn.execute(text(sql), params).scalar_one())
 
 
-@pytest.fixture
-def env(create_database: Callable[[], str]) -> Iterator[Env]:
+def make_env(create_database: Callable[[], str]) -> Iterator[Env]:
+    """A migrated database with KB v1 ACTIVE, the bank written as the owner, the service run
+    as the api's role. Shared with test_guardian_active."""
     url = create_database()
     upgrade(url)
     owner = engine_as(url)
@@ -207,6 +225,11 @@ def env(create_database: Callable[[], str]) -> Iterator[Env]:
     yield Env(owner, make_session_factory(app), clock)
     app.dispose()
     owner.dispose()
+
+
+@pytest.fixture
+def env(create_database: Callable[[], str]) -> Iterator[Env]:
+    yield from make_env(create_database)
 
 
 def _run(env: Env, svc: GuardianService, payment_id: UUID) -> Decided | NextProbe:
