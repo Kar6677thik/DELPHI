@@ -26,7 +26,13 @@ from sqlalchemy import Connection, func, select, tuple_, update
 
 from delphi.platform.labels import LabelRow, record_labels
 from delphi.platform.locks import LABEL_DELIVERY_LOCK_KEY
-from delphi.sim.labels import LabelSource, ScheduledLabel, SubjectType, observed_hypothesis
+from delphi.sim.labels import (
+    FRAUD_OTHER,
+    LabelSource,
+    ScheduledLabel,
+    SubjectType,
+    observed_hypothesis,
+)
 from delphi.sim.truth import label_schedule
 
 # Schedule rows read and marked per round.
@@ -65,6 +71,15 @@ def deliver_labels(
         )
 
 
+def stored_key(label: ScheduledLabel, active_hypotheses: frozenset[str]) -> str:
+    """docs/05 §8: every stored key is an ACTIVE-KB hypothesis or FRAUD_OTHER. A complaint
+    names its hypothesis only if the KB has it (``observed_hypothesis``, docs/14 §7); any other
+    source with a key outside the KB is stored as FRAUD_OTHER too, so nothing leaks a hidden
+    typology."""
+    key = observed_hypothesis(label, active_hypotheses)
+    return key if key in active_hypotheses else FRAUD_OTHER
+
+
 def _observed(rows: Sequence[Any], active_hypotheses: frozenset[str]) -> Iterator[LabelRow]:
     for r in rows:
         scheduled = ScheduledLabel(
@@ -77,7 +92,7 @@ def _observed(rows: Sequence[Any], active_hypotheses: frozenset[str]) -> Iterato
         yield LabelRow(
             subject_type=r.subject_type,
             subject_id=r.subject_id,
-            hypothesis_key=observed_hypothesis(scheduled, active_hypotheses),
+            hypothesis_key=stored_key(scheduled, active_hypotheses),
             label_source=r.label_source,
             known_at=r.due_at,
         )

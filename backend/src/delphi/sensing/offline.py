@@ -260,9 +260,9 @@ class OfflineHistories:
         """One row of payment features per payment, columns in ``payment_feature_names``."""
         ids = list(payment_ids)
         rows = [build_payment_features(*self.snapshot(i), self.config) for i in ids]
-        return pd.DataFrame(rows, index=pd.Index(ids, name="payment_id"))[
-            list(payment_feature_names(self.config))
-        ]
+        names = list(payment_feature_names(self.config))
+        # columns= keeps the shape when there are no payments (an empty training split).
+        return pd.DataFrame(rows, index=pd.Index(ids, name="payment_id"), columns=names)
 
 
 def _by(frame: pd.DataFrame, key: str) -> Mapping[str, pd.DataFrame]:
@@ -345,7 +345,9 @@ class OfflineAccountHistories:
         """One row of account features per account, as of one time (``ACCOUNT_FEATURES``)."""
         ids = list(account_ids)
         rows = [build_account_features(self.snapshot(i), as_of_us, self.config) for i in ids]
-        return pd.DataFrame(rows, index=pd.Index(ids, name="account_id"))[list(ACCOUNT_FEATURES)]
+        return pd.DataFrame(
+            rows, index=pd.Index(ids, name="account_id"), columns=list(ACCOUNT_FEATURES)
+        )
 
 
 def _strs(frame: pd.DataFrame | None, column: str) -> tuple[str, ...]:

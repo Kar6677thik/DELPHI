@@ -546,3 +546,6 @@ golden hour, SLA timers) is multiplied by `demo_time_scale` = 1/30. The UI shows
 - `POST /admin/demo/reset`: deletes every row created after the `seed_completed_at` marker
   (in dependency order, in one transaction), re-activates KB v1, and resets the persona state.
   Must finish in ≤ 60 s.
+  Labels (#159): it also deletes the `delphi.labels` rows known after the marker, sets
+  `sim_truth.label_schedule.delivered` back to false for the rows due after the history's end,
+  and lets `LABEL_DELIVERY` re-map complaint keys against the re-activated KB v1.

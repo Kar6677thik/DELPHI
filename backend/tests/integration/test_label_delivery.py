@@ -124,6 +124,7 @@ def test_the_seed_delivers_exactly_the_labels_due_by_the_end_of_history(
     with seeded.sim.connect() as conn:
         stats = conn.execute(select(datasets.c.stats)).scalar_one()
     assert stats["rows"]["labels"] == len(due)
+    assert datetime.fromisoformat(stats["history_end"]) == END
 
 
 def test_label_delivery_delivers_what_falls_due_once(seeded: Bank) -> None:

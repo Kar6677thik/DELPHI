@@ -150,11 +150,9 @@ class GenerateDatasetJob:
                 return self._then_train(ctx, done)
             rows = dict(write_dataset(conn, dataset))
             now = self.clock.now()
+            ended = history_end(config, params.profile, created_at=generated_at)
             rows["labels"] = deliver_labels(
-                conn,
-                until=history_end(config, params.profile, created_at=generated_at),
-                active_hypotheses=_active_hypotheses(conn, self.kb),
-                now=now,
+                conn, until=ended, active_hypotheses=_active_hypotheses(conn, self.kb), now=now
             )
             dataset_id = uuid7(unix_ms=int(now.timestamp() * 1000))
             row = {
@@ -164,10 +162,11 @@ class GenerateDatasetJob:
                 "seed": config.profiles[params.profile].seed,
                 "generator_version": self.generator_version,
                 "status": READY,
-                "stats": {"rows": rows, "report": report},
+                # `history_end`: where the generated history stops (docs/14 §2), which the
+                # sensing trainers cut by (#162).
+                "stats": {"rows": rows, "report": report, "history_end": ended.isoformat()},
                 "seed_completed_at": now,
-                # The history's end for `demo` (sim.api reads it back, docs/14 §2).
-                "created_at": generated_at,
+                "created_at": now,
             }
             conn.execute(datasets.insert().values(**row))
             if dataset.personas is not None:
@@ -190,7 +189,8 @@ class GenerateDatasetJob:
                 self.clock,
                 JobType.TRAIN_SENSING,
                 idempotency_key=f"TRAIN_SENSING:dataset-{summary['dataset_id']}",
-                params={"dataset_id": summary["dataset_id"]},
+                # The seed trains on what its history knew (sensing.jobs.SEED_CUTOFF).
+                params={"dataset_id": summary["dataset_id"], "cutoff": "history_end"},
             )
         return {**summary, "train_job_id": str(queued.job_id)}
 

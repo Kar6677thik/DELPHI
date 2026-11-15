@@ -216,10 +216,18 @@ the artifact belong to `TRAIN_SENSING` (#88). Gaps the text above leaves open, f
   its SHA-256.
 - **The PRIOR trainer** (`delphi.sensing.trainers.train_prior_artifact`, #159) reads the
   payments and the labels the bank had observed (`delphi.labels`, delivered by
-  `LABEL_DELIVERY`, doc 14 §8) through `delphi.sim.api`, never `sim_truth`. Its training cutoff
-  is the end of the dataset's history (`sim.api.history_window`: the generation time for `demo`,
-  the fixed epoch for `test` and `eval`), so a retrain on the same dataset sees the same labels
-  however many have been delivered since. On `test`, seed plus training take about 5 s.
+  `LABEL_DELIVERY`, doc 14 §8) through `delphi.sim.api`, never `sim_truth`, up to the job's
+  **training cutoff**:
+  - the seed's `TRAIN_SENSING` (params `cutoff: history_end`) cuts at the end of the dataset's
+    history (`stats.history_end`), so the first models learn what the history knew;
+  - a manual retrain (`POST /admin/sensing/train`) cuts at the time it runs, so it learns from
+    every label delivered since: live complaints, S-4's collect-refund payments, and the labels
+    the promoted-typology rule below counts.
+
+  The matured window runs from the history's start to the cutoff minus the maturity. A kind
+  with nothing to learn from (no labelled payment in that window) is recorded under
+  `not_trained` with its reason, and the job goes on to the next kind: retrying could not help.
+  On `test`, seed plus training take about 5 s.
 - The model is loaded at api/worker start and on an `artifact.activated` event. Inference
   p95 ≤ 20 ms per payment (NFR-03).
 - **Retraining with a promoted typology:** if the ACTIVE KB has typologies that are not model
