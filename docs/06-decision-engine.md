@@ -248,6 +248,19 @@ the open-mass split as soon as it is activated, so no hypothesis is ever counted
 `CASE_ACCOUNT_REVIEW` profile, `p_model` comes from the mule scorer:
 p_model(MULE) = p_mule and p_model(GENUINE) = 1 − p_mule.
 
+**MULE in `GUARDIAN_PAYMENT` (#148).** The payment model has no MULE class (doc 13 §4), so the
+caller builds `p_model` from the payment model and the **payer** account's mule score:
+
+```
+p_model(h)    = (1 − p_mule(payer)) · p_payment(h)     for each payment-model class h
+p_model(MULE) = p_mule(payer)
+```
+
+With no ACTIVE mule scorer, `p_model` has no MULE key, so MULE is KB-only and gets
+`u · w_MULE` like any other KB-only typology; it never vanishes. This keeps the double-count
+guard (doc 13 §3): the only Guardian probe about mules, `BENEFICIARY_INTEL`, reads the
+**payee's** `p_mule`, never the payer's.
+
 All prior components (`p_model`, `q`, `u`, `w`) are persisted with the session, so backtests can
 rebuild the prior under a different KB.
 
