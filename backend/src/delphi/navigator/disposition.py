@@ -143,7 +143,7 @@ def dispose(
             session, case.subject_payment_id, decision, now
         ).value
     _record_label(session, case, decision, typology, now)
-    session.execute(
+    updated = session.execute(
         update(cases)
         .where(cases.c.id == case_id, cases.c.version == expected_version)
         .values(
@@ -159,7 +159,13 @@ def dispose(
             risk_by_decision=risks,
             version=expected_version + 1,
         )
-    )
+        .returning(cases.c.id)
+    ).scalar_one_or_none()
+    if updated is None:  # the row lock makes this unreachable; never write past it
+        raise DelphiError(
+            "The case changed underneath this disposition.",
+            code=ProblemCode.VERSION_CONFLICT,
+        )
     payload: dict[str, Any] = {
         "decision": decision,
         "typology": typology,

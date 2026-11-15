@@ -109,8 +109,9 @@ def console(
         if c.source_key not in observed
     ]
     if protocol == "COERCION" and OUTREACH in profile.sources and OUTREACH not in observed:
-        pinned = [r for r in rows if r.source_key == OUTREACH]
-        rows = [_pin(r) for r in pinned] + [r for r in rows if r.source_key != OUTREACH]
+        pinned = [r for r in rows if r.source_key == OUTREACH and r.eligible]
+        if pinned:
+            rows = [_pin(pinned[0])] + [r for r in rows if r.source_key != OUTREACH]
     unobserved_eligible = [r.source_key for r in rows if r.eligible]
     return ConsoleView(
         hypotheses=profile.hypotheses,

@@ -497,3 +497,82 @@ def test_a_viewer_cannot_dispose(env: Env, client: TestClient) -> None:
     case = _held_case(env)
     response = _dispose(client, case, {"decision": "RELEASE", "confidence": 3})
     assert response.status_code == 403
+
+
+RATIONALE = "The verified outreach call settled it; the customer knows the payee in person."
+
+
+def test_a_release_executes_the_payment_and_a_disposed_case_shows_what_was_decided(
+    env: Env, writer: tuple[TestClient, Principal]
+) -> None:
+    client, principal = writer
+    case = _held_case(env)
+    with env.owner.begin() as conn:  # the payer can fund it
+        conn.execute(
+            text(
+                "UPDATE bank.accounts SET balance_paise = 100000000 WHERE id ="
+                " (SELECT payer_account_id FROM bank.payments WHERE id = :p)"
+            ),
+            {"p": case.subject_payment_id},
+        )
+    before = client.get(f"/api/v1/cases/{case.id}").json()
+    body = {"decision": "RELEASE", "confidence": 4, "override_rationale": RATIONALE}
+    done = _dispose(client, case, body)
+    assert done.status_code == 200, done.json()
+    assert done.headers["ETag"] == f'"{case.version + 1}"'  # docs/16 §1
+    view = done.json()
+    assert view["status"] == "DISPOSED" and view["disposed_by"] == str(principal.user_id)
+    assert view["is_override"] is (before["recommended_decision"] != "RELEASE")
+    assert view["recommended_decision"] == before["recommended_decision"]  # as stored
+    assert view["next_best_evidence"] == [] and view["what_would_change_my_mind"] is None
+    with env.owner.connect() as conn:
+        status = conn.execute(
+            text("SELECT status FROM bank.payments WHERE id = :p"), {"p": case.subject_payment_id}
+        ).scalar_one()
+        label = conn.execute(
+            text("SELECT hypothesis_key FROM delphi.labels WHERE subject_id = :p"),
+            {"p": case.subject_payment_id},
+        ).scalar_one()
+    assert (status, label) == ("EXECUTED", "GENUINE")
+
+
+def test_a_replayed_disposition_returns_the_stored_response(
+    env: Env, writer: tuple[TestClient, Principal]
+) -> None:
+    client, _ = writer
+    case = _held_case(env)
+    body = {"decision": "RELEASE", "confidence": 4, "override_rationale": RATIONALE}
+    headers = {"Idempotency-Key": str(uuid4()), "If-Match": f'"{case.version}"', **BROWSER}
+    first = client.post(f"/api/v1/cases/{case.id}/disposition", json=body, headers=headers)
+    again = client.post(f"/api/v1/cases/{case.id}/disposition", json=body, headers=headers)
+    assert first.status_code == again.status_code == 200
+    assert again.headers.get("Idempotent-Replayed") == "true"
+    assert again.json() == first.json()
+
+
+def test_a_payment_that_is_no_longer_held_refuses_the_disposition(
+    env: Env, writer: tuple[TestClient, Principal]
+) -> None:
+    client, _ = writer
+    case = _held_case(env)
+    with env.owner.begin() as conn:
+        conn.execute(
+            text("UPDATE bank.payments SET status = 'CANCELLED' WHERE id = :p"),
+            {"p": case.subject_payment_id},
+        )
+    body = {"decision": "RELEASE", "confidence": 4, "override_rationale": RATIONALE}
+    refused = _dispose(client, case, body)
+    assert refused.status_code == 409
+    with env.sessions() as s:
+        unchanged = get_case(s, case.id)
+    assert unchanged is not None and unchanged.status is not CaseStatus.DISPOSED
+    assert unchanged.version == case.version  # nothing was written
+
+
+def test_a_decision_outside_the_case_profile_is_refused(
+    env: Env, writer: tuple[TestClient, Principal]
+) -> None:
+    client, _ = writer
+    case = _held_case(env)
+    refused = _dispose(client, case, {"decision": "CLEAR", "confidence": 3})
+    assert refused.status_code == 422 and "decided with one of" in refused.json()["detail"]

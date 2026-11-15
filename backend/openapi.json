@@ -1409,6 +1409,56 @@
             ],
             "title": "Disposed At"
           },
+          "disposition_typology": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disposition Typology"
+          },
+          "disposition_confidence": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disposition Confidence"
+          },
+          "is_override": {
+            "type": "boolean",
+            "title": "Is Override",
+            "default": false
+          },
+          "override_rationale": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Override Rationale"
+          },
+          "disposed_by": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disposed By"
+          },
           "version": {
             "type": "integer",
             "title": "Version"
@@ -1676,6 +1726,56 @@
               }
             ],
             "title": "Disposed At"
+          },
+          "disposition_typology": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disposition Typology"
+          },
+          "disposition_confidence": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disposition Confidence"
+          },
+          "is_override": {
+            "type": "boolean",
+            "title": "Is Override",
+            "default": false
+          },
+          "override_rationale": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Override Rationale"
+          },
+          "disposed_by": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disposed By"
           },
           "version": {
             "type": "integer",

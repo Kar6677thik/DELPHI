@@ -493,6 +493,19 @@ export interface components {
             disposition: string | null;
             /** Disposed At */
             disposed_at: string | null;
+            /** Disposition Typology */
+            disposition_typology?: string | null;
+            /** Disposition Confidence */
+            disposition_confidence?: number | null;
+            /**
+             * Is Override
+             * @default false
+             */
+            is_override: boolean;
+            /** Override Rationale */
+            override_rationale?: string | null;
+            /** Disposed By */
+            disposed_by?: string | null;
             /** Version */
             version: number;
             /** Next Best Evidence */
@@ -587,6 +600,19 @@ export interface components {
             disposition: string | null;
             /** Disposed At */
             disposed_at: string | null;
+            /** Disposition Typology */
+            disposition_typology?: string | null;
+            /** Disposition Confidence */
+            disposition_confidence?: number | null;
+            /**
+             * Is Override
+             * @default false
+             */
+            is_override: boolean;
+            /** Override Rationale */
+            override_rationale?: string | null;
+            /** Disposed By */
+            disposed_by?: string | null;
             /** Version */
             version: number;
         };

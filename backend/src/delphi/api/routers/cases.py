@@ -14,6 +14,7 @@ import binascii
 import json
 from collections.abc import Mapping, Sequence
 from datetime import datetime
+from http import HTTPStatus
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -78,6 +79,12 @@ class CaseView(BaseModel):
     dd_pack_complete: bool
     disposition: str | None
     disposed_at: datetime | None
+    # the disposition's details (docs/05 §4), null until DISPOSED
+    disposition_typology: str | None = None
+    disposition_confidence: int | None = None
+    is_override: bool = False
+    override_rationale: str | None = None
+    disposed_by: UUID | None = None
     version: int
 
     @staticmethod
@@ -107,6 +114,11 @@ class CaseView(BaseModel):
             disposition=record.disposition,
             disposed_at=record.disposed_at,
             version=record.version,
+            disposition_typology=record.disposition_typology,
+            disposition_confidence=record.disposition_confidence,
+            is_override=record.is_override,
+            override_rationale=record.override_rationale,
+            disposed_by=record.disposed_by,
         )
 
 
@@ -238,11 +250,25 @@ def _detail(session: Session, record: CaseRecord, now: datetime) -> CaseDetail:
         protocol=record.protocol.value,
         observed=frozenset(),  # evidence records arrive with #102 (docs/09 §3)
     )
-    flip = view.what_would_change_my_mind
+    # A DISPOSED case is immutable (docs/05 §4): it shows the recommendation and risks stored
+    # at disposition, and offers no more evidence.
+    disposed = record.status is CaseStatus.DISPOSED
+    flip = None if disposed else view.what_would_change_my_mind
     return CaseDetail(
         **base.model_dump(exclude={"recommended_decision", "risk_by_decision"}),
-        recommended_decision=view.recommended_decision,
-        risk_by_decision={d: round(r) for d, r in view.risk_by_decision.items()},
+        recommended_decision=(
+            record.recommended_decision
+            if disposed and record.recommended_decision
+            else view.recommended_decision
+        ),
+        risk_by_decision={
+            d: round(r)
+            for d, r in (
+                record.risk_by_decision
+                if disposed and record.risk_by_decision
+                else view.risk_by_decision
+            ).items()
+        },
         next_best_evidence=[
             EvidenceRowView(
                 source_key=r.source_key,
@@ -255,8 +281,9 @@ def _detail(session: Session, record: CaseRecord, now: datetime) -> CaseDetail:
                 pinned_by_protocol=r.pinned_by_protocol,
             )
             for r in view.next_best_evidence
+            if not disposed  # a decided case asks for no more evidence
         ],
-        evidence_sufficient=view.evidence_sufficient,
+        evidence_sufficient=disposed or view.evidence_sufficient,
         what_would_change_my_mind=(
             FlipView(
                 source_key=flip.source_key,
@@ -345,6 +372,9 @@ def dispose_case(
             expected_version=expected,
             user_id=principal.user_id,
         )
-        return 200, _detail(session, record, platform.clock.now()).model_dump(mode="json")
+        return HTTPStatus.OK, _detail(session, record, platform.clock.now()).model_dump(mode="json")
 
-    return run_idempotent(request, raw, principal, key, run)
+    reply = run_idempotent(request, raw, principal, key, run)
+    if reply.status_code == HTTPStatus.OK:  # docs/16 §1: a mutable aggregate carries its ETag
+        reply.headers["ETag"] = f'"{json.loads(bytes(reply.body))["version"]}"'
+    return reply
