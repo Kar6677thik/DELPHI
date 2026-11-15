@@ -63,20 +63,24 @@ class CustomerChannel(Protocol):
 @dataclass
 class AnswerBoard:
     """An in-process rendezvous between the code that records an answer and the session task
-    waiting for it, keyed by probe run. Signalling a run nobody waits for is harmless."""
+    waiting for it, keyed by probe run. The runner ``expect``s a run before asking, so an answer
+    that arrives before it starts waiting is not lost; a signal for a run nobody expects (a
+    stray, a late answer after the session ended) is dropped, so nothing accumulates."""
 
     _events: dict[UUID, asyncio.Event] = field(default_factory=dict)
 
-    def _event(self, probe_run_id: UUID) -> asyncio.Event:
-        return self._events.setdefault(probe_run_id, asyncio.Event())
+    def expect(self, probe_run_id: UUID) -> None:
+        self._events.setdefault(probe_run_id, asyncio.Event())
 
     def answered(self, probe_run_id: UUID) -> None:
-        """Called once the answer is recorded (or the session ended, e.g. a cancel)."""
-        self._event(probe_run_id).set()
+        """Called once the answer is recorded, or the session ended (e.g. a cancel)."""
+        event = self._events.get(probe_run_id)
+        if event is not None:
+            event.set()
 
     async def wait(self, probe_run_id: UUID, timeout_s: float) -> bool:
-        """True if signalled within ``timeout_s`` seconds."""
-        event = self._event(probe_run_id)
+        """True if signalled within ``timeout_s`` seconds. Forgets the run either way."""
+        event = self._events.setdefault(probe_run_id, asyncio.Event())
         try:
             await asyncio.wait_for(event.wait(), max(timeout_s, 0.0))
             return True
@@ -153,7 +157,11 @@ class SessionRunner:
             return  # already driven by this process
         task = asyncio.create_task(self.drive(session_id), name=f"guardian-{session_id}")
         self._tasks[session_id] = task
-        task.add_done_callback(lambda _t: self._tasks.pop(session_id, None))
+        task.add_done_callback(lambda done: self._forget(session_id, done))
+
+    def _forget(self, session_id: UUID, done: asyncio.Task[GuardianSessionRecord]) -> None:
+        if self._tasks.get(session_id) is done:  # never a newer task for the same session
+            del self._tasks[session_id]
 
     async def drive(self, session_id: UUID) -> GuardianSessionRecord:
         """Run the session to its end from wherever it is (docs/08 §2 steps 4–9). Anything
@@ -186,6 +194,7 @@ class SessionRunner:
         assert isinstance(step, NextProbe)
         issued = await _off_loop(lambda: self._service.issue(step.probe_run_id))
         if isinstance(issued, IssuedProbe):
+            self._board.expect(issued.probe_run_id)  # before asking: a fast answer is not lost
             await self._channel.ask(issued)
 
     async def _await_answer(self, session_id: UUID) -> None:
@@ -197,9 +206,14 @@ class SessionRunner:
                 raise RuntimeError(f"session {session_id} awaits no probe run")
             return  # the run was answered or closed meanwhile: the loop re-reads
         run_id, deadline = waiting
+        self._board.expect(run_id)
+        if await _off_loop(lambda: self._awaited(session_id)) != waiting:
+            self._board.answered(run_id)  # answered between the two reads: do not wait
         remaining = (deadline - self._clock.now()).total_seconds()
         if await self._board.wait(run_id, remaining):
             return  # the answer is recorded; the next loop plans
+        if self._clock.now() < deadline:
+            return  # the timer fired a little early: the loop waits out the rest
         try:
             await _off_loop(lambda: self._service.timeout(run_id))
         except DelphiError as exc:

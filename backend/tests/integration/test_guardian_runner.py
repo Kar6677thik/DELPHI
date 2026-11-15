@@ -178,3 +178,17 @@ def test_the_answer_board_times_out_and_ignores_strays() -> None:
         return late, on_time
 
     assert asyncio.run(scenario()) == (False, True)
+
+
+def test_the_board_keeps_an_early_answer_only_for_an_expected_run() -> None:
+    async def scenario() -> tuple[bool, bool, int]:
+        board = AnswerBoard()
+        expected, stray = UUID(int=10), UUID(int=11)
+        board.expect(expected)
+        board.answered(expected)  # answered before the runner started waiting: kept
+        board.answered(stray)  # nobody expects it: dropped, nothing accumulates
+        kept = await board.wait(expected, 0.01)
+        dropped = await board.wait(stray, 0.01)
+        return kept, dropped, len(board._events)
+
+    assert asyncio.run(scenario()) == (True, False, 0)

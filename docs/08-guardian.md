@@ -40,7 +40,8 @@ Research §9.3–9.4. Module `delphi.guardian`. Decision profile `GUARDIAN_PAYME
 11 write audit entries; emit SSE events; the DD pack is available
 ```
 
-Steps 4–9 run as one asyncio task per session in the api process. After every step the session
+Steps 4–9 run as one asyncio task per session, in the process that owns it (the api for the mock
+phone, the worker for simulated customers; doc 04 §5.1). After every step the session
 row and its probe runs are committed.
 
 **Runner** (`delphi.guardian.runner.SessionRunner`, #95). One instance per process and runner
@@ -53,7 +54,10 @@ start-up and drives every unfinished session the process owns (FR-GDN-14):
 
 Answers never pass through the task. Whoever receives one (the phone's probe-responses handler, or
 the simulated customer) calls `GuardianService.respond`, so validation errors reach the caller,
-then signals the in-process `AnswerBoard`; the waiting task wakes and plans the next step. The
+then signals the in-process `AnswerBoard`; the waiting task wakes and plans the next step. A
+cancel is signalled the same way, so the task does not sleep until the probe's deadline. The
+runner registers (`expect`s) a run before asking, so a fast answer is never lost; signals for runs
+nobody expects are dropped. The
 synchronous service steps run in threads, so the event loop never blocks on the database. An
 unexpected error in a task ends the session through the fail-safe. A cancelled task (shutdown)
 just stops, and its session is resumed next time.
@@ -108,9 +112,7 @@ its own transaction:
   If that full fail-safe fails too (e.g. the bank step), the session still ends DECIDED
   HOLD_FOR_REVIEW / ENGINE_ERROR, with the payment and the case left to an operator and an
   audit entry `guardian.session.fail_safe_failed`.
-  Planning a session that isn't PLANNING is a caller error (409), not an engine error. On api start-up, sessions in `PASSIVE_PROBING` or
-`PLANNING` are resumed. Sessions stuck in `AWAITING_CUSTOMER` for longer than the timeout are
-resolved as timed out (FR-GDN-14).
+  Planning a session that isn't PLANNING is a caller error (409), not an engine error.
 
 ## 3. Fast path
 
