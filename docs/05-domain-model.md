@@ -82,7 +82,8 @@ Invariants:
 - Disposition decisions: `RELEASE`/`CONFIRM_FRAUD` for `PAYMENT_HOLD`; `CLEAR`/`CONFIRM_MULE`
   for `ACCOUNT_REVIEW`.
 - `CONFIRM_FRAUD` requires a `disposition_typology`, which must be a fraud hypothesis that
-  applies to the case.
+  applies to the case, or `FRAUD_OTHER` for a fraud the KB does not model (e.g. before the
+  Scout promotes it); its label is then `FRAUD_OTHER` (§8, #176).
 - If the disposition differs from the engine's recommended decision at the moment of
   disposition, `override_rationale` (≥ 20 characters) is required and `is_override = true`.
 - Each evidence item can be fetched at most once per case (re-fetch is a separate, explicit

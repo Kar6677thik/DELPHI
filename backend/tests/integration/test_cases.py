@@ -576,3 +576,28 @@ def test_a_decision_outside_the_case_profile_is_refused(
     case = _held_case(env)
     refused = _dispose(client, case, {"decision": "CLEAR", "confidence": 3})
     assert refused.status_code == 422 and "decided with one of" in refused.json()["detail"]
+
+
+def test_confirm_fraud_can_name_a_fraud_the_kb_does_not_model(
+    env: Env, writer: tuple[TestClient, Principal]
+) -> None:
+    """#176: FRAUD_OTHER for an unmodelled fraud, labelled FRAUD_OTHER (docs/05 §4, §8)."""
+    client, _ = writer
+    case = _held_case(env)
+    recommended = client.get(f"/api/v1/cases/{case.id}").json()["recommended_decision"]
+    body: dict[str, object] = {
+        "decision": "CONFIRM_FRAUD",
+        "typology": "FRAUD_OTHER",
+        "confidence": 3,
+    }
+    if recommended != "CONFIRM_FRAUD":
+        body["override_rationale"] = RATIONALE
+    done = _dispose(client, case, body)
+    assert done.status_code == 200, done.json()
+    assert done.json()["disposition_typology"] == "FRAUD_OTHER"
+    with env.owner.connect() as conn:
+        label = conn.execute(
+            text("SELECT hypothesis_key FROM delphi.labels WHERE subject_id = :p"),
+            {"p": case.subject_payment_id},
+        ).scalar_one()
+    assert label == "FRAUD_OTHER"

@@ -43,6 +43,7 @@ MIN_OVERRIDE_RATIONALE = 20  # docs/05 §4: an override's rationale has at least
 CONFIDENCE_RANGE = range(1, 6)  # docs/09 §2: self-reported confidence 1–5
 GENUINE = "GENUINE"
 MULE = "MULE"
+FRAUD_OTHER = "FRAUD_OTHER"  # docs/05 §4, §8: a fraud the KB does not model (#176)
 INVESTIGATOR_DISPOSITION = "INVESTIGATOR_DISPOSITION"  # docs/14 §7 label source
 FRAUD_DECISIONS = {"CONFIRM_FRAUD", "CONFIRM_MULE"}
 
@@ -113,6 +114,7 @@ def dispose(
     if disposition.confidence not in CONFIDENCE_RANGE:
         raise _invalid("Confidence is 1 to 5.")
     fraud_typologies = [h for h in profile.hypotheses if h not in (GENUINE, UNEXPLAINED)]
+    fraud_typologies.append(FRAUD_OTHER)
     typology = disposition.typology
     if decision == "CONFIRM_FRAUD":
         if typology not in fraud_typologies:
