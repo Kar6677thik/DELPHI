@@ -189,7 +189,8 @@ class GenerateDatasetJob:
                 self.clock,
                 JobType.TRAIN_SENSING,
                 idempotency_key=f"TRAIN_SENSING:dataset-{summary['dataset_id']}",
-                params={"dataset_id": summary["dataset_id"]},
+                # The seed trains on what its history knew (sensing.jobs.SEED_CUTOFF).
+                params={"dataset_id": summary["dataset_id"], "cutoff": "history_end"},
             )
         return {**summary, "train_job_id": str(queued.job_id)}
 
