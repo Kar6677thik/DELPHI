@@ -60,6 +60,23 @@ fails → `TemplateLlm`. The stored record says which provider produced the text
 The model id is configuration, so a later change to the Sonnet/Haiku tier for cost is a config
 change. The owner decides that.
 
+**Implementation** (`delphi.llm.anthropic_llm.AnthropicLlm`, #104 part 2):
+
+- **One call:** `client.beta.messages.create` (the beta surface carries `fallbacks`). The
+  structured output is the raw `output_config.format` JSON schema, built from the purpose's
+  Pydantic model (`output_schema`). The keywords the API does not take (string lengths, array
+  sizes, numeric bounds) are left out, and every object is closed with
+  `additionalProperties: false`. The reply is validated against the full Pydantic model, so
+  those constraints are enforced client-side, exactly as the SDK's parse helper does. The docs/15
+  §5 validators then run in `LlmService`.
+- **Outcomes:** a refusal (checked first), `max_tokens`, a missing text block or a schema
+  failure becomes REFUSED or INVALID_OUTPUT. A timeout, rate limit, HTTP error or connection
+  error becomes ERROR, reported by kind only. Every one of them falls back to the template.
+  `LlmResult.model` is the model that answered, which after a server-side fallback is not the
+  configured one.
+- **`primary_provider(settings)`** returns the adapter only for `DELPHI_LLM_PROVIDER=anthropic`
+  with a key set, and otherwise templates. A missing key logs a warning, never the key.
+
 ## 4. Prompts
 
 Prompts are versioned files in `backend/src/delphi/llm/prompts/<purpose>/v<N>.md`. The

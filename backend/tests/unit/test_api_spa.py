@@ -123,7 +123,10 @@ def test_the_fallback_is_not_in_the_contract(client: TestClient) -> None:
 
 
 def _problem(response: object, status: int) -> None:
-    from httpx import Response
+    import httpx
+    import httpx2  # Starlette's TestClient uses httpx2 once it is installed (anthropic)
+
+    Response = (httpx.Response, httpx2.Response)
 
     assert isinstance(response, Response)
     assert response.status_code == status
