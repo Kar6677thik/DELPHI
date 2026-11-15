@@ -1,10 +1,17 @@
-"""The prior model: LightGBM multiclass over the model hypotheses, temperature-scaled
-(docs/13 §1, §4, FR-SNS-03).
+"""The prior model: LightGBM multiclass over the payment hypotheses, prior-shift corrected
+and temperature-scaled (docs/13 §1, §4, FR-SNS-03).
 
-    p_model(h | x) = softmax(z(x) / T)_h
+    p_model(h | x) = softmax((z(x) + b) / T)_h
 
-``z`` is the booster's raw multiclass score (the logits), and ``T > 0`` is a single temperature
-fitted on the validation split's negative log-likelihood. The probabilities sum to 1.
+``z`` is the booster's raw multiclass score (the logits). Training weights the classes by inverse
+frequency, so the booster learns posteriors under balanced class priors; ``b_c = log(π_c / π̃_c)``
+moves them back to the training class frequencies (``prior_shift``, #148). ``T > 0`` and ``b``
+are then fitted together on the validation split's negative log-likelihood, starting from that
+shift (``fit_calibration``). Without validation rows, T = 1 and b is the theoretical shift. The
+probabilities sum to 1.
+
+MULE is not a payment class: mule payments mature as GENUINE (docs/14 §7). The Guardian adds it
+from the payer account's mule score (``with_payer_mule``, docs/06 §11).
 
 Training uses **only the labels the bank has observed** by the training cutoff (docs/14 §7),
 never `sim_truth`, and only payments in the matured window, split by time into train,
@@ -29,14 +36,15 @@ import joblib
 import lightgbm as lgb
 import numpy as np
 from numpy.typing import NDArray
-from scipy.optimize import minimize_scalar
+from scipy.optimize import minimize
 from sklearn.metrics import log_loss, roc_auc_score
 
 from delphi.sensing.config import PriorConfig, PriorGate, SplitParts
 
 FloatMatrix = NDArray[np.float64]
 IntArray = NDArray[np.int64]
-_BLOB_FORMAT = 1
+_BLOB_FORMAT = 2  # 2 adds prior_shift; format 1 blobs load with no shift
+_READABLE_FORMATS = (1, 2)
 _DAY_US = 86_400_000_000
 _MATRIX_NDIM = 2
 # Split codes returned by ``matured_split``.
@@ -178,11 +186,16 @@ class PriorModel:
     temperature: float
     top_contributions: int
     report: Mapping[str, Any] = field(default_factory=dict)
+    prior_shift: tuple[float, ...] = ()  # b per class; empty = no shift
 
     def logits(self, matrix: FloatMatrix) -> FloatMatrix:
-        """The calibrated logits ``z / T``."""
+        """The calibrated logits ``(z + b) / T``."""
         raw = np.asarray(self.booster.predict(matrix, raw_score=True), dtype=np.float64)
-        return raw.reshape(len(matrix), len(self.classes)) / self.temperature
+        raw = raw.reshape(len(matrix), len(self.classes))
+        if self.prior_shift:
+            raw = raw + np.asarray(self.prior_shift, dtype=np.float64)
+        result: FloatMatrix = raw / self.temperature
+        return result
 
     def probabilities(self, matrix: FloatMatrix) -> FloatMatrix:
         """``p_model`` for each row; each row sums to 1."""
@@ -198,7 +211,8 @@ class PriorModel:
         self, features: Mapping[str, float], hypothesis: str | None = None
     ) -> tuple[Contribution, ...]:
         """The top features behind one class's calibrated logit, largest |contribution| first
-        (ties by feature order). ``hypothesis`` defaults to the most probable class."""
+        (ties by feature order). ``hypothesis`` defaults to the most probable class. The prior
+        shift is a per-class constant, so like the bias it is not a feature contribution."""
         matrix = feature_matrix([features], self.feature_list)
         k = len(self.feature_list) + 1  # each class's block ends with its bias term
         contrib = np.asarray(self.booster.predict(matrix, pred_contrib=True), dtype=np.float64)
@@ -227,6 +241,7 @@ class PriorModel:
                 "temperature": self.temperature,
                 "top_contributions": self.top_contributions,
                 "report": dict(self.report),
+                "prior_shift": list(self.prior_shift),
             },
             buffer,
         )
@@ -235,7 +250,7 @@ class PriorModel:
     @classmethod
     def from_bytes(cls, blob: bytes) -> PriorModel:
         payload: dict[str, Any] = joblib.load(io.BytesIO(blob))
-        if payload.get("format") != _BLOB_FORMAT:
+        if payload.get("format") not in _READABLE_FORMATS:
             raise ValueError(f"unknown prior artifact format {payload.get('format')!r}")
         return cls(
             booster=lgb.Booster(model_str=payload["booster"]),
@@ -244,6 +259,7 @@ class PriorModel:
             temperature=float(payload["temperature"]),
             top_contributions=int(payload["top_contributions"]),
             report=payload["report"],
+            prior_shift=tuple(float(b) for b in payload.get("prior_shift", ())),
         )
 
 
@@ -372,19 +388,77 @@ def class_weights(labels: IntArray, n_classes: int) -> FloatMatrix:
     return result
 
 
-def fit_temperature(logits: FloatMatrix, labels: IntArray, bounds: tuple[float, float]) -> float:
-    """The T > 0 minimising the negative log-likelihood of ``softmax(logits / T)``."""
-    rows = np.arange(len(labels))
+def prior_shift(labels: IntArray, n_classes: int) -> tuple[float, ...]:
+    """``b_c = log(π_c / π̃_c)`` per class (#148). With the inverse-frequency weights every
+    present class has the weighted prior ``π̃_c = 1 / K_present``, and ``π_c = n_c / n``, so
+    ``b_c = log(K_present · n_c / n)``. A class with no training rows gets no shift."""
+    counts = np.bincount(labels, minlength=n_classes).astype(np.float64)
+    present = int((counts > 0).sum())
+    return tuple(math.log(present * c / len(labels)) if c > 0 else 0.0 for c in counts.tolist())
 
-    def nll(log_t: float) -> float:
-        scaled = logits / math.exp(log_t)
-        shifted = scaled - scaled.max(axis=1, keepdims=True)
-        log_norm = np.log(np.exp(shifted).sum(axis=1))
-        return float(np.mean(log_norm - shifted[rows, labels]))
 
+def with_payer_mule(
+    p_payment: Mapping[str, float], p_mule_payer: float | None, mule_key: str = "MULE"
+) -> dict[str, float]:
+    """``p_model`` for the Guardian prior (docs/06 §11, #148): the payment model's classes
+    scaled by ``1 − p_mule``, plus ``mule_key`` = the payer account's mule score. Without a mule
+    score (no ACTIVE mule scorer) MULE is left out, so the engine treats it as KB-only and gives
+    it its open-mass share."""
+    if mule_key in p_payment:
+        raise PriorInputError(f"{mule_key} is not a payment-model class")
+    if p_mule_payer is None:
+        return dict(p_payment)
+    if not 0.0 <= p_mule_payer <= 1.0:
+        raise PriorInputError("p_mule must be in [0, 1]")
+    scaled = {h: (1.0 - p_mule_payer) * p for h, p in p_payment.items()}
+    return scaled | {mule_key: p_mule_payer}
+
+
+def _nll(logits: FloatMatrix, labels: IntArray) -> float:
+    shifted = logits - logits.max(axis=1, keepdims=True)
+    log_norm = np.log(np.exp(shifted).sum(axis=1))
+    return float(np.mean(log_norm - shifted[np.arange(len(labels)), labels]))
+
+
+def fit_calibration(
+    raw: FloatMatrix,
+    labels: IntArray,
+    initial_shift: Sequence[float],
+    bounds: tuple[float, float],
+) -> tuple[float, tuple[float, ...]]:
+    """Fit T and the per-class shift b together, minimising the negative log-likelihood of
+    ``softmax((raw + b) / T)`` on the validation split (#148).
+
+    The theoretical shift (``prior_shift``) is the starting point. It overshoots in practice:
+    early stopping halts the booster before it fully learns the balanced-class posteriors, so b
+    is refined on validation. Only the classes with rows in this split are fitted; the others
+    keep their initial shift, since their likelihood would push b to −∞. b is fixed for the
+    first fitted class (only differences between classes matter). Deterministic (L-BFGS-B).
+    """
+    k = raw.shape[1]
+    start = np.asarray(initial_shift, dtype=np.float64)
+    present = np.flatnonzero(np.bincount(labels, minlength=k) > 0)
+    free = present[1:]  # the first present class anchors b
     low, high = (math.log(b) for b in bounds)
-    found = minimize_scalar(nll, bounds=(low, high), method="bounded")
-    return math.exp(float(found.x))
+
+    def unpack(params: FloatMatrix) -> tuple[float, FloatMatrix]:
+        b = start.copy()
+        b[free] = start[present[0]] + params[1:]
+        return math.exp(float(params[0])), b
+
+    def objective(params: FloatMatrix) -> float:
+        t, b = unpack(params)
+        return _nll((raw + b) / t, labels)
+
+    x0 = np.concatenate([[0.0], start[free] - start[present[0]]])
+    found = minimize(
+        objective,
+        x0,
+        method="L-BFGS-B",
+        bounds=[(low, high)] + [(None, None)] * len(free),
+    )
+    t, b = unpack(np.asarray(found.x, dtype=np.float64))
+    return t, tuple(float(v) for v in b)
 
 
 def train_prior(
@@ -447,18 +521,23 @@ def train_prior(
         booster = lgb.Booster(
             model_str=booster.model_to_string(num_iteration=booster.best_iteration)
         )
-    model = PriorModel(
-        booster, tuple(config.classes), tuple(feature_list), 1.0, config.top_contributions
-    )
-    temperature = (
-        fit_temperature(
-            model.logits(validation.features), validation.labels, config.temperature_bounds
+    shift = prior_shift(train.labels, n_classes)
+    temperature = 1.0
+    if len(validation):
+        raw = np.asarray(booster.predict(validation.features, raw_score=True), dtype=np.float64)
+        temperature, shift = fit_calibration(
+            raw.reshape(len(validation), n_classes),
+            validation.labels,
+            shift,
+            config.temperature_bounds,
         )
-        if len(validation)
-        else 1.0
-    )
     model = PriorModel(
-        booster, tuple(config.classes), tuple(feature_list), temperature, config.top_contributions
+        booster,
+        tuple(config.classes),
+        tuple(feature_list),
+        temperature,
+        config.top_contributions,
+        prior_shift=shift,
     )
     test_metrics = (
         split_metrics(
@@ -481,6 +560,7 @@ def train_prior(
         },
         "boosting_rounds": booster.num_trees() // n_classes,
         "temperature": temperature,
+        "prior_shift": dict(zip(config.classes, shift, strict=True)),
         "test": test_metrics,
         "gate": {
             "enforced": result.enforced,
@@ -495,5 +575,6 @@ def train_prior(
         temperature,
         config.top_contributions,
         report,
+        shift,
     )
     return model, result
