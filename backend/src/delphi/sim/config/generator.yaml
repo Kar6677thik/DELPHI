@@ -82,7 +82,7 @@ genuine_routine:
   # Gap: a monthly salary credit (NEFT, on the 1st, 10:00–12:00 IST) from a payroll account
   # at one of the external banks keeps balances from draining. Payroll accounts start with a
   # balance large enough for every salary.
-  salary_inr: {median: 30000, sigma: 0.4}
+  salary_inr: {median: 40000, sigma: 0.4}   # #166: was 30,000; covers new-payee spending
   salary_hour: {min: 10, max: 12}
   payroll_opening_balance_inr: 10000000000
   payroll_account_age_days: 3650           # payroll accounts are ten years old
@@ -92,25 +92,25 @@ genuine_routine:
   # account (population.counterparty_home_bank_share); saved minutes before the first
   # payment (as a victim's mule payee is); 0–3 more payments over the next 60 days.
   new_person_payee:
-    mean_days: 20   # #166: was 365, so a new person payee is no tell
+    mean_days: 45   # #166: was 365, so a new person payee is no tell
     lead_minutes: {min: 2, max: 30}
     early_share: 0.3          # #166: saved hours to days (0.2–10) before the first payment
     early_lead_days: {min: 0.2, max: 10}
-    follow_up_payments: {min: 0, max: 4}
+    follow_up_payments: {min: 0, max: 2}
     follow_up_days: 60
-    amount_inr: {median: 10000, sigma: 1.4}   # #166: rent, a contractor, a loan to a friend
+    amount_inr: {median: 10000, sigma: 1.2}   # #166: rent, a contractor, a loan to a friend
     channel: {UPI_PUSH: 0.40, IMPS: 0.40, NEFT: 0.20}
   # #166: genuine customers also scan-and-pay shops they never paid before (saved minutes
   # before, like a fraud payee), sometimes going back, so a new or young payee is no tell.
   new_merchant_payee:
-    mean_days: 4
+    mean_days: 5
     lead_minutes: {min: 1, max: 10}       # scan and pay: saved as the customer pays
     early_share: 0.1                      # a biller registered before the bill falls due
     early_lead_days: {min: 0.2, max: 10}
-    follow_up_payments: {min: 0, max: 2}
-    follow_up_days: 30
+    follow_up_payments: {min: 1, max: 5}  # customers go back to a shop they liked
+    follow_up_days: 45
     categories: [GROCERY, RETAIL, FUEL, TELECOM, UTILITY, EDUCATION]
-    amount_inr: {median: 2500, sigma: 1.5}   # from a snack to a school fee or an appliance
+    amount_inr: {median: 500, sigma: 1.2}   # a first visit: a tea stall, a pharmacy, fuel
     channel: {UPI_PUSH: 0.75, IMPS: 0.20, NEFT: 0.05}
   # #166: customers travel (work, family, holidays) and log in from the city they are in,
   # so a login from a new city is no ATO tell. Gaps: a trip every 90 days on average
