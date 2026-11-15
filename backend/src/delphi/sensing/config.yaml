@@ -7,7 +7,9 @@ anomaly:                       # docs/13 §5
   n_quantiles: 10001           # training-score quantiles stored in the artifact
 
 prior:                         # docs/13 §4, the LightGBM multiclass prior model
-  classes: [GENUINE, ATO, APP_DIGITAL_ARREST, APP_INVESTMENT, MULE]   # the model hypotheses
+  # The payment model's classes. MULE is not one: mule payments mature as GENUINE (docs/14 §7);
+  # the Guardian adds it from the payer's mule score (docs/06 §11, #148).
+  classes: [GENUINE, ATO, APP_DIGITAL_ARREST, APP_INVESTMENT]
   num_leaves: 31
   learning_rate: 0.05
   n_estimators: 400            # the most boosting rounds; early stopping picks fewer
