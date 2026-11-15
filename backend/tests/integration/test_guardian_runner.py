@@ -7,13 +7,20 @@ import asyncio
 from collections.abc import Callable, Iterator, Mapping
 from datetime import timedelta
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy import select, text
 
+from delphi.guardian.channels import SimCustomerChannel
 from delphi.guardian.runner import AnswerBoard, SessionRunner
 from delphi.guardian.service import GuardianService, IssuedProbe
 from delphi.guardian.store import Runner, SessionMode, SessionStatus, TerminalReason
+from delphi.guardian.tables import probe_runs
+from delphi.kb.loader import load_and_validate
+from delphi.probes.registry import CLASSIFIER_NAMES
+from delphi.sim.customer import AnswerStep, SimulatedCustomer
+from delphi.sim.response_models import load_response_models
 
 from .test_guardian_active import (
     KAMALA_ANSWERS,
@@ -22,7 +29,7 @@ from .test_guardian_active import (
     signals,
     story_prior,
 )
-from .test_guardian_service import Env, make_env
+from .test_guardian_service import KB_DIR, Env, make_env
 
 Script = Mapping[str, tuple[dict[str, Any], float, int]]
 
@@ -178,6 +185,115 @@ def test_the_answer_board_times_out_and_ignores_strays() -> None:
         return late, on_time
 
     assert asyncio.run(scenario()) == (False, True)
+
+
+# ---------------------------------------------------------------- simulated customers (part 2)
+
+
+def _truth(env: Env, payment: UUID, scenario: str, *, coached: bool = False) -> None:
+    """The ground truth the simulated customer reads (worker only, docs/04 §5.1)."""
+    instance = uuid4()
+    now = env.clock.now()
+    with env.owner.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO sim_truth.scenario_instances"
+                " (id, scenario_type, hypothesis_key, params, started_at, created_at)"
+                " VALUES (:i, :s, :s, '{}', :t, :t)"
+            ),
+            {"i": instance, "s": scenario, "t": now},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO sim_truth.payment_truth"
+                " (payment_id, scenario_instance_id, is_fraud, hypothesis_key, coached, created_at)"
+                " VALUES (:p, :i, :f, :s, :c, :t)"
+            ),
+            {
+                "p": payment,
+                "i": instance,
+                "f": scenario != "GENUINE_ROUTINE",
+                "s": scenario,
+                "c": coached,
+                "t": now,
+            },
+        )
+
+
+def _sim_customer(env: Env) -> SimulatedCustomer:
+    kb = load_and_validate(KB_DIR, CLASSIFIER_NAMES)
+    return SimulatedCustomer(
+        sim_engine=env.owner,
+        models=load_response_models(),
+        thresholds=kb.config.classifiers,
+        seed=7,
+        history_start=env.clock.now() - timedelta(days=150),
+    )
+
+
+def test_a_simulated_customer_answers_through_the_channel_contract(env: Env) -> None:
+    payment = env.payment(480_000)
+    _truth(env, payment, "APP_DIGITAL_ARREST")
+    customer = _sim_customer(env)
+
+    async def advance(seconds: float) -> None:  # the customer takes its time on the fixed clock
+        env.clock.advance(timedelta(seconds=seconds))
+
+    async def scenario() -> Any:
+        service = env.service(story_prior(KAMALA_PRIOR), KAMALA_PASSIVE, explore=False)
+        board = AnswerBoard()
+        channel = SimCustomerChannel(service, board, customer, env.clock, wait=advance)
+        runner = SessionRunner(
+            service, channel, board, env.sessions, env.clock, runner=Runner.WORKER
+        )
+        created = await runner.submit(payment, mode=SessionMode.AUTOPLAY)
+        task = runner.task(created.id)
+        assert task is not None
+        return await asyncio.wait_for(task, 60)
+
+    decided = asyncio.run(scenario())
+    assert decided.status is SessionStatus.DECIDED and decided.runner is Runner.WORKER
+    with env.owner.connect() as conn:
+        active = conn.execute(
+            select(probe_runs.c.probe_key, probe_runs.c.status, probe_runs.c.outcome).where(
+                probe_runs.c.session_id == decided.id, probe_runs.c.mode == "ACTIVE"
+            )
+        ).all()
+    assert active, "the planner asked at least one active probe"
+    # every probe was answered through respond (none timed out, none left open)
+    assert all(r.status == "COMPLETED" and r.outcome is not None for r in active)
+
+
+def test_the_simulated_customer_answers_the_same_way_every_time(env: Env) -> None:
+    payment = env.payment(480_000)
+    _truth(env, payment, "APP_INVESTMENT", coached=True)
+    customer = _sim_customer(env)
+    options = ["FAMILY_OR_FRIEND", "INVESTMENT", "RECEIVING_REFUND_OR_PRIZE"]
+
+    def ask() -> list[Any]:
+        return customer.answer(
+            payment_id=payment,
+            probe_key="PURPOSE_QUESTION",
+            options=options,
+            otp_code=None,
+            timeout_s=60,
+            at=env.clock.now(),
+        )
+
+    assert ask() == ask()  # keyed by payment and probe: replays answer identically
+    customer.script(
+        payment, {"PURPOSE_QUESTION": [AnswerStep({"option_key": "FAMILY_OR_FRIEND"}, 6.0)]}
+    )
+    assert ask() == [AnswerStep({"option_key": "FAMILY_OR_FRIEND"}, 6.0)]  # a persona script wins
+    with pytest.raises(LookupError, match="no simulated truth"):
+        customer.answer(
+            payment_id=uuid4(),
+            probe_key="PURPOSE_QUESTION",
+            options=options,
+            otp_code=None,
+            timeout_s=60,
+            at=env.clock.now(),
+        )
 
 
 def test_the_board_keeps_an_early_answer_only_for_an_expected_run() -> None:
