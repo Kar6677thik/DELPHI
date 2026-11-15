@@ -354,6 +354,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/cases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Cases
+         * @description The case queue: soonest SLA first (``sort=sla_due_at``), or newest first.
+         */
+        get: operations["read_cases_api_v1_cases_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/cases/{case_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Case */
+        get: operations["read_case_api_v1_cases__case_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -372,6 +409,95 @@ export interface components {
             checked: number;
             /** First Bad Id */
             first_bad_id?: number | null;
+        };
+        /** CasePage */
+        CasePage: {
+            /** Items */
+            items: components["schemas"]["CaseView"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
+        /**
+         * CaseProtocol
+         * @enum {string}
+         */
+        CaseProtocol: "STANDARD" | "COERCION";
+        /**
+         * CaseSort
+         * @description The case queue's orders (docs/16): soonest SLA first, or newest first.
+         * @enum {string}
+         */
+        CaseSort: "sla_due_at" | "opened_at";
+        /**
+         * CaseStatus
+         * @enum {string}
+         */
+        CaseStatus: "OPEN" | "IN_PROGRESS" | "DISPOSED";
+        /**
+         * CaseType
+         * @enum {string}
+         */
+        CaseType: "PAYMENT_HOLD" | "ACCOUNT_REVIEW";
+        /** CaseView */
+        CaseView: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            type: components["schemas"]["CaseType"];
+            protocol: components["schemas"]["CaseProtocol"];
+            status: components["schemas"]["CaseStatus"];
+            /** Subject Payment Id */
+            subject_payment_id: string | null;
+            /** Subject Account Id */
+            subject_account_id: string | null;
+            /** Guardian Session Id */
+            guardian_session_id: string | null;
+            /** Kb Version Id */
+            kb_version_id: number;
+            /** Leading Hypothesis */
+            leading_hypothesis: string;
+            /** Leading Hypothesis Name */
+            leading_hypothesis_name: string;
+            /** Posterior */
+            posterior: {
+                [key: string]: number;
+            };
+            /** Prior Components */
+            prior_components: {
+                [key: string]: unknown;
+            };
+            /** Recommended Decision */
+            recommended_decision: string | null;
+            /** Risk By Decision */
+            risk_by_decision: {
+                [key: string]: unknown;
+            } | null;
+            /** Amount At Stake Paise */
+            amount_at_stake_paise: number;
+            /**
+             * Opened At
+             * Format: date-time
+             */
+            opened_at: string;
+            /**
+             * Sla Due At
+             * Format: date-time
+             */
+            sla_due_at: string;
+            /** Sla Breached */
+            sla_breached: boolean;
+            /** Unexplained */
+            unexplained: boolean;
+            /** Dd Pack Complete */
+            dd_pack_complete: boolean;
+            /** Disposition */
+            disposition: string | null;
+            /** Disposed At */
+            disposed_at: string | null;
+            /** Version */
+            version: number;
         };
         /**
          * CheckStatus
@@ -1331,6 +1457,73 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["JobView"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    read_cases_api_v1_cases_get: {
+        parameters: {
+            query?: {
+                status?: components["schemas"]["CaseStatus"] | null;
+                type?: components["schemas"]["CaseType"] | null;
+                protocol?: components["schemas"]["CaseProtocol"] | null;
+                sort?: components["schemas"]["CaseSort"];
+                limit?: number;
+                cursor?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CasePage"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    read_case_api_v1_cases__case_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseView"];
                 };
             };
             /** @description An RFC 9457 problem (docs/16 §1) */

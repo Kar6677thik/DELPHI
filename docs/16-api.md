@@ -90,6 +90,13 @@ Permission names refer to doc 19 §3.
 | POST `/cases/{id}/police-alert/{action}` | `case:write` | action `send\|discard` |
 | GET `/campaigns`, GET `/campaigns/{id}` | `view` | |
 
+**M4 stub (#97):** `GET /cases` and `GET /cases/{id}` are served; the other case routes come with
+#103. The list filters `status`, `type` and `protocol` and sorts by `sla_due_at` (soonest first)
+or `opened_at` (newest first); `campaign_id`, `sla_breached` filters and the `expected_loss` sort
+come with campaigns and the console. A cursor is tied to its sort order. `CaseView` holds the
+opening fields (posterior, prior components, leading hypothesis, amount, SLA and `sla_breached`,
+`version` with `ETag`); `recommended_decision` and `risk_by_decision` are null until #103.
+
 ### Chase
 
 | Method & path | Perm | Notes |

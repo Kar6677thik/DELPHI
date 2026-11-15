@@ -16,6 +16,17 @@ Research §9.5. Module `delphi.navigator`. Decision profiles `CASE_PAYMENT_HOLD`
 Guardian probe outcomes carry into a `PAYMENT_HOLD` case as already-observed sources. They are
 shown in the case timeline and are not re-planned.
 
+**Implementation (M4 stub, #97).** `delphi.navigator.api.open_case` opens the PAYMENT_HOLD cases
+of the first two rows: HOLD_FOR_REVIEW → STANDARD with `hold_review_sla_minutes`, PROTECTIVE_HOLD
+→ COERCION with `protective_sla_minutes`, both from the KB version the session was pinned to
+(scaled by that version's `demo_time_scale` in demo time, doc 07). The initial posterior is the
+session's final posterior, and the leading hypothesis is its argmax (ties in KB order). Opening
+writes the `case.opened` audit entry and publishes `case.opened` (doc 16 §3) in the caller's
+transaction. Guardian passes plain values, so the Navigator never imports Guardian; Guardian links
+the session to the case (#94). A retried call for the same session returns the case it opened;
+an open case from another session is refused (`409 INVALID_STATE_TRANSITION`). The account-review
+triggers and the console come with M5 (#103, #109).
+
 ## 2. Case console behaviour (per refresh / after each evidence fetch)
 
 1. **Hypothesis bar** (current posterior) and the recommended decision with `risk_by_decision`.
