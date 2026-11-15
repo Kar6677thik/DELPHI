@@ -1,3 +1,4 @@
+import type { ComponentType, ReactNode } from 'react';
 import type { RouteObject } from 'react-router';
 
 import { RequireSession } from '../components/RequireSession';
@@ -7,6 +8,11 @@ import { ForbiddenPage } from './ForbiddenPage';
 import { NotFoundPage } from './NotFoundPage';
 import { PlaceholderPage } from './PlaceholderPage';
 import { SCREENS } from './screens';
+
+/** Screens that are built, loaded on first visit; the others still show their placeholder. */
+const PAGES: Partial<Record<string, () => Promise<ComponentType>>> = {
+  '/cases': () => import('./CasesPage').then((m) => m.CasesPage),
+};
 
 export const routes: RouteObject[] = [
   {
@@ -24,14 +30,17 @@ export const routes: RouteObject[] = [
         index: true,
         lazy: () => import('./OverviewPage').then((m) => ({ Component: m.OverviewPage })),
       },
-      ...SCREENS.map((screen) => ({
-        path: screen.path,
-        element: (
+      ...SCREENS.map((screen): RouteObject => {
+        const gate = (page: ReactNode) => (
           <RoleGate permission={screen.permission} fallback={<ForbiddenPage />}>
-            <PlaceholderPage title={screen.title} />
+            {page}
           </RoleGate>
-        ),
-      })),
+        );
+        const load = PAGES[screen.path];
+        return load
+          ? { path: screen.path, lazy: () => load().then((Page) => ({ element: gate(<Page />) })) }
+          : { path: screen.path, element: gate(<PlaceholderPage title={screen.title} />) };
+      }),
       { path: '*', element: <NotFoundPage /> },
     ],
   },

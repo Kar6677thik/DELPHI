@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { EVENT_TYPES, SSE_RETRY_BASE_MS, SSE_RETRY_MAX_MS } from './config';
 
@@ -20,9 +20,16 @@ export function resumeUrl(url: string, lastId: string | null): string {
  * api restarts). Then this hook reconnects with backoff, and since a new EventSource cannot set
  * that header, it passes the last event id it saw as `?last_event_id=`, so the server replays
  * what was missed (docs/16 §3).
+ *
+ * ``onEvent`` is told each event's type, so the caller can invalidate cached queries
+ * (docs/18 §1); it may change between renders without reconnecting.
  */
-export function useEventStream(url: string): StreamStatus {
+export function useEventStream(url: string, onEvent?: (type: string) => void): StreamStatus {
   const [status, setStatus] = useState<StreamStatus>('connecting');
+  const handler = useRef(onEvent);
+  useEffect(() => {
+    handler.current = onEvent;
+  }, [onEvent]);
 
   useEffect(() => {
     let source: EventSource | null = null;
@@ -31,6 +38,7 @@ export function useEventStream(url: string): StreamStatus {
     let lastId: string | null = null;
     const remember = (event: MessageEvent) => {
       if (event.lastEventId) lastId = event.lastEventId;
+      handler.current?.(event.type);
     };
 
     const connect = () => {

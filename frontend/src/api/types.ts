@@ -12,3 +12,7 @@ export type Me = Schemas['MeView'];
 export type LoginRequest = Schemas['LoginRequest'];
 export type Role = Schemas['Role'];
 export type Permission = Schemas['Permission'];
+/** `GET /cases/{id}` and the rows of `GET /cases` (the M4 case stub, #97). */
+export type CaseView = Schemas['CaseView'];
+/** `GET /cases`: one keyset page of the case queue. */
+export type CasePage = Schemas['CasePage'];
