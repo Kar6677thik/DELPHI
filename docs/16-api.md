@@ -84,7 +84,7 @@ Permission names refer to doc 19 §3.
 | GET `/cases/{id}` | `view` | `CaseView` (posterior, recommendation, risk_by_decision, next_best_evidence[], wcmm, evidence_records[], timeline[], dd_pack_complete, version) |
 | POST `/cases/{id}/evidence-requests` | `case:write` | `{source_key, refresh?: bool}` → `CaseView` |
 | POST `/cases/{id}/outreach-result` | `case:write` | `{outcome, note}`: records CUSTOMER_OUTREACH_CALL |
-| POST `/cases/{id}/disposition` | `case:write` | `If-Match`; `{decision, typology?, confidence (1–5), note?, override_rationale?}` |
+| POST `/cases/{id}/disposition` | `case:write` | `If-Match`, `Idempotency-Key`; `{decision, typology?, confidence (1–5), note?, override_rationale?}` → `CaseDetail`. 412 stale version, 409 already disposed, 422 a decision outside the profile, CONFIRM_FRAUD without a fraud typology, or an override without a 20+ character rationale (#103) |
 | POST `/cases/{id}/trace-events` | `view` | `{events: [{type, payload, at}]}` (batched) |
 | GET `/cases/{id}/dd-pack` | `view` | `?format=json\|html` |
 | POST `/cases/{id}/police-alert/{action}` | `case:write` | action `send\|discard` |

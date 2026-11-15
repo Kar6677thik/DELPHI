@@ -9,11 +9,12 @@ import json
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import timedelta
+from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import Table, func, inspect, select, update
+from sqlalchemy import Table, func, inspect, select, text, update
 from sqlalchemy.exc import IntegrityError
 
 from delphi.api.app import create_app
@@ -34,6 +35,8 @@ from delphi.navigator.api import (
     open_case,
 )
 from delphi.navigator.tables import cases, metadata
+from delphi.platform.accounts import Role, create_user
+from delphi.platform.audit import ActorType
 from delphi.platform.clock import FixedClock
 from delphi.platform.db import make_session_factory, migration_head
 from delphi.platform.errors import DelphiError
@@ -331,3 +334,166 @@ def test_the_api_reads_one_case_with_its_etag(env: Env, client: TestClient) -> N
     assert client.get(f"/api/v1/cases/{case.id}").json()["sla_breached"] is True
     missing = client.get(f"/api/v1/cases/{uuid4()}")
     assert missing.status_code == 404 and missing.json()["code"] == "NOT_FOUND"
+
+
+# ---------------------------------------------------------------- console, dispositions (#103)
+
+
+BROWSER = {"X-Delphi-Csrf": "1", "Origin": "http://testserver"}  # docs/19 §4: CSRF
+
+
+def _investigator(env: Env) -> Principal:
+    with env.sessions.begin() as s:
+        user = create_user(
+            s,
+            env.clock,
+            username=f"inv-{uuid4().hex[:8]}",
+            display_name="Investigator",
+            password="correct horse battery staple",
+            role=Role.INVESTIGATOR,
+            actor_type=ActorType.SYSTEM,
+            actor_id=None,
+        )
+    return Principal(user.id, user.permissions)
+
+
+def _held_case(env: Env, decision: str = "PROTECTIVE_HOLD") -> CaseRecord:
+    held = _held(env)
+    with env.owner.begin() as conn:
+        conn.execute(
+            text("UPDATE bank.payments SET status = 'HELD' WHERE id = :p"), {"p": held.payment_id}
+        )
+    return _open(env, held, decision)
+
+
+@pytest.fixture
+def writer(env: Env) -> Iterator[tuple[TestClient, Principal]]:
+    platform = Platform(
+        settings=Settings(database_url="postgresql://unused/db", migrations_dir=MIGRATIONS_DIR),
+        engine=env.owner,
+        sessions=env.sessions,
+        clock=env.clock,
+        started_at=T0,
+        migration_head=migration_head(MIGRATIONS_DIR),
+    )
+    app = create_app(platform)
+    principal = _investigator(env)
+    app.dependency_overrides[current_principal] = lambda: principal
+    yield TestClient(app), principal
+
+
+def _dispose(
+    client: TestClient, case: CaseRecord, body: dict[str, object], version: object = None
+) -> Any:
+    headers = {"Idempotency-Key": str(uuid4()), **BROWSER}
+    if version is not False:
+        headers["If-Match"] = f'"{case.version if version is None else version}"'
+    return client.post(f"/api/v1/cases/{case.id}/disposition", json=body, headers=headers)
+
+
+def test_the_api_serves_the_case_console(env: Env, client: TestClient) -> None:
+    case = _held_case(env)
+    body = client.get(f"/api/v1/cases/{case.id}").json()
+    assert body["recommended_decision"] in {"RELEASE", "CONFIRM_FRAUD"}
+    assert set(body["risk_by_decision"]) == {"RELEASE", "CONFIRM_FRAUD"}
+    rows = body["next_best_evidence"]
+    assert rows[0]["source_key"] == "CUSTOMER_OUTREACH_CALL" and rows[0]["pinned_by_protocol"]
+    assert {"net_value_paise", "expected_minutes", "settle_pct"} <= set(rows[0])
+    assert isinstance(body["evidence_sufficient"], bool)
+    assert "what_would_change_my_mind" in body
+
+
+def test_a_disposition_needs_a_fresh_if_match_and_an_idempotency_key(
+    env: Env, writer: tuple[TestClient, Principal]
+) -> None:
+    client, _ = writer
+    case = _held_case(env)
+    recommended = client.get(f"/api/v1/cases/{case.id}").json()["recommended_decision"]
+    good = {"decision": recommended, "confidence": 4, **_typology(recommended)}
+    stale = _dispose(client, case, good, version=case.version + 7)
+    assert stale.status_code == 412 and stale.json()["code"] == "VERSION_CONFLICT"
+    assert _dispose(client, case, good, version=False).status_code == 422  # no If-Match
+    no_key = client.post(
+        f"/api/v1/cases/{case.id}/disposition",
+        json=good,
+        headers={"If-Match": f'"{case.version}"', **BROWSER},
+    )
+
+    assert no_key.status_code == 422
+
+
+def _typology(decision: str) -> dict[str, object]:
+    return {"typology": "APP_DIGITAL_ARREST"} if decision == "CONFIRM_FRAUD" else {}
+
+
+def test_an_override_needs_a_rationale(env: Env, writer: tuple[TestClient, Principal]) -> None:
+    client, principal = writer
+    case = _held_case(env)
+    recommended = client.get(f"/api/v1/cases/{case.id}").json()["recommended_decision"]
+    other = "RELEASE" if recommended == "CONFIRM_FRAUD" else "CONFIRM_FRAUD"
+    body = {"decision": other, "confidence": 3, **_typology(other)}
+    short = _dispose(client, case, {**body, "override_rationale": "too short"})
+    assert short.status_code == 422 and "rationale" in short.json()["detail"]
+    rationale = "The customer called from the registered number and explained the payment."
+    done = _dispose(client, case, {**body, "override_rationale": rationale})
+    assert done.status_code == 200, done.json()
+    with env.sessions() as s:
+        disposed = get_case(s, case.id)
+    assert disposed is not None and disposed.status is CaseStatus.DISPOSED
+    assert disposed.is_override and disposed.disposition == other
+    assert disposed.disposed_by == principal.user_id and disposed.version == case.version + 1
+    again = _dispose(client, disposed, {**body, "override_rationale": rationale})
+    assert again.status_code == 409  # a disposed case is immutable
+
+
+def test_confirm_fraud_cancels_the_payment_and_records_the_label(
+    env: Env, writer: tuple[TestClient, Principal]
+) -> None:
+    client, _ = writer
+    case = _held_case(env)
+    recommended = client.get(f"/api/v1/cases/{case.id}").json()["recommended_decision"]
+    rationale = (
+        {}
+        if recommended == "CONFIRM_FRAUD"
+        else {"override_rationale": "Outreach confirmed the caller impersonated the police."}
+    )
+    missing = _dispose(client, case, {"decision": "CONFIRM_FRAUD", "confidence": 5, **rationale})
+    assert missing.status_code == 422  # CONFIRM_FRAUD names its typology
+    wrong = _dispose(
+        client, case, {"decision": "CONFIRM_FRAUD", "typology": "GENUINE", "confidence": 5}
+    )
+    assert wrong.status_code == 422
+    done = _dispose(
+        client,
+        case,
+        {
+            "decision": "CONFIRM_FRAUD",
+            "typology": "APP_DIGITAL_ARREST",
+            "confidence": 5,
+            **rationale,
+        },
+    )
+    assert done.status_code == 200, done.json()
+    with env.owner.connect() as conn:
+        status = conn.execute(
+            text("SELECT status FROM bank.payments WHERE id = :p"), {"p": case.subject_payment_id}
+        ).scalar_one()
+        label = conn.execute(
+            text("SELECT hypothesis_key, label_source FROM delphi.labels WHERE subject_id = :p"),
+            {"p": case.subject_payment_id},
+        ).one()
+        audited = conn.execute(
+            text("SELECT count(*) FROM delphi.audit_log WHERE action = 'case.disposed'")
+        ).scalar_one()
+        events = conn.execute(
+            text("SELECT count(*) FROM delphi.outbox_events WHERE type = 'case.updated'")
+        ).scalar_one()
+    assert status == "CANCELLED"  # docs/05 §3
+    assert tuple(label) == ("APP_DIGITAL_ARREST", "INVESTIGATOR_DISPOSITION")  # docs/14 §7
+    assert audited == 1 and events == 1
+
+
+def test_a_viewer_cannot_dispose(env: Env, client: TestClient) -> None:
+    case = _held_case(env)
+    response = _dispose(client, case, {"decision": "RELEASE", "confidence": 3})
+    assert response.status_code == 403
