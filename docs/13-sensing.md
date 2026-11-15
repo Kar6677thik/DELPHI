@@ -7,9 +7,9 @@ produces calibrated priors and scores that the engine consumes.
 
 | Output | Consumer | Shape |
 |---|---|---|
-| `p_model(h)` over model hypotheses {GENUINE, ATO, APP_DIGITAL_ARREST, APP_INVESTMENT, MULE} | Guardian prior | dict, sums to 1 |
+| `p_model(h)` over the payment hypotheses {GENUINE, ATO, APP_DIGITAL_ARREST, APP_INVESTMENT} | Guardian prior (with the payer's `p_mule` for MULE, doc 06 §11) | dict, sums to 1 |
 | `q` anomaly percentile ∈ [0, 1] | Guardian prior (open mass) | float |
-| `p_mule(account)` | BENEFICIARY_INTEL, ACCOUNT_REVIEW prior, Chase | float |
+| `p_mule(account)` | BENEFICIARY_INTEL (payee), Guardian prior (payer, doc 06 §11), ACCOUNT_REVIEW prior, Chase | float |
 | top feature contributions (LightGBM `pred_contrib`) | DD pack, Guardian monitor | top 5 (feature, value, contribution) |
 
 ## 2. Single feature code path (no training–serving skew)
@@ -108,7 +108,13 @@ does not intersect `PROBE_INPUT_FEATURES`.
 
 ## 4. Prior model
 
-- LightGBM multiclass (`objective=multiclass`, 5 classes). Hyperparameters are fixed in
+- **MULE is not a payment-model class (#148).** Mule accounts are labelled through the
+  registry, and their own outbound payments mature as GENUINE (doc 14 §7), so a payment model
+  never sees a MULE row. With MULE as a class, `p_model(MULE)` would be about 0 for every
+  payment, and because a model hypothesis gets no open mass (doc 06 §11), MULE would vanish
+  from the Guardian prior. MULE enters from the payer account's mule score instead (doc 06
+  §11, `with_payer_mule`).
+- LightGBM multiclass (`objective=multiclass`, 4 classes). Hyperparameters are fixed in
   `sensing/config.yaml` (num_leaves 31, learning_rate 0.05, n_estimators 400 with early
   stopping on validation, class weights balanced by inverse frequency, seed 7).
 - **Training labels: only labels the bank has observed as of the training cutoff** (doc 14
@@ -121,11 +127,19 @@ does not intersect `PROBE_INPUT_FEATURES`.
   validation, last 1/6 test (whole days, rounded down; the remainder goes to train).
   - `demo`/`eval` (history 150 days, maturity 60): train days 1–60, validation 61–75, test 76–90.
   - `test` (history 21 days, maturity 7): train days 1–10, validation 11–12, test 13–14.
-- Calibration: temperature scaling (a single T > 0 fitted on validation NLL), applied to the
-  logits.
+- Calibration (#148): the class weights make the booster learn posteriors under balanced
+  class priors, which over-predicts every fraud class (about 1.5–1.8× on `eval` with
+  temperature scaling alone). The calibrated logits are `(z + b) / T`, where `b` is a per-class
+  **prior shift** and T > 0 a single temperature, **fitted together** on the validation split's
+  NLL. `b` starts from the theoretical shift `b_c = log(π_c / π̃_c) = log(K_present · n_c / n)`.
+  That shift alone overshoots (fraud under-predicted at about 0.6×), because early stopping
+  halts the booster before it fully learns the balanced-class posteriors. The joint fit gives
+  fraud classes within about 0.86–0.98× of their observed share on `eval`, with a lower log loss.
 - Reported metrics (stored with the artifact), on the test split against observed labels:
-  per-class one-vs-rest AUC, macro AUC, multiclass log loss, and expected calibration error
-  (15 equal-width bins on max-probability).
+  per-class one-vs-rest AUC, macro AUC, multiclass log loss, expected calibration error
+  (15 equal-width bins on max-probability), and **per-class reliability** (mean predicted vs
+  observed share, and a one-vs-rest ECE per class). The max-probability ECE is dominated by
+  GENUINE and hides the fraud classes, so the per-class numbers are the ones to read.
 - **Gate (enforced only on `eval` and `demo`; `test` is reported only):** ECE ≤ 0.05 and macro
   AUC ≥ 0.85.
   - If a retrain fails the gate, the artifact is stored as `FAILED_GATE` and the previous
@@ -145,18 +159,20 @@ the artifact belong to `TRAIN_SENSING` (#88). Gaps the text above leaves open, f
 - **Split:** the matured window is whole days from the history start; validation and test each
   get ⌊days/6⌋ and train the rest (`split_parts`).
 - **Class weights:** `n / (K_present · n_c)` per training row, over the classes present in
-  train. A class with no training rows (on `test`, MULE: mule accounts are labelled through the
-  registry, and their own payments mature as GENUINE, doc 14 §7) gets no weight.
+  train. A class with no training rows (possible on `test`) gets no weight and no prior shift.
 - **Early stopping:** on the validation split's unweighted multiclass log loss, patience 50
   rounds (`early_stopping_rounds`), keeping the best iteration. Training is deterministic
   (LightGBM `deterministic`, one thread, `seed`).
-- **Temperature:** fitted by bounded search over log T in `temperature_bounds`
-  ([0.05, 20]). With no validation rows, T = 1 and there is no early stopping.
+- **Temperature and prior shift** (`fit_calibration`): L-BFGS-B on the validation NLL over
+  log T (bounded by `temperature_bounds`, [0.05, 20]) and `b` for the classes with validation
+  rows; the first such class anchors `b` (only differences matter), and a class without
+  validation rows keeps its theoretical shift. With no validation rows, T = 1, `b` is the
+  theoretical shift, and there is no early stopping. Both are stored in the artifact.
 - **Metrics:** a class with no positives (or no negatives) in the test split has AUC `null`,
   and macro AUC averages the classes that have one. An undefined macro AUC, or no test split,
   fails the gate where it is enforced.
 - **Contributions:** LightGBM `pred_contrib` for one class, divided by T (so they add up, with
-  the bias, to that class's calibrated logit). By default, for the most probable class; the top
+  the bias and `b / T`, to that class's calibrated logit). By default, for the most probable class; the top
   `top_contributions` by absolute value, ties in feature order.
 
 ## 5. Anomaly detector

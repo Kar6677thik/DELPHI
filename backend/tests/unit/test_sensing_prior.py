@@ -22,12 +22,14 @@ from delphi.sensing.prior import (
     encode_labels,
     expected_calibration_error,
     feature_matrix,
-    fit_temperature,
+    fit_calibration,
     gate,
     matured_split,
     observed_labels,
+    prior_shift,
     split_days,
     train_prior,
+    with_payer_mule,
 )
 
 CONFIG = load_sensing_config().prior
@@ -72,8 +74,43 @@ def test_observed_labels_follow_precedence_and_the_cutoff() -> None:
 
 
 def test_labels_that_are_not_classes_are_left_out() -> None:
-    codes, known = encode_labels(["GENUINE", "FRAUD_OTHER", "MULE"], CONFIG.classes)
-    assert codes.tolist() == [0, -1, 4] and known.tolist() == [True, False, True]
+    # MULE is not a payment class (#148): mule payments mature as GENUINE (docs/14 §7)
+    assert "MULE" not in CONFIG.classes
+    codes, known = encode_labels(["GENUINE", "FRAUD_OTHER", "MULE", "ATO"], CONFIG.classes)
+    assert codes.tolist() == [0, -1, -1, 1] and known.tolist() == [True, False, False, True]
+
+
+def test_prior_shift_undoes_the_balanced_class_weights() -> None:
+    # 3 GENUINE, 1 ATO, no MULE: K_present = 2, b_c = log(K · n_c / n); an absent class gets 0
+    b = prior_shift(np.array([0, 0, 0, 1], dtype=np.int64), 3)
+    assert b == pytest.approx((math.log(1.5), math.log(0.5), 0.0))
+
+
+def test_calibration_recovers_a_class_bias_and_keeps_absent_classes() -> None:
+    rng = np.random.default_rng(2)
+    true_logits = rng.normal(size=(6000, 3))
+    p = np.exp(true_logits) / np.exp(true_logits).sum(axis=1, keepdims=True)
+    labels = np.array([rng.choice(3, p=row) for row in p], dtype=np.int64)
+    skewed = true_logits + np.array([0.0, 2.0, -1.0])  # the model over-predicts class 1
+    t, b = fit_calibration(skewed, labels, (0.0, 0.0, 0.0), CONFIG.temperature_bounds)
+    assert t == pytest.approx(1.0, rel=0.1)
+    assert b == pytest.approx((0.0, -2.0, 1.0), abs=0.15)
+    # class 2 has no validation rows: it keeps its starting shift instead of running to -inf
+    two = labels < 2
+    _, b = fit_calibration(skewed[two], labels[two], (0.0, 0.0, -7.0), CONFIG.temperature_bounds)
+    assert b[2] == -7.0 and b[1] == pytest.approx(-2.0, abs=0.2)
+
+
+def test_with_payer_mule_adds_mule_and_rescales_the_payment_classes() -> None:
+    p = {"GENUINE": 0.9, "ATO": 0.1}
+    assert with_payer_mule(p, None) == p  # no mule scorer: MULE stays KB-only
+    out = with_payer_mule(p, 0.25)
+    assert out == pytest.approx({"GENUINE": 0.675, "ATO": 0.075, "MULE": 0.25})
+    assert math.isclose(sum(out.values()), 1.0)
+    with pytest.raises(PriorInputError, match="not a payment-model class"):
+        with_payer_mule({"GENUINE": 0.5, "MULE": 0.5}, 0.1)
+    with pytest.raises(PriorInputError, match=r"\[0, 1\]"):
+        with_payer_mule(p, 1.5)
 
 
 def test_class_weights_balance_the_present_classes() -> None:
@@ -94,9 +131,9 @@ def test_temperature_undoes_overconfident_logits() -> None:
     true_logits = rng.normal(size=(4000, 3))
     p = np.exp(true_logits) / np.exp(true_logits).sum(axis=1, keepdims=True)
     labels = np.array([rng.choice(3, p=row) for row in p], dtype=np.int64)
-    assert fit_temperature(3.0 * true_logits, labels, CONFIG.temperature_bounds) == pytest.approx(
-        3.0, rel=0.1
-    )
+    t, b = fit_calibration(3.0 * true_logits, labels, (0.0, 0.0, 0.0), CONFIG.temperature_bounds)
+    assert t == pytest.approx(3.0, rel=0.1)
+    assert b[0] == 0.0 and b[1:] == pytest.approx((0.0, 0.0), abs=0.3)  # no shift to undo
 
 
 def test_class_reliability_compares_predicted_and_observed_shares() -> None:
@@ -188,6 +225,21 @@ def test_bad_inputs_are_refused() -> None:
         )
     with pytest.raises(ValueError, match="format"):
         PriorModel.from_bytes(_blob({"format": 0}))
+
+
+def test_a_format_1_blob_loads_with_no_prior_shift() -> None:
+    import io
+
+    import joblib
+
+    model, test = _trained()
+    payload = joblib.load(io.BytesIO(model.to_bytes()))
+    assert payload["format"] == 2 and len(payload["prior_shift"]) == 3
+    del payload["prior_shift"]
+    old = PriorModel.from_bytes(_blob(payload | {"format": 1}))
+    assert old.prior_shift == ()
+    raw = np.asarray(model.booster.predict(test.features, raw_score=True)).reshape(-1, 3)
+    assert np.allclose(old.logits(test.features), raw / model.temperature)
 
 
 def test_without_validation_or_test_rows_t_is_one_and_the_gate_fails_where_enforced() -> None:
