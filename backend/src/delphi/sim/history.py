@@ -32,7 +32,7 @@ from delphi.kb.model import ClassifierThresholds
 from delphi.sim.draws import IST, choice
 from delphi.sim.forwarding import Forwarder, Hop
 from delphi.sim.fraud import FraudPlan, plan_fraud
-from delphi.sim.generator_config import GeneratorConfig
+from delphi.sim.generator_config import GeneratorConfig, NewPersonPayeeConfig
 from delphi.sim.ids import IdStream
 from delphi.sim.labels import (
     LabelConfig,
@@ -195,6 +195,16 @@ class _Intent:
 def _lognormal_paise(rng: np.random.Generator, median_inr: float, sigma: float) -> int:
     rupees = median_inr * math.exp(sigma * rng.standard_normal())
     return max(1, round(rupees)) * _PAISE_PER_INR
+
+
+def _payee_lead(rng: np.random.Generator, cfg: NewPersonPayeeConfig) -> timedelta:
+    """How long before its first payment a genuine new payee is saved: minutes, or (a share,
+    #166) days."""
+    if rng.random() < cfg.early_share:
+        days = cfg.early_lead_days
+        return timedelta(days=days.min + rng.random() * (days.max - days.min))
+    minutes = cfg.lead_minutes
+    return timedelta(minutes=minutes.min + rng.random() * (minutes.max - minutes.min))
 
 
 def _payee_type(account: Account) -> str:
@@ -726,8 +736,7 @@ class _Planner:
             if payee in {*self.payees.get(customer.id, []), *self.saved_during[customer.id]}:
                 continue  # paid there before: nothing new to save
             self.saved_during[customer.id].append(payee)
-            span = cfg.lead_minutes.max - cfg.lead_minutes.min
-            lead = timedelta(minutes=cfg.lead_minutes.min + rng.random() * span)
+            lead = _payee_lead(rng, cfg)
             day = at.astimezone(IST).replace(hour=0, minute=0, second=0, microsecond=0)
             hour = (habit + self.routine.hour_sd * rng.standard_normal()) % _HOURS_PER_DAY
             first = day + timedelta(seconds=int(hour * _SECONDS_PER_HOUR))
@@ -793,8 +802,7 @@ class _Planner:
             if payee in taken or payee == account.id:
                 continue  # already a payee, or their own account: nothing new to save
             self.saved_during[customer.id].append(payee)
-            span = cfg.lead_minutes.max - cfg.lead_minutes.min
-            lead = timedelta(minutes=cfg.lead_minutes.min + rng.random() * span)
+            lead = _payee_lead(rng, cfg)
             day = at.astimezone(IST).replace(hour=0, minute=0, second=0, microsecond=0)
             hour = (habit + self.routine.hour_sd * rng.standard_normal()) % _HOURS_PER_DAY
             first = day + timedelta(seconds=int(hour * _SECONDS_PER_HOUR))

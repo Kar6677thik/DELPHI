@@ -111,6 +111,10 @@ class NewPersonPayeeConfig(_Frozen):
     # bigger one-off (rent to a new landlord, a contractor, school fees). None: the routine's.
     amount_inr: LogNormal | None = None
     channel: dict[str, float] | None = None
+    # #166: a share is saved days before the first payment (added one evening, paid when the
+    # bill or the rent falls due), as some fraud victims' payees are.
+    early_share: Probability = 0.0
+    early_lead_days: Range = Range(min=1, max=10)
 
 
 class NewMerchantPayeeConfig(NewPersonPayeeConfig):
@@ -235,6 +239,9 @@ class AtoConfig(_Frozen):
     sim_swap_lead_hours: Range
     payee_lead_minutes: Range
     channel: dict[str, float]
+    # #166: a share of takeovers save the mule hours before the drain (the staged attack).
+    staged_share: Probability = 0.0
+    staged_lead_hours: Range = Range(min=4, max=48)
 
     @model_validator(mode="after")
     def _weights(self) -> AtoConfig:

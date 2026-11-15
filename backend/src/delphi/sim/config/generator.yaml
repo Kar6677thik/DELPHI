@@ -94,19 +94,23 @@ genuine_routine:
   new_person_payee:
     mean_days: 20   # #166: was 365, so a new person payee is no tell
     lead_minutes: {min: 2, max: 30}
-    follow_up_payments: {min: 0, max: 3}
+    early_share: 0.3          # #166: saved hours to days (0.2–10) before the first payment
+    early_lead_days: {min: 0.2, max: 10}
+    follow_up_payments: {min: 0, max: 4}
     follow_up_days: 60
-    amount_inr: {median: 5000, sigma: 1.2}   # #166: rent, a contractor, a loan to a friend
-    channel: {UPI_PUSH: 0.55, IMPS: 0.35, NEFT: 0.10}
+    amount_inr: {median: 10000, sigma: 1.4}   # #166: rent, a contractor, a loan to a friend
+    channel: {UPI_PUSH: 0.40, IMPS: 0.40, NEFT: 0.20}
   # #166: genuine customers also scan-and-pay shops they never paid before (saved minutes
   # before, like a fraud payee), sometimes going back, so a new or young payee is no tell.
   new_merchant_payee:
     mean_days: 4
-    lead_minutes: {min: 1, max: 10}
+    lead_minutes: {min: 1, max: 10}       # scan and pay: saved as the customer pays
+    early_share: 0.1                      # a biller registered before the bill falls due
+    early_lead_days: {min: 0.2, max: 10}
     follow_up_payments: {min: 0, max: 2}
     follow_up_days: 30
     categories: [GROCERY, RETAIL, FUEL, TELECOM, UTILITY, EDUCATION]
-    amount_inr: {median: 1500, sigma: 1.3}   # from a snack to a school fee or an appliance
+    amount_inr: {median: 2500, sigma: 1.5}   # from a snack to a school fee or an appliance
     channel: {UPI_PUSH: 0.75, IMPS: 0.20, NEFT: 0.05}
   # #166: customers travel (work, family, holidays) and log in from the city they are in,
   # so a login from a new city is no ATO tell. Gaps: a trip every 90 days on average
@@ -208,6 +212,10 @@ fraud:
     sim_swap_lead_hours: {min: 1, max: 48}
     payee_lead_minutes: {min: 1, max: 5}
     channel: {IMPS: 0.6, UPI_PUSH: 0.4}
+    # #166: staged takeovers save the mule 4–48 h before the drain, past the new-payee
+    # cooling-off, so the payee is no longer minutes old when the money leaves.
+    staged_share: 0.35
+    staged_lead_hours: {min: 4, max: 48}
   digital_arrest:
     older_share: 0.6                       # docs/14: P(age ≥ 60) = 0.6
     older_age: 60

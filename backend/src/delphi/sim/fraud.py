@@ -202,11 +202,19 @@ class _Planner:
         city = cities[int(rng.integers(len(cities)))]
         ring, mule = self._mule(rng)
         payee_at = login_at + timedelta(minutes=_uniform(rng, cfg.payee_lead_minutes))
+        # #166: a staged takeover saves the mule in an earlier visit and drains the account
+        # once the new-payee cooling-off has passed. Its own stream, so no other draw moves.
+        staging = keyed_rng(self.seed, self.stream, "ato_staged", str(len(self.instances)))
+        start = payee_at
+        if staging.random() < cfg.staged_share:
+            hours = _uniform(staging, cfg.staged_lead_hours)
+            start = login_at
+            payee_at = max(login_at - timedelta(hours=hours), self.pop.history_start)
         self._save(customer, mule, payee_at)
         instance = self._instance(ScenarioType.ATO, customer, ring, login_at, kind=kind)
         k = _count(rng, cfg.transfers)
         drain = _uniform(rng, cfg.drain_share)
-        window = (login_at + timedelta(minutes=cfg.window_minutes) - payee_at).total_seconds()
+        window = (login_at + timedelta(minutes=cfg.window_minutes) - start).total_seconds()
         offsets = sorted(int(rng.random() * window) for _ in range(k))
         for j, offset in enumerate(offsets):
             # Transfer j takes drain / k of the first balance: a share of what is left.
@@ -216,7 +224,7 @@ class _Planner:
                     ScenarioType.ATO,
                     index,
                     mule,
-                    payee_at + timedelta(seconds=offset + 1),
+                    start + timedelta(seconds=offset + 1),
                     choice(rng, cfg.channel),
                     instance,
                     coached=False,

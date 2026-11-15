@@ -184,7 +184,26 @@ def analyse(profile: str, leave_out: tuple[str, ...] = ()) -> dict[str, Any]:  #
         key=lambda t: -t[1],
     )[:8]
 
-    medians: dict[str, dict[str, float]] = defaultdict(dict)
+    # What the model combines: for each fraud class, the features whose contribution to that
+    # class's raw score most separates its rows from GENUINE payments to new payees (the
+    # genuine payments that look most like fraud).
+    contrib = model.booster.predict(test_split.features, pred_contrib=True)
+    width = len(names) + 1
+    new_genuine = (test_split.labels == 0) & (
+        test_split.features[:, names.index("is_new_payee")] > 0
+    )
+    contrib_gap: dict[str, list[tuple[str, float]]] = {}
+    for c_index, c in enumerate(classes):
+        rows = test_split.labels == c_index
+        if c == "GENUINE" or not rows.any() or not new_genuine.any():
+            continue
+        block = contrib[:, c_index * width : c_index * width + len(names)]
+        gap = block[rows].mean(axis=0) - block[new_genuine].mean(axis=0)
+        contrib_gap[c] = sorted(
+            ((f, round(float(g), 2)) for f, g in zip(names, gap, strict=True)), key=lambda t: -t[1]
+        )[:8]
+
+    medians: dict[str, dict[str, Any]] = defaultdict(dict)
     by_scenario: dict[str, list[str]] = defaultdict(list)
     for pid in test_ids:
         by_scenario[scenario_of.get(pid, "?")].append(pid)
@@ -192,7 +211,13 @@ def analyse(profile: str, leave_out: tuple[str, ...] = ()) -> dict[str, Any]:  #
         sub = test_frame.loc[pids]
         for f in WATCH:
             medians[scenario][f] = round(float(sub[f].median()), 2)
+        q = sub["payee_age_days"].quantile([0.1, 0.25, 0.5, 0.75, 0.9])
+        medians[scenario]["payee_age_days_q10_90"] = [round(float(v), 3) for v in q]
         medians[scenario]["n"] = len(pids)
+        new = sub[sub["is_new_payee"] > 0]["payee_age_days"] * 1440
+        medians[scenario]["new_payee_age_minutes_q"] = [
+            round(float(v), 1) for v in new.quantile([0.05, 0.25, 0.5, 0.75, 0.95])
+        ]
 
     report = model.report["test"]
     return {
@@ -205,6 +230,7 @@ def analyse(profile: str, leave_out: tuple[str, ...] = ()) -> dict[str, Any]:  #
         "single_feature_auc_top": worst,
         "single_feature_auc_by_class": per_class,
         "gain_share_top": gain_share,
+        "contribution_gap_vs_new_payee_genuine": contrib_gap,
         "medians_by_scenario": medians,
         "seconds": round(time.perf_counter() - started, 1),
     }
