@@ -230,6 +230,11 @@ class OfflineHistories:
                 limit_increase_at_us=_ints(raised, "at_us"),
             )
 
+    def history(self, customer_id: str) -> CustomerHistory:
+        """A customer's whole history, for scoring a payment the bank has not recorded (a new
+        session; the leakage guard still applies at the payment's ``as_of``)."""
+        return self._histories[customer_id]
+
     def snapshot(self, payment_id: str) -> tuple[PaymentView, CustomerHistory]:
         row = self._payments[payment_id]
         if row.customer_id is None:
