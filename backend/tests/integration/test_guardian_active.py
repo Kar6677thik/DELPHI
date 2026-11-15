@@ -272,6 +272,7 @@ def test_a_step_up_timeout_fails_it_and_a_question_timeout_does_not_update(env: 
     session_id = _planning(env, svc, env.payment(480_000))
     issued = svc.issue(_pending(env, session_id, "BIOMETRIC_STEP_UP"))
     assert isinstance(issued, IssuedProbe)
+    env.clock.advance(timedelta(seconds=issued.timeout_s + 1))
     after = svc.timeout(issued.probe_run_id)
     run = _run(env, issued.probe_run_id)
     assert (run.status, run.outcome) == ("COMPLETED", "FAILED_OR_ABANDONED")  # docs/05 §2
@@ -280,6 +281,7 @@ def test_a_step_up_timeout_fails_it_and_a_question_timeout_does_not_update(env: 
     question = svc.issue(_pending(env, session_id, "SPELL_BREAKER_INVESTMENT"))
     assert isinstance(question, IssuedProbe)
     before = posterior(session_id, env)
+    env.clock.advance(timedelta(seconds=question.timeout_s + 1))
     svc.timeout(question.probe_run_id)
     run = _run(env, question.probe_run_id)
     assert (run.status, run.outcome) == ("TIMED_OUT", None)
@@ -297,7 +299,8 @@ def test_the_customer_cancels_during_a_probe(env: Env) -> None:
     assert cancelled.terminal_reason is TerminalReason.CUSTOMER_CANCELLED
     assert cancelled.decision is None and cancelled.decided_at is not None
     assert env.payment_row(payment).status == "CANCELLED"
-    assert _run(env, issued.probe_run_id).status == "TIMED_OUT"
+    closed = _run(env, issued.probe_run_id)
+    assert (closed.status, closed.raw_response) == ("ERROR", {"closed_by": "CUSTOMER_CANCELLED"})
     with pytest.raises(DelphiError) as again:
         svc.cancel(session_id)
     assert again.value.code is ProblemCode.INVALID_STATE_TRANSITION
@@ -316,3 +319,89 @@ def test_cancelling_in_the_cooling_off_window_ends_the_session(env: Env) -> None
     assert reply.outcome == "CANCELLED_BY_CUSTOMER"
     assert reply.session.status is SessionStatus.CANCELLED_BY_CUSTOMER
     assert env.payment_row(payment).status == "CANCELLED"
+
+
+# ---------------------------------------------------------------- review fixes (#170)
+
+
+def _code(err: pytest.ExceptionInfo[DelphiError]) -> ProblemCode:
+    return err.value.code
+
+
+def test_a_late_answer_is_refused_and_an_early_timeout_too(env: Env) -> None:
+    svc = env.service(FixedPrior(GENUINE), CLEAN, explore=False)
+    session_id = _planning(env, svc, env.payment(480_000))
+    issued = svc.issue(_pending(env, session_id, "OTP_STEP_UP"))
+    assert isinstance(issued, IssuedProbe) and issued.otp_code is not None
+    with pytest.raises(DelphiError) as early:
+        svc.timeout(issued.probe_run_id)
+    assert _code(early) is ProblemCode.INVALID_STATE_TRANSITION
+    env.clock.advance(timedelta(seconds=issued.timeout_s + 1))
+    with pytest.raises(DelphiError) as late:  # a correct code, but after the deadline
+        svc.respond(issued.probe_run_id, {"otp": issued.otp_code}, ClientSignals(0, 1_000))
+    assert _code(late) is ProblemCode.INVALID_STATE_TRANSITION
+    timed_out = svc.timeout(issued.probe_run_id)
+    assert timed_out.status is SessionStatus.PLANNING
+    assert _run(env, issued.probe_run_id).outcome == "FAILED_OR_ABANDONED"
+
+
+def test_a_finished_session_is_never_reopened_by_its_open_run(env: Env) -> None:
+    svc = env.service(FixedPrior(GENUINE), CLEAN, explore=False)
+    payment = env.payment(480_000)
+    session_id = _planning(env, svc, payment)
+    issued = svc.issue(_pending(env, session_id, "PURPOSE_QUESTION"))
+    assert isinstance(issued, IssuedProbe)
+    decided = svc.fail_safe(session_id, RuntimeError("injected"))  # e.g. an engine error
+    assert decided.status is SessionStatus.DECIDED
+    env.clock.advance(timedelta(seconds=issued.timeout_s + 1))
+    for attempt in (
+        lambda: svc.timeout(issued.probe_run_id),
+        lambda: svc.respond(
+            issued.probe_run_id, {"option_key": "BILLS_OR_SHOPPING"}, ClientSignals(0, 1_000)
+        ),
+    ):
+        with pytest.raises(DelphiError) as refused:
+            attempt()
+        assert _code(refused) is ProblemCode.INVALID_STATE_TRANSITION
+    with env.owner.connect() as conn:
+        status = conn.execute(
+            select(guardian_sessions.c.status).where(guardian_sessions.c.id == session_id)
+        ).scalar_one()
+    assert status == "DECIDED" and env.payment_row(payment).status == "HELD"
+
+
+def test_a_cancel_during_the_passive_phase_is_not_undone(env: Env) -> None:
+    payment = env.payment(480_000)
+    holder: dict[str, Any] = {}
+    svc = env.service(FixedPrior(GENUINE), CLEAN, explore=False)
+    real = svc._fetchers["CALL_STATUS"]
+
+    def cancel_then_fetch(request: Any) -> object:
+        holder["svc"].cancel(holder["session"])  # the customer taps Cancel meanwhile
+        return real(request)
+
+    svc._fetchers = {**svc._fetchers, "CALL_STATUS": cancel_then_fetch}
+    holder["svc"] = svc
+    started = svc.start(payment, mode=SessionMode.LIVE, runner=Runner.API)
+    holder["session"] = started.id
+    after = asyncio.run(svc.passive(started.id))
+    assert after.status is SessionStatus.CANCELLED_BY_CUSTOMER
+    assert env.payment_row(payment).status == "CANCELLED"
+    assert (
+        env.count("SELECT count(*) FROM delphi.probe_runs WHERE session_id = :s", s=started.id) == 0
+    )  # the passive results were not applied over the cancel
+
+
+def test_the_cooling_off_window_does_not_count_towards_the_session_age(env: Env) -> None:
+    svc = env.service(FixedPrior(GENUINE), CLEAN, explore=False)
+    session_id = _planning(env, svc, env.payment(480_000))
+    issued = svc.issue(_pending(env, session_id, "COOLING_OFF"))
+    assert isinstance(issued, IssuedProbe)
+    svc.respond(  # 620 s in the window, inside its 630 s deadline
+        issued.probe_run_id, {"cooling_off": {"cancelled": False}}, signals(env, 620.0)
+    )
+    env.clock.advance(timedelta(seconds=300))  # 920 s in all; 300 s outside the window
+    step = svc.plan(session_id)
+    assert not (
+        isinstance(step, Decided) and step.session.terminal_reason is TerminalReason.SESSION_TIMEOUT
+    )
