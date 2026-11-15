@@ -1309,6 +1309,10 @@
             "type": "string",
             "title": "Leading Hypothesis"
           },
+          "leading_hypothesis_name": {
+            "type": "string",
+            "title": "Leading Hypothesis Name"
+          },
           "posterior": {
             "additionalProperties": {
               "type": "number"
@@ -1409,6 +1413,7 @@
           "guardian_session_id",
           "kb_version_id",
           "leading_hypothesis",
+          "leading_hypothesis_name",
           "posterior",
           "prior_components",
           "recommended_decision",

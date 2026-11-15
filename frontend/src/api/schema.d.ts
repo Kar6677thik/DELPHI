@@ -458,6 +458,8 @@ export interface components {
             kb_version_id: number;
             /** Leading Hypothesis */
             leading_hypothesis: string;
+            /** Leading Hypothesis Name */
+            leading_hypothesis_name: string;
             /** Posterior */
             posterior: {
                 [key: string]: number;

@@ -5,7 +5,17 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, Column, DateTime, Integer, MetaData, Table, Text
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    Column,
+    DateTime,
+    Integer,
+    MetaData,
+    SmallInteger,
+    Table,
+    Text,
+)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 metadata = MetaData(schema="delphi")
@@ -37,7 +47,7 @@ cases = Table(
     _ts("sla_due_at"),
     Column("disposition", Text),
     Column("disposition_typology", Text),
-    Column("disposition_confidence", Text),
+    Column("disposition_confidence", SmallInteger),
     Column("is_override", Boolean, nullable=False),
     Column("override_rationale", Text),
     Column("disposed_by", UUID(as_uuid=True)),

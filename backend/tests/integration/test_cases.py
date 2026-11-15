@@ -4,6 +4,8 @@ open case per payment, and the read-only API pages the queue."""
 
 from __future__ import annotations
 
+import base64
+import json
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import timedelta
@@ -11,13 +13,14 @@ from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import inspect, update
+from sqlalchemy import Table, func, inspect, select, update
 from sqlalchemy.exc import IntegrityError
 
 from delphi.api.app import create_app
 from delphi.api.security import Permission, Principal, current_principal
 from delphi.guardian.tables import guardian_sessions
 from delphi.kb.loader import load_and_validate
+from delphi.kb.model import KnowledgeBase
 from delphi.kb.store import ensure_kb_v1
 from delphi.navigator.api import (
     CaseExistsError,
@@ -35,6 +38,7 @@ from delphi.platform.clock import FixedClock
 from delphi.platform.db import make_session_factory, migration_head
 from delphi.platform.errors import DelphiError
 from delphi.platform.settings import Settings
+from delphi.platform.tables import audit_log, outbox_events
 from delphi.platform.wiring import Platform
 from delphi.probes.registry import CLASSIFIER_NAMES
 
@@ -89,11 +93,10 @@ def _open(env: Env, held: Held, decision: str, **kw: object) -> CaseRecord:
             payment_id=held.payment_id,
             guardian_session_id=held.session_id,
             kb_version_id=env.kb_version_id,
-            posterior=POSTERIOR,
             prior_components=PRIOR,
             amount_at_stake_paise=AMOUNT,
             unexplained=False,
-            **kw,  # type: ignore[arg-type]
+            **{"posterior": POSTERIOR, **kw},  # type: ignore[arg-type]
         )
 
 
@@ -120,24 +123,96 @@ def test_a_protective_hold_opens_a_coercion_case_with_the_sessions_posterior(env
     assert case.version == 1
 
 
-def test_a_hold_for_review_is_standard_and_the_sla_is_time_scaled(env: Env) -> None:
-    case = _open(env, _held(env), "HOLD_FOR_REVIEW", time_scale=0.5)
+def test_a_hold_for_review_is_standard_and_demo_time_scales_the_sla(
+    env: Env, kb: KnowledgeBase
+) -> None:
+    case = _open(env, _held(env), "HOLD_FOR_REVIEW")
     assert case.protocol is CaseProtocol.STANDARD
-    assert case.sla_due_at == T0 + timedelta(minutes=240 * 0.5)
+    assert case.sla_due_at == T0 + timedelta(minutes=240)
+    demo = _open(env, _held(env), "HOLD_FOR_REVIEW", demo_time=True)  # the pinned KB's 1/30
+    scale = kb.config.time.demo_time_scale
+    assert demo.sla_due_at == T0 + timedelta(minutes=240 * scale)
 
 
 def test_only_a_hold_opens_a_case(env: Env) -> None:
     with pytest.raises(DelphiError, match="opens no case"):
         _open(env, _held(env), "RELEASE")
+    with pytest.raises(DelphiError, match="posterior"):
+        _open(env, _held(env), "HOLD_FOR_REVIEW", posterior={})
 
 
-def test_one_open_case_per_payment(env: Env) -> None:
+def test_a_retried_open_returns_the_case_it_opened(env: Env) -> None:
+    """#164 review: a retried Guardian transaction gets the same case back, written once."""
     held = _held(env)
     first = _open(env, held, "HOLD_FOR_REVIEW")
-    with pytest.raises(CaseExistsError):
-        _open(env, held, "PROTECTIVE_HOLD")
+    assert _open(env, held, "HOLD_FOR_REVIEW") == first
+    assert _count(env, audit_log) == 1 and _count(env, outbox_events) == 1
     with env.sessions() as s:
         assert get_case(s, first.id) == first
+
+
+def test_a_payment_with_an_open_case_refuses_another_session(env: Env) -> None:
+    held = _held(env)
+    _open(env, held, "HOLD_FOR_REVIEW")
+    with pytest.raises(CaseExistsError):
+        _open(env, Held(held.payment_id, uuid4()), "PROTECTIVE_HOLD")
+
+
+def _count(env: Env, table: Table) -> int:
+    """Rows about cases only: loading KB v1 writes its own audit row."""
+    column = table.c.action if table is audit_log else table.c.type
+    query = select(func.count()).select_from(table).where(column == "case.opened")
+    with env.owner.connect() as conn:
+        return int(conn.execute(query).scalar_one())
+
+
+def test_opening_audits_and_publishes_in_the_same_transaction(env: Env) -> None:
+    """FR-PLT-04, docs/16 §3: case.opened is audited and announced with the case, and a
+    rollback leaves neither."""
+    case = _open(env, _held(env), "PROTECTIVE_HOLD")
+    with env.owner.connect() as conn:
+        audit = (
+            conn.execute(select(audit_log).where(audit_log.c.action == "case.opened"))
+            .mappings()
+            .one()
+        )
+        event = (
+            conn.execute(select(outbox_events).where(outbox_events.c.type == "case.opened"))
+            .mappings()
+            .one()
+        )
+    assert (audit["action"], audit["entity_type"], audit["entity_id"]) == (
+        "case.opened",
+        "case",
+        str(case.id),
+    )
+    assert audit["actor_type"] == "ENGINE" and audit["payload"]["protocol"] == "COERCION"
+    assert (event["type"], event["entity_id"]) == ("case.opened", str(case.id))
+    held = _held(env)
+    with env.sessions() as s:  # opened, then rolled back
+        open_case(
+            s,
+            env.clock,
+            decision="HOLD_FOR_REVIEW",
+            payment_id=held.payment_id,
+            guardian_session_id=held.session_id,
+            kb_version_id=env.kb_version_id,
+            posterior=POSTERIOR,
+            prior_components=PRIOR,
+            amount_at_stake_paise=AMOUNT,
+            unexplained=False,
+        )
+        s.rollback()
+    assert _count(env, audit_log) == 1 and _count(env, outbox_events) == 1
+    with env.owner.connect() as conn:
+        assert conn.execute(select(func.count()).select_from(cases)).scalar_one() == 1
+
+
+def test_a_case_names_the_session_of_its_own_payment(env: Env) -> None:
+    """The composite foreign key: a session that held another payment is refused."""
+    other = _held(env)
+    with pytest.raises(IntegrityError):
+        _open(env, Held(env.payment(), other.session_id), "HOLD_FOR_REVIEW")
 
 
 def test_the_session_links_to_its_case_by_a_foreign_key(env: Env) -> None:
@@ -157,15 +232,37 @@ def test_the_session_links_to_its_case_by_a_foreign_key(env: Env) -> None:
         )
 
 
-def test_a_disposed_case_needs_its_disposition(env: Env) -> None:
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"status": "DISPOSED"},  # no disposition
+        {"status": "DISPOSED", "disposition": "CLEAR", "disposed_at": T0},  # a review's
+        {"status": "DISPOSED", "disposition": "CONFIRM_FRAUD", "disposed_at": T0},  # no typology
+        {"disposition_confidence": 6},  # 1–5
+        {"is_override": True, "override_rationale": "too short"},  # under 20 characters
+    ],
+)
+def test_the_case_invariants_are_constraints(env: Env, values: dict[str, object]) -> None:
     case = _open(env, _held(env), "HOLD_FOR_REVIEW")
     with pytest.raises(IntegrityError), env.owner.begin() as conn:
-        conn.execute(update(cases).where(cases.c.id == case.id).values(status="DISPOSED"))
-    with pytest.raises(IntegrityError), env.owner.begin() as conn:  # a review's disposition
+        conn.execute(update(cases).where(cases.c.id == case.id).values(**values))
+
+
+def test_a_complete_disposition_is_accepted(env: Env) -> None:
+    case = _open(env, _held(env), "HOLD_FOR_REVIEW")
+    with env.owner.begin() as conn:
         conn.execute(
             update(cases)
             .where(cases.c.id == case.id)
-            .values(status="DISPOSED", disposition="CLEAR", disposed_at=T0)
+            .values(
+                status="DISPOSED",
+                disposition="CONFIRM_FRAUD",
+                disposition_typology="APP_DIGITAL_ARREST",
+                disposition_confidence=4,
+                disposed_at=T0,
+                is_override=True,
+                override_rationale="The customer confirmed the call on a recorded line.",
+            )
         )
 
 
@@ -217,6 +314,9 @@ def test_the_api_pages_the_queue(env: Env, client: TestClient) -> None:
     assert [i["id"] for i in standard["items"]] == [str(b.id)]
     wrong = client.get("/api/v1/cases", params={"cursor": body["next_cursor"], "sort": "opened_at"})
     assert wrong.status_code == 422 and wrong.json()["code"] == "VALIDATION_FAILED"
+    raw = json.dumps({"s": "sla_due_at", "at": "2026-11-13T18:30:00", "id": str(a.id)})
+    naive = base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
+    assert client.get("/api/v1/cases", params={"cursor": naive}).status_code == 422
 
 
 def test_the_api_reads_one_case_with_its_etag(env: Env, client: TestClient) -> None:
@@ -225,6 +325,7 @@ def test_the_api_reads_one_case_with_its_etag(env: Env, client: TestClient) -> N
     assert response.status_code == 200 and response.headers["ETag"] == '"1"'
     view = response.json()
     assert view["protocol"] == "COERCION" and view["leading_hypothesis"] == "APP_DIGITAL_ARREST"
+    assert view["leading_hypothesis_name"] == "Coerced victim — digital arrest"  # kb/hypotheses
     assert view["posterior"] == POSTERIOR and view["sla_breached"] is False
     env.clock.advance(timedelta(minutes=31))
     assert client.get(f"/api/v1/cases/{case.id}").json()["sla_breached"] is True
