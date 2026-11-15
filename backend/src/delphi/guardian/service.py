@@ -20,8 +20,8 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from concurrent.futures import Executor
-from dataclasses import dataclass, field
-from datetime import timedelta
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, timedelta
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -42,6 +42,21 @@ from delphi.engine.planner import (
 from delphi.engine.prior import build_prior, is_fast_path, open_mass
 from delphi.engine.risk import decide, loss_matrix, risk_by_decision, voi_myopic
 from delphi.engine.types import CompiledProfile, Phase, PlanResult, StopReason
+from delphi.guardian.active import (
+    STEP_UPS,
+    ClientSignals,
+    Ui,
+    biometric_observation,
+    cooling_off_observation,
+    new_otp,
+    otp_code,
+    otp_digest,
+    otp_matches,
+    question_observation,
+    response_latency_s,
+    timed_out_observation,
+    ui_for,
+)
 from delphi.guardian.store import (
     GuardianSessionRecord,
     ProbeMode,
@@ -66,11 +81,15 @@ from delphi.platform.errors import DelphiError, NotFoundError, ProblemCode
 from delphi.platform.events import EventType, publish
 from delphi.platform.logging import get_logger
 from delphi.probes.api import (
+    GUARDIAN_CLASSIFIERS,
     Fetcher,
+    OtpObs,
     PassiveRequest,
     PassiveStatus,
+    ServedQuestion,
     approved_variants,
     run_passive_probes,
+    serve_question,
 )
 from delphi.sensing.api import with_payer_mule
 from delphi.sim import api as bank
@@ -117,6 +136,42 @@ class NextProbe:
 
 PlanOutcome = Decided | NextProbe
 
+# Errors that are the caller's (a bad answer, a wrong state): returned as problems, never
+# turned into an ENGINE_ERROR hold.
+CALLER_ERRORS = frozenset(
+    {
+        ProblemCode.INVALID_STATE_TRANSITION,
+        ProblemCode.VALIDATION_FAILED,
+        ProblemCode.INVALID_CLIENT_SIGNALS,
+    }
+)
+COOLING_OFF = "COOLING_OFF"
+CANCELLED_BY_CUSTOMER = "CANCELLED_BY_CUSTOMER"  # COOLING_OFF's outcome that ends the session
+
+
+@dataclass(frozen=True, slots=True)
+class IssuedProbe:
+    """What the customer channel shows (docs/08 §4). ``otp_code`` is for the channel's mock SMS
+    only: the probe run stores a digest, never the code."""
+
+    session: GuardianSessionRecord
+    probe_run_id: UUID
+    probe_key: str
+    ui: Ui
+    timeout_s: float
+    question: ServedQuestion | None = None
+    otp_code: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Responded:
+    """``completed`` is false only for a wrong OTP with attempts left."""
+
+    session: GuardianSessionRecord
+    completed: bool
+    outcome: str | None = None
+    attempts_remaining: int | None = None
+
 
 @dataclass(slots=True)
 class _Context:
@@ -150,6 +205,7 @@ class GuardianService:
         executor: Executor,
         *,
         demo_time: bool = False,
+        explore: bool = True,
     ) -> None:
         self._sessions = sessions
         self._clock = clock
@@ -157,6 +213,7 @@ class GuardianService:
         self._fetchers = fetchers
         self._executor = executor
         self._demo_time = demo_time
+        self._explore = explore  # False: greedy only (evaluation ablations, replays)
         self._profiles: dict[int, CompiledProfile] = {}
 
     # ------------------------------------------------------------------ steps
@@ -344,7 +401,9 @@ class GuardianService:
                 budgets=initial_budgets(ctx.profile, ran),
                 # One stream per planning step, derived from the session's seed (docs/06 §10),
                 # so a resumed or replayed session draws the same numbers.
-                rng=np.random.default_rng([ctx.record.rng_seed, active]),
+                rng=(
+                    np.random.default_rng([ctx.record.rng_seed, active]) if self._explore else None
+                ),
             )
             if plan.is_stop:
                 reason = (
@@ -399,6 +458,232 @@ class GuardianService:
             return self._decide(
                 s, ctx, ctx.belief, TerminalReason.ENGINE_ERROR, decision="HOLD_FOR_REVIEW"
             )
+
+    # ------------------------------------------------------------------ active probes (step 7)
+
+    def issue(self, probe_run_id: UUID) -> IssuedProbe | Decided:
+        """Send a PENDING active probe to the customer: the run and the session become
+        AWAITING_CUSTOMER. A question gets its variant (docs/07 §9); an OTP gets a fresh code,
+        stored only as a digest (docs/08 §4)."""
+        issued: list[IssuedProbe] = []
+
+        def step(s: Session, ctx: _Context) -> GuardianSessionRecord:
+            run = _locked_run(s, probe_run_id, ProbeRunStatus.PENDING)
+            if ctx.record.status is not SessionStatus.PLANNING:
+                raise _wrong_state(f"Session {ctx.record.id} is {ctx.record.status}.")
+            kb = ctx.version.kb
+            src = ctx.profile.sources[run.probe_key]
+            ui = ui_for(run.probe_key, question=src.question)
+            guardrails = kb.config.guardrails
+            timeout_s = float(guardrails.active_probe_response_timeout_s)
+            if run.probe_key == COOLING_OFF:  # docs/08 §2 step 7: the window is time-scaled
+                scale = kb.config.time.demo_time_scale if self._demo_time else 1.0
+                timeout_s = (
+                    kb.config.classifiers.cooling_off_window_s * scale
+                    + guardrails.cooling_off_extra_timeout_s
+                )
+            now = self._clock.now()
+            raw: dict[str, Any] = {"ui": ui.value, "issued_at": now.isoformat()}
+            values: dict[str, Any] = {}
+            question = code = None
+            if ui is Ui.QUESTION:
+                question = serve_question(
+                    kb.question_bank[run.probe_key],
+                    ctx.language,
+                    _last_shown(s, ctx, run.probe_key),
+                )
+                values = {"variant_id": question.variant_id, "language": question.language}
+                raw["options"] = [o.key for o in question.options]
+            elif ui is Ui.OTP:
+                code = new_otp()
+                raw |= {"otp_sha256": otp_digest(str(probe_run_id), code), "otp_attempts": 0}
+            s.execute(
+                update(probe_runs)
+                .where(probe_runs.c.id == probe_run_id)
+                .values(status=ProbeRunStatus.AWAITING_CUSTOMER.value, raw_response=raw, **values)
+            )
+            current = self._write(s, ctx.record, status=SessionStatus.AWAITING_CUSTOMER.value)
+            publish(s, EventType.GUARDIAN_SESSION_UPDATED, str(current.id), _event(current))
+            issued.append(
+                IssuedProbe(current, probe_run_id, run.probe_key, ui, timeout_s, question, code)
+            )
+            return current
+
+        current = self._guarded(_session_of(self._sessions, probe_run_id), step)
+        return issued[0] if issued else Decided(current)  # else: the fail-safe decided
+
+    def respond(
+        self, probe_run_id: UUID, answer: Mapping[str, Any], signals: ClientSignals
+    ) -> Responded:
+        """Record the customer's answer: classify (docs/08 §5), update, back to PLANNING. A
+        wrong OTP with attempts left keeps the run waiting; a cancel in COOLING_OFF ends the
+        session (docs/08 §5). Bad answers and implausible timings are the caller's errors."""
+        result: list[Responded] = []
+
+        def step(s: Session, ctx: _Context) -> GuardianSessionRecord:
+            run = _locked_run(s, probe_run_id, ProbeRunStatus.AWAITING_CUSTOMER)
+            raw = dict(run.raw_response)
+            ui = Ui(raw["ui"])
+            thresholds = ctx.version.kb.config.classifiers
+            issued_at = datetime.fromisoformat(raw["issued_at"])
+            observed_s = (self._clock.now() - issued_at).total_seconds()
+            latency = response_latency_s(signals, observed_s)
+            raw |= {"answer": dict(answer), "latency_s": latency, "client_signals": asdict(signals)}
+            obs: object
+            if ui is Ui.QUESTION:
+                obs = question_observation(answer, frozenset(raw["options"]), signals, latency)
+            elif ui is Ui.BIOMETRIC:
+                obs = biometric_observation(answer)
+            elif ui is Ui.COOLING_OFF:
+                obs = cooling_off_observation(answer)
+            else:
+                code = otp_code(answer)
+                attempts = int(raw["otp_attempts"]) + 1
+                correct = otp_matches(str(probe_run_id), code, raw["otp_sha256"])
+                raw["otp_attempts"] = attempts
+                raw["answer"] = {"otp": "******"}  # never keep a code, right or wrong
+                left = thresholds.otp_max_attempts - attempts
+                if not correct and left > 0:
+                    s.execute(
+                        update(probe_runs)
+                        .where(probe_runs.c.id == probe_run_id)
+                        .values(raw_response=raw)
+                    )
+                    result.append(Responded(ctx.record, False, attempts_remaining=left))
+                    return ctx.record
+                obs = OtpObs(correct=correct, attempts=attempts, timed_out=False)
+            outcome = GUARDIAN_CLASSIFIERS[run.probe_key].classify(obs, thresholds)
+            if run.probe_key == COOLING_OFF and outcome == CANCELLED_BY_CUSTOMER:
+                self._finish_run(s, ctx, probe_run_id, raw, outcome, update_belief=False)
+                current = self._cancelled(s, ctx)
+            else:
+                current = self._finish_run(s, ctx, probe_run_id, raw, outcome)
+            result.append(Responded(current, True, outcome))
+            return current
+
+        current = self._guarded(_session_of(self._sessions, probe_run_id), step)
+        return result[0] if result else Responded(current, True)  # else: the fail-safe decided
+
+    def timeout(self, probe_run_id: UUID) -> GuardianSessionRecord:
+        """No answer in time (docs/08 §2 step 7): a step-up is classified FAILED_OR_ABANDONED
+        and updates the belief; any other probe is TIMED_OUT with no update."""
+
+        def step(s: Session, ctx: _Context) -> GuardianSessionRecord:
+            run = _locked_run(s, probe_run_id, ProbeRunStatus.AWAITING_CUSTOMER)
+            raw = dict(run.raw_response) | {"timed_out": True}
+            if run.probe_key in STEP_UPS:
+                obs = timed_out_observation(run.probe_key, int(raw.get("otp_attempts", 0)))
+                outcome = GUARDIAN_CLASSIFIERS[run.probe_key].classify(
+                    obs, ctx.version.kb.config.classifiers
+                )
+                return self._finish_run(s, ctx, probe_run_id, raw, outcome)
+            s.execute(
+                update(probe_runs)
+                .where(probe_runs.c.id == probe_run_id)
+                .values(
+                    status=ProbeRunStatus.TIMED_OUT.value,
+                    raw_response=raw,
+                    posterior_after=ctx.as_dict(ctx.belief),
+                    completed_at=self._clock.now(),
+                )
+            )
+            return self._back_to_planning(s, ctx, ctx.belief)
+
+        return self._guarded(_session_of(self._sessions, probe_run_id), step)
+
+    def cancel(self, session_id: UUID) -> GuardianSessionRecord:
+        """The customer cancelled (FR-GDN-07): the session ends CANCELLED_BY_CUSTOMER and the
+        payment is CANCELLED. A finished session is a caller error."""
+
+        def step(s: Session, ctx: _Context) -> GuardianSessionRecord:
+            if ctx.record.status in DONE:
+                raise _wrong_state(f"Session {session_id} is already {ctx.record.status}.")
+            waiting = s.execute(
+                select(probe_runs.c.id).where(
+                    probe_runs.c.session_id == session_id,
+                    probe_runs.c.status == ProbeRunStatus.AWAITING_CUSTOMER.value,
+                )
+            ).scalar_one_or_none()
+            if waiting is not None:
+                s.execute(
+                    update(probe_runs)
+                    .where(probe_runs.c.id == waiting)
+                    .values(
+                        status=ProbeRunStatus.TIMED_OUT.value,
+                        posterior_after=ctx.as_dict(ctx.belief),
+                        completed_at=self._clock.now(),
+                    )
+                )
+            return self._cancelled(s, ctx)
+
+        return self._guarded(session_id, step)
+
+    def _finish_run(
+        self,
+        s: Session,
+        ctx: _Context,
+        probe_run_id: UUID,
+        raw: Mapping[str, Any],
+        outcome: str,
+        *,
+        update_belief: bool = True,
+    ) -> GuardianSessionRecord:
+        src = ctx.profile.sources[_run_key(s, probe_run_id)]
+        before = ctx.belief
+        after = (
+            bayes_update(before, src.likelihood[src.outcomes.index(outcome)])
+            if update_belief
+            else before
+        )
+        s.execute(
+            update(probe_runs)
+            .where(probe_runs.c.id == probe_run_id)
+            .values(
+                status=ProbeRunStatus.COMPLETED.value,
+                outcome=outcome,
+                raw_response=dict(raw),
+                posterior_after=ctx.as_dict(after),
+                info_yield_bits=kl_bits(after, before),
+                completed_at=self._clock.now(),
+            )
+        )
+        return self._back_to_planning(s, ctx, after)
+
+    def _back_to_planning(
+        self, s: Session, ctx: _Context, belief: np.ndarray
+    ) -> GuardianSessionRecord:
+        current = self._write(
+            s,
+            ctx.record,
+            status=SessionStatus.PLANNING.value,
+            posterior=ctx.as_dict(belief),
+            risk_by_decision=_risks(ctx.profile, risk_by_decision(belief, ctx.losses())),
+        )
+        publish(s, EventType.GUARDIAN_SESSION_UPDATED, str(current.id), _event(current))
+        return current
+
+    def _cancelled(self, s: Session, ctx: _Context) -> GuardianSessionRecord:
+        now = self._clock.now()
+        bank.cancel_payment(s, ctx.payment.id, now)
+        current = self._write(
+            s,
+            _reload(s, ctx.record.id),
+            status=SessionStatus.CANCELLED_BY_CUSTOMER.value,
+            terminal_reason=TerminalReason.CUSTOMER_CANCELLED.value,
+            decided_at=now,
+        )
+        record(
+            s,
+            self._clock,
+            actor_type=ActorType.SYSTEM,
+            actor_id=None,
+            action="guardian.session.cancelled",
+            entity_type="guardian_session",
+            entity_id=str(current.id),
+            payload={"payment_id": str(ctx.payment.id)},
+        )
+        publish(s, EventType.GUARDIAN_SESSION_UPDATED, str(current.id), _event(current))
+        return current
 
     # ------------------------------------------------------------------ the decision
 
@@ -490,8 +775,8 @@ class GuardianService:
             with self._sessions.begin() as s:
                 return step(s, self._load(s, session_id))
         except DelphiError as exc:
-            if exc.code is ProblemCode.INVALID_STATE_TRANSITION:
-                raise  # a caller's mistake (e.g. planning a decided session), not an engine error
+            if exc.code in CALLER_ERRORS:
+                raise  # a caller's mistake (a bad answer, a wrong state), not an engine error
             return self.fail_safe(session_id, exc)
         except Exception as exc:
             return self.fail_safe(session_id, exc)
@@ -670,3 +955,56 @@ def _earlier_active_sessions(s: Session, ctx: _Context, clock: Clock) -> int:
             )
         ).scalar_one()
     )
+
+
+def _wrong_state(message: str) -> DelphiError:
+    return DelphiError(message, code=ProblemCode.INVALID_STATE_TRANSITION)
+
+
+def _session_of(sessions: sessionmaker[Session], probe_run_id: UUID) -> UUID:
+    with sessions() as s:
+        session_id = s.execute(
+            select(probe_runs.c.session_id).where(probe_runs.c.id == probe_run_id)
+        ).scalar_one_or_none()
+    if session_id is None:
+        raise NotFoundError(f"No probe run {probe_run_id}.")
+    return UUID(str(session_id))
+
+
+def _locked_run(s: Session, probe_run_id: UUID, expected: ProbeRunStatus) -> Any:
+    """The active probe run, locked, in the status the step needs."""
+    run = s.execute(
+        select(probe_runs).where(probe_runs.c.id == probe_run_id).with_for_update()
+    ).one()
+    if run.mode != ProbeMode.ACTIVE.value or run.status != expected.value:
+        raise _wrong_state(f"Probe run {probe_run_id} is {run.status}, not {expected}.")
+    return run
+
+
+def _run_key(s: Session, probe_run_id: UUID) -> str:
+    return str(
+        s.execute(
+            select(probe_runs.c.probe_key).where(probe_runs.c.id == probe_run_id)
+        ).scalar_one()
+    )
+
+
+def _last_shown(s: Session, ctx: _Context, probe_key: str) -> dict[str, datetime]:
+    """When the payer was last shown each variant of ``probe_key``, over all their sessions
+    (docs/07 §9: rotation per customer)."""
+    gs, pr, p, a = guardian_sessions.c, probe_runs.c, bank.payments.c, bank.accounts.c
+    rows = s.execute(
+        select(pr.variant_id, func.max(pr.started_at))
+        .select_from(
+            probe_runs.join(guardian_sessions, gs.id == pr.session_id)
+            .join(bank.payments, p.id == gs.payment_id)
+            .join(bank.accounts, a.id == p.payer_account_id)
+        )
+        .where(
+            a.customer_id == _require(ctx.payment.payer_customer_id),
+            pr.probe_key == probe_key,
+            pr.variant_id.is_not(None),
+        )
+        .group_by(pr.variant_id)
+    ).all()
+    return {variant: shown for variant, shown in rows}

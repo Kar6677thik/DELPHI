@@ -6,7 +6,14 @@ active responses, and serves question variants (docs/07 §9, docs/08 §2, §5).
 
 from __future__ import annotations
 
-from delphi.probes.classifiers import GUARDIAN_CLASSIFIERS, Classifier
+from delphi.probes.classifiers import (
+    GUARDIAN_CLASSIFIERS,
+    AnswerObs,
+    BiometricObs,
+    Classifier,
+    CoolingOffObs,
+    OtpObs,
+)
 from delphi.probes.passive import (
     Fetcher,
     PassiveRequest,
@@ -31,10 +38,14 @@ from delphi.probes.sim_adapters import (
 
 __all__ = [
     "GUARDIAN_CLASSIFIERS",
+    "AnswerObs",
+    "BiometricObs",
     "Classifier",
+    "CoolingOffObs",
     "Fetcher",
     "MuleScorePort",
     "NoApprovedVariantError",
+    "OtpObs",
     "PassiveRequest",
     "PassiveResult",
     "PassiveStatus",

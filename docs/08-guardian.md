@@ -65,7 +65,17 @@ its own transaction:
 - **Fail-safe** (FR-GDN-13). Any error in a step rolls that step back, and `fail_safe` then decides
   HOLD_FOR_REVIEW with terminal reason ENGINE_ERROR in a fresh transaction, without running the
   engine: the payment is HELD and a STANDARD case is opened. A finished session is left alone.
-  Planning a session that isn't PLANNING is a caller error (409), not an engine error. On api start-up, sessions in `PASSIVE_PROBING` or
+  Planning a session that isn't PLANNING is a caller error (409), not an engine error.
+- **Active probes** (step 7). `issue` turns a PENDING run into AWAITING_CUSTOMER and returns
+  what the channel shows: the question variant (doc 07 §9, rotated over the payer's earlier
+  sessions), or a fresh OTP code (the run stores `sha256(probe_run_id:code)` and never the code;
+  a wrong attempt is masked too). `respond` checks the client signals (§4), classifies (§5),
+  updates and returns to PLANNING; a COOLING_OFF cancel ends the session. `timeout` fails a step-up
+  (FAILED_OR_ABANDONED, with an update) and records any other probe as TIMED_OUT with no update.
+  `cancel` ends the session CANCELLED_BY_CUSTOMER, with the payment CANCELLED. A bad answer, an
+  implausible timing or a wrong state is a caller error (400/409), never an ENGINE_ERROR hold.
+  The screen for each non-question active probe (OTP, BIOMETRIC, COOLING_OFF) is fixed in code
+  (`guardian.active`), since probes are code (ADR-0006). On api start-up, sessions in `PASSIVE_PROBING` or
 `PLANNING` are resumed. Sessions stuck in `AWAITING_CUSTOMER` for longer than the timeout are
 resolved as timed out (FR-GDN-14).
 
