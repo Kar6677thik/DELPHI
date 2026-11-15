@@ -14,13 +14,14 @@ The module also draws genuine customers' background CRM events, from
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from uuid import UUID
 
 import numpy as np
 
-from delphi.sim.draws import between, choice
+from delphi.sim.draws import IST, between, choice
 from delphi.sim.generator_config import GeneratorConfig, Range
 from delphi.sim.ids import IdStream
 from delphi.sim.mules import MuleNetwork
@@ -87,6 +88,7 @@ class _Planner:
     ):
         self.start, self.end = span
         self.stream = stream
+        self.habits: Mapping[int, float] = {}  # customer index → habitual local hour (#166)
         self.saved_before: frozenset[tuple[UUID, UUID]] = frozenset()
         self.cfg = config.fraud
         self.config = config
@@ -148,6 +150,23 @@ class _Planner:
         self.instances.append(instance)
         return instance.id
 
+    def _timed(self, scenario: ScenarioType, index: int, at: datetime, j: int = 0) -> datetime:
+        """#166: with the scenario's ``habitual_share``, the payment moves to the victim's
+        habitual hour that local day (+ N(0, hour_sd)); otherwise, or if that falls outside
+        the span or the customer has no recorded habit, it keeps ``at``. Each payment draws
+        from its own stream, so no other draw moves."""
+        timing = self.cfg.timing
+        share = timing.habitual_share.get(scenario.value, 0.0)
+        rng = keyed_rng(
+            self.seed, self.stream, "fraud_hour", scenario.value, str(len(self.instances)), str(j)
+        )
+        if rng.random() >= share or index not in self.habits:
+            return at
+        hour = self.habits[index] + timing.hour_sd * float(rng.standard_normal())
+        day = at.astimezone(IST).replace(hour=0, minute=0, second=0, microsecond=0)
+        moved = (day + timedelta(seconds=int(hour * 3600))).astimezone(at.tzinfo)
+        return moved if self.start <= moved < self.end else at
+
     def _start(self, rng: np.random.Generator, span: timedelta) -> datetime:
         return between(rng, self.start, max(self.end - span, self.start + timedelta(seconds=1)))
 
@@ -156,6 +175,10 @@ class _Planner:
         index = self.victims[int(rng.integers(len(self.victims)))]
         customer = self.pop.customers[index]
         login_at = self._start(rng, timedelta(minutes=cfg.window_minutes))
+        login_at = min(
+            self._timed(ScenarioType.ATO, index, login_at),
+            self.end - timedelta(minutes=cfg.window_minutes),
+        )
         kind = choice(rng, cfg.kind)
         if kind == SIM_SWAP:
             lead = timedelta(hours=_uniform(rng, cfg.sim_swap_lead_hours))
@@ -217,12 +240,27 @@ class _Planner:
         k = _count(rng, cfg.transfers)
         offsets = sorted(rng.random() * span.total_seconds() for _ in range(k))
         layer = next(r for r in self.network.rings if r.id == ring).layers[0]
-        for offset in offsets:
-            at = start + timedelta(seconds=int(offset))
-            mule = layer[int(rng.integers(len(layer)))]
-            self._save(
-                customer, mule, at - timedelta(minutes=_uniform(rng, self.cfg.payee_lead_minutes))
+        times = sorted(
+            max(
+                self._timed(
+                    ScenarioType.APP_DIGITAL_ARREST, index, start + timedelta(seconds=int(o)), j
+                ),
+                start,
             )
+            for j, o in enumerate(offsets)
+        )
+        # #166: payee timing from its own stream, so the scenario's other draws do not move.
+        payees = keyed_rng(self.seed, self.stream, "fraud_payee", str(len(self.instances)))
+        paid: list[UUID] = []
+        for at in times:
+            mule = layer[int(rng.integers(len(layer)))]
+            if paid and payees.random() < cfg.reuse_payee_share:
+                mule = paid[int(payees.integers(len(paid)))]  # back to an account already paid
+            lead = timedelta(minutes=_uniform(rng, self.cfg.payee_lead_minutes))
+            if not paid and payees.random() < cfg.early_payee_share:
+                lead = timedelta(days=_uniform(payees, cfg.early_payee_days))
+            self._save(customer, mule, at - lead)
+            paid.append(mule)
             self.sessions.append(
                 FraudSession(
                     ScenarioType.APP_DIGITAL_ARREST,
@@ -268,6 +306,18 @@ class _Planner:
         )
         # A fee is fee_share of the deposits actually made, which the history settles.
         amounts += [0] * fees
+        # #166: deposits and fees move to the victim's habitual hour, keeping their order (the
+        # deposits escalate) and never before the platform payee was saved (at ``start``).
+        moments = [
+            max(
+                self._timed(
+                    ScenarioType.APP_INVESTMENT, index, start + timedelta(seconds=int(o)), j
+                ),
+                start,
+            )
+            for j, o in enumerate(offsets)
+        ]
+        offsets = [(m - start).total_seconds() for m in sorted(moments)]
         for j, (offset, amount) in enumerate(zip(offsets, amounts, strict=True)):
             self.sessions.append(
                 FraudSession(
@@ -291,7 +341,7 @@ class _Planner:
         cfg = self.config.collect_refund
         index = self.victims[int(rng.integers(len(self.victims)))]
         customer = self.pop.customers[index]
-        at = between(rng, self.start, self.end)
+        at = self._timed(ScenarioType.UPI_COLLECT_REFUND, index, between(rng, self.start, self.end))
         ring, mule = self._mule(rng)
         instance = self._instance(ScenarioType.UPI_COLLECT_REFUND, customer, ring, at)
         low, high = math.log(cfg.amount_inr.min), math.log(cfg.amount_inr.max)
@@ -335,6 +385,7 @@ def plan_fraud(
     window: tuple[datetime, datetime] | None = None,
     crm_until: datetime | None = None,
     saved: frozenset[tuple[UUID, UUID]] = frozenset(),
+    habits: Mapping[int, float] | None = None,
 ) -> FraudPlan:
     """The fraud victims, scaled to ``genuine_sessions`` (the genuine customer sessions made).
     ``coached_share`` is the response models' share of well-coached DA and INV victims
@@ -348,6 +399,7 @@ def plan_fraud(
     stream = "window" if window else "history"
     planner = _Planner(config, population, network, span, stream)
     planner.saved_before = saved  # (customer, account) pairs already saved as payees
+    planner.habits = habits or {}
     if window is None:
         planner.background_crm(crm_until or span[1])
     scenarios = (

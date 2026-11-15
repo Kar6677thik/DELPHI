@@ -23,13 +23,13 @@ import math
 from collections import Counter, defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from uuid import UUID
 
 import numpy as np
 
 from delphi.kb.model import ClassifierThresholds
-from delphi.sim.draws import choice
+from delphi.sim.draws import IST, choice
 from delphi.sim.forwarding import Forwarder, Hop
 from delphi.sim.fraud import FraudPlan, plan_fraud
 from delphi.sim.generator_config import GeneratorConfig
@@ -69,7 +69,6 @@ from delphi.sim.rng import keyed_rng
 from delphi.sim.scenarios import ScenarioType, ground_truth_key
 from delphi.sim.telemetry import SessionTelemetry, render_telemetry
 
-IST = timezone(timedelta(hours=5, minutes=30))  # app chrome and habits are local (ADR-0014)
 SIM_HISTORY = "SIM_HISTORY"
 SIM_LIVE = "SIM_LIVE"
 PENDING_GUARDIAN = "PENDING_GUARDIAN"
@@ -236,6 +235,7 @@ class _Planner:
         self.new_payee_ids = IdStream(self.seed, "history_payee")
         self.login_ids = IdStream(self.seed, "login")
         self.new_devices: list[Device] = []
+        self.habits: dict[int, float] = {}  # customer index → habitual local hour (IST)
         self.new_payees: list[Payee] = []
         # Merchants each customer saves during the history (a payee is saved only once).
         self.saved_during: defaultdict[UUID, list[UUID]] = defaultdict(list)
@@ -247,6 +247,11 @@ class _Planner:
         ]
         self.external_people = [
             a.id for a in population.accounts if a.customer_id is None and not a.is_merchant
+        ]
+        # Shops a customer can scan-and-pay for the first time (#166): everyday categories.
+        everyday = frozenset(config.genuine_routine.new_merchant_payee.categories)
+        self.everyday_merchants = [
+            a.id for a in population.accounts if a.is_merchant and a.merchant_category in everyday
         ]
         self.phones: dict[UUID, list[Device]] = {}  # each customer's genuine new phones
         self.mule_customer: dict[UUID, Customer] = {}  # home-bank mule account → customer
@@ -569,6 +574,7 @@ class _Planner:
         habit = routine.habitual_hour.min + rng.random() * (
             routine.habitual_hour.max - routine.habitual_hour.min
         )
+        self.habits[index] = habit  # the fraud planner times APP payments by it (#166)
         payees = self.payees.get(customer.id, [])
         weights = np.asarray(
             [1 / (rank + 1) ** routine.zipf_exponent for rank in range(len(payees))]
@@ -642,7 +648,7 @@ class _Planner:
                     intents=intents,
                     instances=instances,
                 )
-        if customer.persona_key is None:  # personas save no new people (#64)
+        if customer.persona_key is None:  # personas save no new people or shops (#64)
             self._new_people(
                 index,
                 habit=habit,
@@ -650,6 +656,78 @@ class _Planner:
                 intents=intents,
                 instance=instance.id,
             )
+            self._new_merchants(
+                index,
+                habit=habit,
+                devices=(original, phones),
+                intents=intents,
+                instance=instance.id,
+            )
+
+    def _new_merchants(
+        self,
+        index: int,
+        *,
+        habit: float,
+        devices: tuple[list[Device], list[Device]],
+        intents: list[_Intent],
+        instance: UUID,
+    ) -> None:
+        """A genuine customer pays a shop they have never paid before (scan and pay), saved
+        minutes before, now and then, and sometimes again later (#166): so a new payee, a young
+        payee and a payee saved this week are no fraud tells. Its own stream,
+        ``keyed_rng(seed, "merchant_payee", i)``, so no other draw moves."""
+        cfg = self.routine.new_merchant_payee
+        customer = self.pop.customers[index]
+        account = self.home_account[customer.id]
+        rng = keyed_rng(self.seed, "merchant_payee", str(index))
+        scale = self.cfg.population.income_amount_scale[customer.income_band]
+        amount = cfg.amount_inr or self.routine.amount_inr["MERCHANT"]
+        channels = cfg.channel or self.routine.channel["MERCHANT"]
+        original, phones = devices
+        at = self.pop.history_start
+        while self.everyday_merchants:
+            at += timedelta(days=float(rng.exponential(cfg.mean_days)))
+            if at >= self.horizon:
+                return
+            payee = self.everyday_merchants[int(rng.integers(len(self.everyday_merchants)))]
+            if payee in {*self.payees.get(customer.id, []), *self.saved_during[customer.id]}:
+                continue  # paid there before: nothing new to save
+            self.saved_during[customer.id].append(payee)
+            span = cfg.lead_minutes.max - cfg.lead_minutes.min
+            lead = timedelta(minutes=cfg.lead_minutes.min + rng.random() * span)
+            day = at.astimezone(IST).replace(hour=0, minute=0, second=0, microsecond=0)
+            hour = (habit + self.routine.hour_sd * rng.standard_normal()) % _HOURS_PER_DAY
+            first = day + timedelta(seconds=int(hour * _SECONDS_PER_HOUR))
+            self.new_payees.append(
+                Payee(
+                    id=self.new_payee_ids.next(),
+                    customer_id=customer.id,
+                    account_id=payee,
+                    label=(self.accounts[payee].merchant_category or "").title().replace("_", " "),
+                    added_at=max(first - lead, self.pop.history_start),
+                )
+            )
+            more = cfg.follow_up_payments
+            follow_ups = int(rng.integers(int(more.min), int(more.max) + 1))
+            later = [rng.random() * cfg.follow_up_days for _ in range(follow_ups)]
+            for when in sorted([first, *(first + timedelta(days=float(d)) for d in later)]):
+                if not self.pop.history_start <= when < self.horizon:
+                    continue
+                intents.append(
+                    self._session(
+                        rng,
+                        ScenarioType.GENUINE_ROUTINE,
+                        customer=customer,
+                        payer=account.id,
+                        payee=payee,
+                        amount_paise=_lognormal_paise(rng, amount.median * scale, amount.sigma),
+                        channel=choice(rng, channels),
+                        at=when,
+                        device=self._device_at(rng, original, phones, when),
+                        instance=instance,
+                    )
+                )
 
     def _new_people(
         self,
@@ -668,7 +746,8 @@ class _Planner:
         account = self.home_account[customer.id]
         rng = keyed_rng(self.seed, "person_payee", str(index))
         scale = self.cfg.population.income_amount_scale[customer.income_band]
-        amount = self.routine.amount_inr["FAMILY"]
+        amount = cfg.amount_inr or self.routine.amount_inr["FAMILY"]
+        channels = cfg.channel or self.routine.channel["FAMILY"]
         original, phones = devices
         at = self.pop.history_start
         while True:
@@ -710,7 +789,7 @@ class _Planner:
                         payer=account.id,
                         payee=payee,
                         amount_paise=_lognormal_paise(rng, amount.median * scale, amount.sigma),
-                        channel=choice(rng, self.routine.channel["FAMILY"]),
+                        channel=choice(rng, channels),
                         at=when,
                         device=self._device_at(rng, original, phones, when),
                         instance=instance,
@@ -756,6 +835,7 @@ def generate_history(
         genuine_sessions=made,
         coached_share=coached_share,
         crm_until=planner.horizon,
+        habits=planner.habits,
     )
     instances.extend(plan.instances)
     planner.new_devices.extend(plan.devices)
@@ -878,6 +958,7 @@ def _plan_window(
         coached_share=coached_share,
         window=(pop.history_end, planner.horizon),
         saved=saved,
+        habits=planner.habits,
     )
     fraud = [i for i in planner.fraud(plan) if i.at < planner.horizon]
     return _WindowPlan([*genuine, *fraud], plan)

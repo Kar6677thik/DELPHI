@@ -146,6 +146,13 @@ class _RingBuilder:
             balance.median * _PAISE_PER_INR * float(np.exp(balance.sigma * rng.standard_normal()))
         )
         home = customer_id is not None
+        account_id = self.ids["mule_account"].next()
+        # #166: a share of mule accounts are aged or rented, opened years ago. Their own stream
+        # (keyed by the account), so the ring's draws do not move.
+        aged = keyed_rng(self.seed, "mule_age", str(account_id))
+        if aged.random() < self.cfg.aged_share:
+            span = self.cfg.aged_opened_days_before_history
+            opened_days = span.min + (span.max - span.min) * aged.random()
         opened_at = self.pop.history_start - timedelta(seconds=int(opened_days * 86_400))
         kyc_level = MINIMAL_KYC if rng.random() < self.cfg.minimal_kyc_share else FULL_KYC
         if script is not None and script.opened_days_before_end is not None:
@@ -153,7 +160,7 @@ class _RingBuilder:
         if script is not None and script.kyc_level is not None:
             kyc_level = script.kyc_level
         return Account(
-            id=self.ids["mule_account"].next(),
+            id=account_id,
             customer_id=customer_id,
             bank_code=bank,
             is_merchant=False,
