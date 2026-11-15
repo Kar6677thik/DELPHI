@@ -43,6 +43,21 @@ Research §9.3–9.4. Module `delphi.guardian`. Decision profile `GUARDIAN_PAYME
 Steps 4–9 run as one asyncio task per session in the api process. After every step the session
 row and its probe runs are committed.
 
+**Runner** (`delphi.guardian.runner.SessionRunner`, #95). One instance per process and runner
+kind (docs/04 §5.1). `submit` starts a session and drives it in its own task. `resume_all` runs at
+start-up and drives every unfinished session the process owns (FR-GDN-14):
+
+- CREATED and PASSIVE_PROBING sessions re-run the passive phase;
+- PLANNING sessions plan, reusing a PENDING run chosen before a crash, and issue;
+- AWAITING_CUSTOMER sessions wait out the rest of the run's `deadline_at`, then time it out.
+
+Answers never pass through the task. Whoever receives one (the phone's probe-responses handler, or
+the simulated customer) calls `GuardianService.respond`, so validation errors reach the caller,
+then signals the in-process `AnswerBoard`; the waiting task wakes and plans the next step. The
+synchronous service steps run in threads, so the event loop never blocks on the database. An
+unexpected error in a task ends the session through the fail-safe. A cancelled task (shutdown)
+just stops, and its session is resumed next time.
+
 **Implementation** (`delphi.guardian.service.GuardianService`, #94). One method per step, each in
 its own transaction:
 
