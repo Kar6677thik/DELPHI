@@ -10,15 +10,19 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, Response
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
 from delphi.api.routers import API_PREFIX
 from delphi.api.security import Permission, Principal, require
+from delphi.kb.model import UNEXPLAINED
+from delphi.kb.store import get_version
 from delphi.navigator.api import (
     CaseCursor,
     CaseProtocol,
@@ -37,6 +41,7 @@ router = APIRouter(prefix=API_PREFIX, tags=["cases"])
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 200  # docs/16 §1
 PROBABILITY_DECIMALS = 6  # docs/16 §1
+UNEXPLAINED_NAME = "Unexplained"  # the implicit open hypothesis has no KB file (docs/06 §2)
 
 
 class CaseView(BaseModel):
@@ -49,6 +54,8 @@ class CaseView(BaseModel):
     guardian_session_id: UUID | None
     kb_version_id: int
     leading_hypothesis: str
+    # The hypothesis's display name in the case's pinned KB (docs/07), for the queue and console.
+    leading_hypothesis_name: str
     posterior: dict[str, float]
     prior_components: dict[str, Any]
     recommended_decision: str | None
@@ -64,7 +71,7 @@ class CaseView(BaseModel):
     version: int
 
     @staticmethod
-    def of(record: CaseRecord, now: datetime) -> CaseView:
+    def of(record: CaseRecord, now: datetime, names: Mapping[str, str]) -> CaseView:
         open_ = record.status is not CaseStatus.DISPOSED
         return CaseView(
             id=record.id,
@@ -76,6 +83,7 @@ class CaseView(BaseModel):
             guardian_session_id=record.guardian_session_id,
             kb_version_id=record.kb_version_id,
             leading_hypothesis=record.leading_hypothesis,
+            leading_hypothesis_name=names.get(record.leading_hypothesis, record.leading_hypothesis),
             posterior={k: round(v, PROBABILITY_DECIMALS) for k, v in record.posterior.items()},
             prior_components=dict(record.prior_components),
             recommended_decision=record.recommended_decision,
@@ -95,6 +103,19 @@ class CaseView(BaseModel):
 class CasePage(BaseModel):
     items: list[CaseView]
     next_cursor: str | None
+
+
+def _display_names(session: Session, records: Sequence[CaseRecord]) -> dict[int, dict[str, str]]:
+    """Each pinned KB version's hypothesis display names (UNEXPLAINED is implicit, docs/06)."""
+    names: dict[int, dict[str, str]] = {}
+    for version_id in {r.kb_version_id for r in records}:
+        version = get_version(session, version_id)
+        known = version.kb.hypotheses if version is not None else {}
+        names[version_id] = {
+            UNEXPLAINED: UNEXPLAINED_NAME,
+            **{k: h.display_name for k, h in known.items()},
+        }
+    return names
 
 
 def _platform(request: Request) -> Platform:
@@ -146,10 +167,11 @@ def read_cases(
             case_type=type,
             protocol=protocol,
         )
-    page, more = records[:limit], len(records) > limit
+        page, more = records[:limit], len(records) > limit
+        names = _display_names(session, page)
     now = platform.clock.now()
     return CasePage(
-        items=[CaseView.of(r, now) for r in page],
+        items=[CaseView.of(r, now, names[r.kb_version_id]) for r in page],
         next_cursor=_encode_cursor(sort, page[-1]) if more and page else None,
     )
 
@@ -164,7 +186,8 @@ def read_case(
     platform = _platform(request)
     with platform.sessions() as session:
         record = get_case(session, case_id)
-    if record is None:
-        raise NotFoundError("No case with this id.")
+        if record is None:
+            raise NotFoundError("No case with this id.")
+        names = _display_names(session, [record])
     response.headers["ETag"] = f'"{record.version}"'
-    return CaseView.of(record, platform.clock.now())
+    return CaseView.of(record, platform.clock.now(), names[record.kb_version_id])

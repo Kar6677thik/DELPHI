@@ -325,6 +325,7 @@ def test_the_api_reads_one_case_with_its_etag(env: Env, client: TestClient) -> N
     assert response.status_code == 200 and response.headers["ETag"] == '"1"'
     view = response.json()
     assert view["protocol"] == "COERCION" and view["leading_hypothesis"] == "APP_DIGITAL_ARREST"
+    assert view["leading_hypothesis_name"] == "Coerced victim — digital arrest"  # kb/hypotheses
     assert view["posterior"] == POSTERIOR and view["sla_breached"] is False
     env.clock.advance(timedelta(minutes=31))
     assert client.get(f"/api/v1/cases/{case.id}").json()["sla_breached"] is True
