@@ -32,6 +32,7 @@ from delphi.sensing.artifacts import (
     store_artifact,
 )
 from delphi.sensing.jobs import NoDatasetError, TrainingRequest, TrainSensingJob
+from delphi.sensing.trainers import train_prior_artifact
 from delphi.sim.catalog import READY, datasets
 
 from ._db import MIGRATIONS_DIR, engine_as, upgrade
@@ -257,3 +258,27 @@ def test_an_admin_queues_one_training_job_at_a_time(env: Env) -> None:
             select(jobs.c.params).where(jobs.c.type == JobType.TRAIN_SENSING.value)
         ).scalar_one()
     assert params == {"dataset_id": str(dataset_id)}
+
+
+def test_a_kind_with_nothing_to_train_is_recorded_not_retried(env: Env) -> None:
+    """#162 review: with no labelled payment to learn from, PRIOR is recorded under
+    `not_trained` with its reason, the job succeeds, and the next kinds still train."""
+    env.add_dataset()  # a dataset row, but no payments and no labels
+    calls: list[ArtifactKind] = []
+    job = TrainSensingJob(
+        env.platform.engine,
+        env.platform.sessions,
+        env.clock,
+        {
+            ArtifactKind.PRIOR: train_prior_artifact,
+            ArtifactKind.ANOMALY: _fixed(ArtifactKind.ANOMALY, calls),
+        },
+    )
+    result = job(env.train_job())
+    assert result is not None
+    assert [r["kind"] for r in result["not_trained"]] == ["PRIOR"]
+    assert "no labelled payment" in result["not_trained"][0]["reason"]
+    assert [a["kind"] for a in result["artifacts"]] == ["ANOMALY"] and calls == [
+        ArtifactKind.ANOMALY
+    ]
+    assert result["cutoff"] == T0.isoformat()  # not the seed's: the clock

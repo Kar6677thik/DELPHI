@@ -28,6 +28,7 @@ from delphi.platform.jobs import (
 )
 from delphi.platform.tables import jobs
 from delphi.platform.worker import run_job
+from delphi.sensing.jobs import SEED_CUTOFF
 from delphi.sim import bank
 from delphi.sim.catalog import datasets
 from delphi.sim.dataset import generate_dataset
@@ -105,7 +106,8 @@ def test_the_job_queues_sensing_training_on_its_dataset(stack: Stack) -> None:
     job_id = stack.enqueue("seed-test", profile="test")
     stack.run_next()
     result = stack.job(job_id)["result"]
-    assert _train_jobs(stack) == [{"dataset_id": result["dataset_id"]}]
+    # The seed trains on what its history knew (#162: the history-end cutoff).
+    assert _train_jobs(stack) == [{"dataset_id": result["dataset_id"], "cutoff": SEED_CUTOFF}]
     assert result["train_job_id"]
 
 
@@ -138,7 +140,8 @@ def test_a_retried_attempt_returns_the_committed_dataset(stack: Stack) -> None:
     first = stack.job(job_id)["result"]
     again = stack.registry.handlers[JobType.GENERATE_DATASET](stack.context(job_id))
     assert again == first
-    assert _train_jobs(stack) == [{"dataset_id": first["dataset_id"]}]  # queued once (#88)
+    queued = [{"dataset_id": first["dataset_id"], "cutoff": SEED_CUTOFF}]
+    assert _train_jobs(stack) == queued  # queued once (#88)
     with stack.sim.connect() as conn:
         assert conn.execute(select(func.count()).select_from(datasets)).scalar_one() == 1
 
