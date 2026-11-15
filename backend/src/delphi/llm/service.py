@@ -25,6 +25,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
+from delphi.llm.anthropic_llm import AnthropicLlm
 from delphi.llm.minimise import minimise
 from delphi.llm.port import LlmPort, LlmRequest, LlmResult, LlmStatus, Purpose
 from delphi.llm.prompts import load_prompt
@@ -35,6 +36,7 @@ from delphi.llm.validators import Validation, validate
 from delphi.platform.clock import Clock
 from delphi.platform.ids import uuid7
 from delphi.platform.logging import get_logger
+from delphi.platform.settings import Settings
 from delphi.platform.tables import llm_calls
 
 log = get_logger(__name__)
@@ -170,3 +172,16 @@ def _with_status(result: LlmResult, status: LlmStatus) -> LlmResult:
         result.latency_ms,
         result.error,
     )
+
+
+def primary_provider(settings: Settings) -> LlmPort | None:
+    """The model provider from settings (docs/15 §3): the Anthropic adapter when
+    ``DELPHI_LLM_PROVIDER=anthropic`` and ``ANTHROPIC_API_KEY`` is set; otherwise none, so every
+    call uses the templates (the kill switch, NFR-12)."""
+    if settings.llm_provider != "anthropic":
+        return None
+    key = settings.anthropic_api_key
+    if key is None:
+        log.warning("llm.no_api_key", provider="anthropic")  # never the key itself
+        return None
+    return AnthropicLlm(model=settings.llm_model, api_key=key.get_secret_value())

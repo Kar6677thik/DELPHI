@@ -89,7 +89,10 @@ def test_unsafe_request_id_is_replaced(client: TestClient) -> None:
 
 
 def _assert_problem(response: object, status: int, code: str) -> dict[str, object]:
-    from httpx import Response
+    import httpx
+    import httpx2  # Starlette's TestClient uses httpx2 once it is installed (anthropic)
+
+    Response = (httpx.Response, httpx2.Response)
 
     assert isinstance(response, Response)
     assert response.status_code == status
