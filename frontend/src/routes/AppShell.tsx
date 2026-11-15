@@ -1,9 +1,12 @@
+import { useQueryClient } from '@tanstack/react-query';
+import { useCallback } from 'react';
 import { NavLink, Outlet } from 'react-router';
 
 import { RoleGate } from '../components/RoleGate';
 import { SseIndicator } from '../components/SseIndicator';
 import { UserMenu } from '../components/UserMenu';
 import { EVENT_STREAM_URL } from '../lib/config';
+import { invalidateFor } from '../lib/liveQueries';
 import { useSession } from '../lib/session';
 import { useEventStream } from '../lib/useEventStream';
 import { SCREENS } from './screens';
@@ -24,7 +27,14 @@ function navClass({ isActive }: { isActive: boolean }): string {
 /** The signed-in layout: header with live status and user menu, role-aware navigation. */
 export function AppShell() {
   const me = useSession();
-  const streamStatus = useEventStream(EVENT_STREAM_URL);
+  const queryClient = useQueryClient();
+  const onEvent = useCallback(
+    (type: string) => {
+      invalidateFor(queryClient, type);
+    },
+    [queryClient],
+  );
+  const streamStatus = useEventStream(EVENT_STREAM_URL, onEvent);
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">

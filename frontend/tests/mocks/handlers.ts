@@ -94,6 +94,7 @@ export function mockCase(overrides: Partial<CaseView> = {}): CaseView {
     guardian_session_id: '01930000-0000-7000-8000-0000000000bb',
     kb_version_id: 1,
     leading_hypothesis: 'APP_DIGITAL_ARREST',
+    leading_hypothesis_name: 'Coerced victim — digital arrest',
     posterior: { APP_DIGITAL_ARREST: 0.71, GENUINE: 0.08, UNEXPLAINED: 0.1 },
     prior_components: {},
     recommended_decision: null,

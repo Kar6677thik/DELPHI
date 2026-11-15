@@ -1,22 +1,41 @@
+import { useEffect, useState } from 'react';
+import { Link } from 'react-router';
+
 import { useCases } from '../api/cases';
 import type { CaseView } from '../api/types';
+import { MoneyText } from '../components/MoneyText';
 import { ProblemAlert } from '../components/ProblemAlert';
 
-const INR = new Intl.NumberFormat('en-IN', {
-  style: 'currency',
-  currency: 'INR',
-  maximumFractionDigits: 0,
-});
+const MINUTE_MS = 60_000;
+/** How often the countdown re-renders. */
+const TICK_MS = 15_000;
 
-/** "Due in 25 min", "Due in 3 h 10 min", or "SLA breached" (docs/18: the SLA countdown). */
-export function slaLabel(item: CaseView, now: number = Date.now()): string {
+/**
+ * The SLA cell (docs/18 §2): "Due in 25 min", "Due in 3 h 10 min", "SLA breached", "Disposed".
+ * Breached comes from the server (`sla_breached`, which knows DEMO time); the countdown rounds
+ * up, so it never shows a breach early.
+ */
+export function slaLabel(item: CaseView, now: number): string {
   if (item.status === 'DISPOSED') return 'Disposed';
-  const minutes = Math.round((Date.parse(item.sla_due_at) - now) / 60_000);
-  if (item.sla_breached || minutes <= 0) return 'SLA breached';
+  if (item.sla_breached) return 'SLA breached';
+  const minutes = Math.max(1, Math.ceil((Date.parse(item.sla_due_at) - now) / MINUTE_MS));
   if (minutes < 60) return `Due in ${String(minutes)} min`;
   const hours = Math.floor(minutes / 60);
   const rest = minutes % 60;
   return rest === 0 ? `Due in ${String(hours)} h` : `Due in ${String(hours)} h ${String(rest)} min`;
+}
+
+function useNow(intervalMs: number): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => {
+      setNow(Date.now());
+    }, intervalMs);
+    return () => {
+      clearInterval(id);
+    };
+  }, [intervalMs]);
+  return now;
 }
 
 function humanise(key: string): string {
@@ -26,6 +45,7 @@ function humanise(key: string): string {
 /** The case queue (docs/18 §2 `/cases`): the M4 stub lists the open and recent cases. */
 export function CasesPage() {
   const cases = useCases();
+  const now = useNow(TICK_MS);
   return (
     <section aria-labelledby="cases-title">
       <h1 id="cases-title" className="text-2xl font-semibold">
@@ -46,15 +66,15 @@ export function CasesPage() {
                   SLA
                 </th>
                 <th scope="col" className="py-2 pr-4">
+                  Leading hypothesis
+                </th>
+                <th scope="col" className="py-2 pr-4">
                   Type
                 </th>
                 <th scope="col" className="py-2 pr-4">
                   Protocol
                 </th>
-                <th scope="col" className="py-2 pr-4">
-                  Leading hypothesis
-                </th>
-                <th scope="col" className="py-2 pr-4">
+                <th scope="col" className="py-2 pr-4 text-right">
                   At stake
                 </th>
                 <th scope="col" className="py-2 pr-4">
@@ -68,7 +88,12 @@ export function CasesPage() {
                   <td
                     className={`py-2 pr-4 ${item.sla_breached ? 'font-semibold text-red-700' : ''}`}
                   >
-                    {slaLabel(item)}
+                    {slaLabel(item, now)}
+                  </td>
+                  <td className="py-2 pr-4">
+                    <Link to={`/cases/${item.id}`} className="underline">
+                      {item.leading_hypothesis_name}
+                    </Link>
                   </td>
                   <td className="py-2 pr-4">{humanise(item.type)}</td>
                   <td className="py-2 pr-4">
@@ -80,8 +105,9 @@ export function CasesPage() {
                       'Standard'
                     )}
                   </td>
-                  <td className="py-2 pr-4">{item.leading_hypothesis}</td>
-                  <td className="py-2 pr-4">{INR.format(item.amount_at_stake_paise / 100)}</td>
+                  <td className="py-2 pr-4 text-right">
+                    <MoneyText paise={item.amount_at_stake_paise} />
+                  </td>
                   <td className="py-2 pr-4">{humanise(item.status)}</td>
                 </tr>
               ))}

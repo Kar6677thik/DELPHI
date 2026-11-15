@@ -40,10 +40,13 @@ ADR-0008. React 18 + TypeScript (strict) + Vite, served as static files by the a
 | `/evaluation` | Evaluation | all (run: `admin`) | results table B1/B2/DELPHI with CIs, charts |
 | `/admin` | Admin | `admin` | users, datasets, sensing training, demo story runner, demo reset, jobs |
 
-**M4 case stub (#97):** `/cases` lists the first page of `GET /cases`, soonest SLA first: SLA
-countdown ("Due in 25 min", "SLA breached"), type, protocol (a Coercion badge), leading hypothesis,
-amount at stake and status, with loading, empty and error states. Sorting controls, expected loss
-and campaign arrive with the console and campaigns (#103, M5); `/cases/:id` is still a placeholder.
+**M4 case stub (#97):** `/cases` lists the first page of `GET /cases`, soonest SLA first: the SLA
+countdown (it ticks, rounds up, and takes "SLA breached" from the server's `sla_breached`),
+the leading hypothesis's display name (linking to `/cases/:id`, still a placeholder), type,
+protocol (a Coercion badge), the amount at stake (`MoneyText`) and status, with loading, empty
+and error states. `case.opened` and `case.updated` invalidate the `['cases']` queries
+(`lib/liveQueries.ts`, the first SSE → query-key map). Sorting controls, expected loss and
+campaign arrive with the console and campaigns (#103, M5).
 
 ## 3. Shared components (single implementation each)
 
