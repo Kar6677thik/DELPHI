@@ -382,6 +382,26 @@ How the freeze is done (`delphi sim freeze-response-models`; the inputs are in
 - The snapshot test fails if the committed file differs from a fresh freeze. A deliberate change
   bumps `generator_version` and is recorded in `sim/config/CHANGELOG.md` (§5.4).
 
+**The simulated customer** (`delphi.sim.customer.SimulatedCustomer`, #95) answers live
+sessions in the worker, the only process with ground truth. For each active probe it reads the
+payment's scenario and whether the victim was coached, then draws the outcome with
+`sample_answer` on a stream keyed by (profile seed, "answer", payment id, probe), so a replay
+answers identically. It then builds the raw answer the customer channel carries (doc 08 §4)
+against the KB's classifier thresholds, so the Guardian's classifier recovers exactly the drawn
+outcome (a unit test checks every probe × outcome × scenario):
+
+- **Questions:** a normal purpose in normal time; the scam's own high-risk purpose (digital
+  arrest → a fee or "safe" account, investment → investment); a slow, fast or app-switched answer
+  for the timing outcomes.
+- **OTP:** the right code, or wrong codes until the attempts run out.
+- **Biometric:** MATCH, or CANCEL.
+- **Cooling-off:** the counts for the drawn outcome, sent just before its deadline.
+
+The answer timings are gap fills (named constants in the module). A story runner can register
+scripted answers per payment (the persona scripts, §6), and probes without a script use the
+response models. The Guardian's `SimCustomerChannel` sends the steps through
+`GuardianService.respond` and the `AnswerBoard`, the same contract as the mock phone.
+
 ### 5.3 Coaching adaptation (optional switch)
 
 `coaching_adaptation: [{scenario, probe, start_day, ramp_days, shift}]` gradually moves a
