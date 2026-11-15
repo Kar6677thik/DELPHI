@@ -316,11 +316,12 @@ def _if_match(raw: str | None) -> int:
 def dispose_case(
     case_id: UUID,
     *,
+    # first: the permission is checked before the body and the headers are validated
+    principal: Annotated[Principal, Depends(require(Permission.CASE_WRITE))],
     body: DispositionRequest,
     raw: RawBody,
     key: IdempotencyKey,
     request: Request,
-    principal: Annotated[Principal, Depends(require(Permission.CASE_WRITE))],
     if_match: Annotated[str | None, Header(alias="If-Match")] = None,
 ) -> JSONResponse:
     """Decide the case (docs/05 §4, docs/09 §2): 412 `VERSION_CONFLICT` on a stale `If-Match`,
