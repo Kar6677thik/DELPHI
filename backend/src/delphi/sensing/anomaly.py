@@ -127,7 +127,24 @@ def train_anomaly(
         raise AnomalyInputError("the feature list has duplicates")
     if not rows:
         raise AnomalyInputError("no training payments")
-    matrix = feature_matrix(rows, feature_list)
+    return train_anomaly_matrix(feature_matrix(rows, feature_list), feature_list, config)
+
+
+def train_anomaly_matrix(
+    matrix: FloatMatrix, feature_list: Sequence[str], config: AnomalyConfig
+) -> AnomalyModel:
+    """``train_anomaly`` on a ready feature matrix whose columns follow ``feature_list`` (the
+    training job's path: the prior model's matrix, docs/13 §4–5)."""
+    if not feature_list:
+        raise AnomalyInputError("the feature list is empty")
+    if len(set(feature_list)) != len(feature_list):
+        raise AnomalyInputError("the feature list has duplicates")
+    if matrix.ndim != 2 or matrix.shape[1] != len(feature_list):  # noqa: PLR2004
+        raise AnomalyInputError("the matrix needs one column per feature")
+    if len(matrix) == 0:
+        raise AnomalyInputError("no training payments")
+    if not np.all(np.isfinite(matrix)):
+        raise AnomalyInputError("features must be finite")
     forest = IsolationForest(
         n_estimators=config.n_estimators,
         contamination=config.contamination,
@@ -140,5 +157,5 @@ def train_anomaly(
         forest=forest,
         feature_list=tuple(feature_list),
         quantiles=np.asarray(quantiles, dtype=np.float64),
-        n_train=len(rows),
+        n_train=len(matrix),
     )
