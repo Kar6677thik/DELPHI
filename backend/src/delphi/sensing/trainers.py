@@ -8,8 +8,9 @@ for a manual retrain, so a retrain learns from the labels that arrived since (do
 
 ``load_prior_data`` builds the prior model's three splits (the matured window, observed labels
 only, docs/13 §4); ``train_prior_artifact`` trains on them and hands ``store_artifact`` the
-blob, the report and the gate result. The tests use ``load_prior_data`` too, so they train
-exactly what the job trains.
+blob, the report and the gate result. ``load_mule_data`` and ``train_mule_artifact`` do the
+same for the mule scorer over accounts (docs/13 §6). The tests use the loaders too, so they
+train exactly what the job trains.
 """
 
 from __future__ import annotations
@@ -23,8 +24,14 @@ from sqlalchemy import Connection, select
 
 from delphi.sensing.artifacts import ArtifactKind, TrainedModel
 from delphi.sensing.config import SensingConfig, load_sensing_config
-from delphi.sensing.features import prior_feature_names, to_us
-from delphi.sensing.offline import OfflineHistories, load_bank_frames
+from delphi.sensing.features import (
+    ACCOUNT_FEATURES,
+    build_account_features,
+    prior_feature_names,
+    to_us,
+)
+from delphi.sensing.mule import MuleSplit, train_mule
+from delphi.sensing.offline import OfflineAccountHistories, OfflineHistories, load_bank_frames
 from delphi.sensing.prior import (
     TEST,
     TRAIN,
@@ -151,6 +158,151 @@ def train_prior_artifact(request: TrainingRequest) -> TrainedModel:
     )
     return TrainedModel(
         kind=ArtifactKind.PRIOR,
+        blob=model.to_bytes(),
+        metrics=dict(model.report),
+        feature_list=data.feature_list,
+        training_cutoff=request.cutoff,
+        gate_passed=gate.passed,
+        gate_reasons=gate.reasons,
+    )
+
+
+ACCOUNT = "ACCOUNT"
+_DAY_US = 86_400_000_000
+
+
+@dataclass(frozen=True, slots=True)
+class MuleData:
+    """The mule scorer's splits over accounts, and what they were cut from (docs/13 §6)."""
+
+    train: MuleSplit
+    validation: MuleSplit
+    test: MuleSplit
+    feature_list: tuple[str, ...]
+    window: bank.HistoryWindow
+    cutoff: datetime
+    # Each split's (account id, as_of in µs), in row order.
+    rows: tuple[tuple[tuple[str, int], ...], ...]
+
+
+def mule_label_times(conn: Connection, cutoff: datetime, settings: SensingConfig) -> dict[str, int]:
+    """Each account's first MULE label event the bank knew by ``cutoff`` (µs): an ACCOUNT label
+    with the MULE key (registry listing, investigator disposition), or a complaint naming it as
+    a counterparty (docs/13 §6)."""
+    lb, c = bank.labels, bank.complaints
+    first: dict[str, int] = {}
+
+    def note(account: object, at: datetime) -> None:
+        key, us = str(account), to_us(at)
+        if key not in first or us < first[key]:
+            first[key] = us
+
+    for r in conn.execute(
+        select(lb.c.subject_id, lb.c.known_at).where(
+            lb.c.subject_type == ACCOUNT,
+            lb.c.hypothesis_key == settings.mule.label_hypothesis,
+            lb.c.known_at <= cutoff,
+        )
+    ):
+        note(r.subject_id, r.known_at)
+    for r in conn.execute(
+        select(c.c.counterparty_account_ids, c.c.reported_at).where(c.c.reported_at <= cutoff)
+    ):
+        for account in r.counterparty_account_ids:
+            note(account, r.reported_at)
+    return first
+
+
+def load_mule_data(
+    conn: Connection,
+    window: bank.HistoryWindow,
+    settings: SensingConfig | None = None,
+    *,
+    cutoff: datetime | None = None,
+) -> MuleData:
+    """The labelled accounts, each with its own ``as_of``, split by first activity (docs/13 §6).
+
+    - **Mules:** accounts with a MULE label event by the cutoff. Their features are taken just
+      before the first such event, so the model never learns "a complaint means mule" (#142
+      review).
+    - **Non-mules:** accounts with no such event, opened at least ``negative_min_age_days``
+      before their ``as_of``, which is the end of the matured window.
+    - Both need an executed payment before their ``as_of``. The split is by the date of the
+      first one, with the prior's 2/3, 1/6, 1/6 parts over the matured window (§4).
+    """
+    settings = settings or load_sensing_config()
+    cutoff = cutoff or window.end
+    cutoff_us = to_us(cutoff)
+    matured_end_us = cutoff_us - window.maturity_days * _DAY_US
+    min_age_us = int(settings.mule.negative_min_age_days * _DAY_US)
+    labelled = mule_label_times(conn, cutoff, settings)
+    frames = load_bank_frames(conn)
+    offline = OfflineAccountHistories(frames, settings.accounts)
+
+    candidates: list[tuple[str, int, int, int]] = []  # account, as_of, label, first activity
+    for row in frames.accounts.itertuples(index=False):
+        account = str(row.id)
+        history = offline.snapshot(account)
+        if account in labelled:
+            as_of, label = labelled[account] - 1, 1
+        elif history.opened_at_us <= matured_end_us - min_age_us:
+            as_of, label = matured_end_us, 0
+        else:
+            continue
+        flows = np.concatenate([history.inbound_at_us, history.outbound_at_us])
+        flows = flows[flows < as_of]
+        if flows.size == 0:
+            continue
+        candidates.append((account, as_of, label, int(flows.min())))
+    candidates.sort(key=lambda c: (c[3], c[0]))
+    split = matured_split(
+        np.array([c[3] for c in candidates], dtype=np.int64),
+        history_start_us=to_us(window.start),
+        cutoff_us=cutoff_us,
+        maturity_days=window.maturity_days,
+        parts=settings.prior.split_parts,
+    )
+
+    def part(code: int) -> tuple[MuleSplit, tuple[tuple[str, int], ...]]:
+        chosen = [c for c, s in zip(candidates, split, strict=True) if s == code]
+        matrix = np.array(
+            [
+                [
+                    build_account_features(offline.snapshot(a), as_of, settings.accounts)[f]
+                    for f in ACCOUNT_FEATURES
+                ]
+                for a, as_of, _, _ in chosen
+            ],
+            dtype=np.float64,
+        ).reshape(len(chosen), len(ACCOUNT_FEATURES))
+        labels = np.array([c[2] for c in chosen], dtype=np.int64)
+        return MuleSplit(matrix, labels), tuple((a, as_of) for a, as_of, _, _ in chosen)
+
+    (train, r1), (validation, r2), (test, r3) = part(TRAIN), part(VALIDATION), part(TEST)
+    return MuleData(train, validation, test, ACCOUNT_FEATURES, window, cutoff, (r1, r2, r3))
+
+
+def train_mule_artifact(request: TrainingRequest) -> TrainedModel:
+    """``TRAIN_SENSING``'s MULE trainer (docs/13 §6)."""
+    settings = load_sensing_config()
+    window = bank.history_window(request.dataset)
+    data = load_mule_data(request.conn, window, settings, cutoff=request.cutoff)
+    mules = int(data.train.labels.sum())
+    if not 0 < mules < len(data.train):
+        raise NothingToTrainError(
+            "the mule scorer needs mules and non-mules in the training split by "
+            f"{request.cutoff.isoformat()} ({mules} of {len(data.train)} accounts are mules)"
+        )
+    model, gate = train_mule(
+        data.train,
+        data.validation,
+        data.test,
+        data.feature_list,
+        settings.mule,
+        profile=request.dataset.profile,
+    )
+    return TrainedModel(
+        kind=ArtifactKind.MULE,
         blob=model.to_bytes(),
         metrics=dict(model.report),
         feature_list=data.feature_list,
