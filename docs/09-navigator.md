@@ -108,6 +108,11 @@ opening for an account review).
 Every adapter returns the facts used (counts, timestamps, record ids). These are the only
 material the LLM narrative may cite.
 
+The rules are `delphi.probes.evidence` (pure; thresholds from `kb/engine.yaml` `classifiers:`,
+the look-back windows named in the module). In `PASS_THROUGH_DWELL`, a credit that is not yet
+80% gone counts as longer than any measured dwell, so it pushes the median up rather than being
+left out.
+
 ## 5. Investigator traces
 
 Every interaction appends a `trace_events` row: `CASE_OPENED`, `CASE_VIEWED`,
