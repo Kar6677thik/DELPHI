@@ -389,6 +389,11 @@ and the run summary shows its digest.
   PVC `delphi-backups` (5Gi, `local-path`) and keeps the 7 most recent. Recording each run in
   `delphi.ops_backup_runs`, for the Overview's backup-age alert (doc 20 §4), comes with that
   table (M9).
+- Before `pg_dump`, the backup waits up to 60 s for `delphi-postgres` (`pg_isready`), then
+  fails with "postgres unreachable after 60s". k3s enforces NetworkPolicy with kube-router,
+  which sets up a new pod's rules a few seconds after it starts, so a short-lived Job that
+  connects at once can be refused (#181). The CronJob carries `orbit.backup/scope: local`,
+  which tells Orbit this is a copy on the same host.
 - **The backups live on the same disk as the database**, so they protect against mistakes, not
   against losing the disk. An off-host copy is the owner's decision (not in scope).
 - **Restore drill** (M9, then monthly), to prove backups work (EFG §34):

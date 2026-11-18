@@ -16,7 +16,10 @@ kind: CronJob
 metadata:
   name: delphi-pg-backup
   namespace: delphi
-  labels: { app.kubernetes.io/name: delphi, app.kubernetes.io/component: backup }
+  labels:
+    app.kubernetes.io/name: delphi
+    app.kubernetes.io/component: backup
+    orbit.backup/scope: local # a copy on this host; Orbit tells it from off-host ones (#181)
 spec:
   schedule: "30 21 * * *" # UTC = 03:00 IST
   concurrencyPolicy: Forbid
@@ -53,6 +56,11 @@ spec:
                   set -eu
                   export PGPASSWORD="$POSTGRES_PASSWORD"
                   out="/backups/delphi-$(date -u +%Y%m%dT%H%M%SZ).dump"
+                  # k3s (kube-router) programs a new pod's NetworkPolicy rules a few seconds after
+                  # it starts; until then its connections are refused. Wait up to ~60 s (#181).
+                  db="-h delphi-postgres -p 5432 -U ${POSTGRES_USER:-postgres} -d delphi"
+                  for i in $(seq 1 30); do pg_isready $db -t 2 && break; sleep 2; done
+                  pg_isready $db -t 2 || { echo "postgres unreachable after 60s"; exit 1; }
                   pg_dump -h delphi-postgres -U "${POSTGRES_USER:-postgres}" -d delphi -Fc -f "$out.part"
                   mv "$out.part" "$out"
                   ls -1t /backups/delphi-*.dump | tail -n +8 | xargs -r rm --
