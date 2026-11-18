@@ -55,6 +55,7 @@ spec:
                 - |
                   set -eu
                   export PGPASSWORD="$POSTGRES_PASSWORD"
+                  rm -f /backups/*.part # a failed run's partial dump (concurrencyPolicy: Forbid, #183)
                   out="/backups/delphi-$(date -u +%Y%m%dT%H%M%SZ).dump"
                   # k3s (kube-router) programs a new pod's NetworkPolicy rules a few seconds after
                   # it starts; until then its connections are refused. Wait up to ~60 s (#181).
