@@ -354,6 +354,65 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/cases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Cases
+         * @description The case queue: soonest SLA first (``sort=sla_due_at``), or newest first.
+         */
+        get: operations["read_cases_api_v1_cases_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/cases/{case_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Case */
+        get: operations["read_case_api_v1_cases__case_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/cases/{case_id}/disposition": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dispose Case
+         * @description Decide the case (docs/05 §4, docs/09 §2): 412 `VERSION_CONFLICT` on a stale `If-Match`,
+         *     409 once disposed, 422 for a decision outside the profile, a missing typology for
+         *     CONFIRM_FRAUD, or an override without a rationale of 20+ characters.
+         */
+        post: operations["dispose_case_api_v1_cases__case_id__disposition_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -372,6 +431,190 @@ export interface components {
             checked: number;
             /** First Bad Id */
             first_bad_id?: number | null;
+        };
+        /**
+         * CaseDetail
+         * @description One case with the console's decision support (docs/09 §2, docs/16).
+         */
+        CaseDetail: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            type: components["schemas"]["CaseType"];
+            protocol: components["schemas"]["CaseProtocol"];
+            status: components["schemas"]["CaseStatus"];
+            /** Subject Payment Id */
+            subject_payment_id: string | null;
+            /** Subject Account Id */
+            subject_account_id: string | null;
+            /** Guardian Session Id */
+            guardian_session_id: string | null;
+            /** Kb Version Id */
+            kb_version_id: number;
+            /** Leading Hypothesis */
+            leading_hypothesis: string;
+            /** Leading Hypothesis Name */
+            leading_hypothesis_name: string;
+            /** Posterior */
+            posterior: {
+                [key: string]: number;
+            };
+            /** Prior Components */
+            prior_components: {
+                [key: string]: unknown;
+            };
+            /** Recommended Decision */
+            recommended_decision: string;
+            /** Risk By Decision */
+            risk_by_decision: {
+                [key: string]: number;
+            };
+            /** Amount At Stake Paise */
+            amount_at_stake_paise: number;
+            /**
+             * Opened At
+             * Format: date-time
+             */
+            opened_at: string;
+            /**
+             * Sla Due At
+             * Format: date-time
+             */
+            sla_due_at: string;
+            /** Sla Breached */
+            sla_breached: boolean;
+            /** Unexplained */
+            unexplained: boolean;
+            /** Dd Pack Complete */
+            dd_pack_complete: boolean;
+            /** Disposition */
+            disposition: string | null;
+            /** Disposed At */
+            disposed_at: string | null;
+            /** Disposition Typology */
+            disposition_typology?: string | null;
+            /** Disposition Confidence */
+            disposition_confidence?: number | null;
+            /**
+             * Is Override
+             * @default false
+             */
+            is_override: boolean;
+            /** Override Rationale */
+            override_rationale?: string | null;
+            /** Disposed By */
+            disposed_by?: string | null;
+            /** Version */
+            version: number;
+            /** Next Best Evidence */
+            next_best_evidence: components["schemas"]["EvidenceRowView"][];
+            /** Evidence Sufficient */
+            evidence_sufficient: boolean;
+            what_would_change_my_mind: components["schemas"]["FlipView"] | null;
+        };
+        /** CasePage */
+        CasePage: {
+            /** Items */
+            items: components["schemas"]["CaseView"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
+        /**
+         * CaseProtocol
+         * @enum {string}
+         */
+        CaseProtocol: "STANDARD" | "COERCION";
+        /**
+         * CaseSort
+         * @description The case queue's orders (docs/16): soonest SLA first, or newest first.
+         * @enum {string}
+         */
+        CaseSort: "sla_due_at" | "opened_at";
+        /**
+         * CaseStatus
+         * @enum {string}
+         */
+        CaseStatus: "OPEN" | "IN_PROGRESS" | "DISPOSED";
+        /**
+         * CaseType
+         * @enum {string}
+         */
+        CaseType: "PAYMENT_HOLD" | "ACCOUNT_REVIEW";
+        /** CaseView */
+        CaseView: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            type: components["schemas"]["CaseType"];
+            protocol: components["schemas"]["CaseProtocol"];
+            status: components["schemas"]["CaseStatus"];
+            /** Subject Payment Id */
+            subject_payment_id: string | null;
+            /** Subject Account Id */
+            subject_account_id: string | null;
+            /** Guardian Session Id */
+            guardian_session_id: string | null;
+            /** Kb Version Id */
+            kb_version_id: number;
+            /** Leading Hypothesis */
+            leading_hypothesis: string;
+            /** Leading Hypothesis Name */
+            leading_hypothesis_name: string;
+            /** Posterior */
+            posterior: {
+                [key: string]: number;
+            };
+            /** Prior Components */
+            prior_components: {
+                [key: string]: unknown;
+            };
+            /** Recommended Decision */
+            recommended_decision: string | null;
+            /** Risk By Decision */
+            risk_by_decision: {
+                [key: string]: unknown;
+            } | null;
+            /** Amount At Stake Paise */
+            amount_at_stake_paise: number;
+            /**
+             * Opened At
+             * Format: date-time
+             */
+            opened_at: string;
+            /**
+             * Sla Due At
+             * Format: date-time
+             */
+            sla_due_at: string;
+            /** Sla Breached */
+            sla_breached: boolean;
+            /** Unexplained */
+            unexplained: boolean;
+            /** Dd Pack Complete */
+            dd_pack_complete: boolean;
+            /** Disposition */
+            disposition: string | null;
+            /** Disposed At */
+            disposed_at: string | null;
+            /** Disposition Typology */
+            disposition_typology?: string | null;
+            /** Disposition Confidence */
+            disposition_confidence?: number | null;
+            /**
+             * Is Override
+             * @default false
+             */
+            is_override: boolean;
+            /** Override Rationale */
+            override_rationale?: string | null;
+            /** Disposed By */
+            disposed_by?: string | null;
+            /** Version */
+            version: number;
         };
         /**
          * CheckStatus
@@ -412,6 +655,60 @@ export interface components {
          * @enum {string}
          */
         DiffOp: "added" | "removed" | "changed";
+        /**
+         * DispositionRequest
+         * @description docs/16: `{decision, typology?, confidence (1–5), note?, override_rationale?}`.
+         */
+        DispositionRequest: {
+            /** Decision */
+            decision: string;
+            /** Typology */
+            typology?: string | null;
+            /** Confidence */
+            confidence: number;
+            /** Note */
+            note?: string | null;
+            /** Override Rationale */
+            override_rationale?: string | null;
+        };
+        /**
+         * EvidenceRowView
+         * @description docs/09 §2 item 2: one evidence item, eligible ones ranked by net value.
+         */
+        EvidenceRowView: {
+            /** Source Key */
+            source_key: string;
+            /** Eligible */
+            eligible: boolean;
+            /** Ineligible Reason */
+            ineligible_reason: string | null;
+            /** Net Value Paise */
+            net_value_paise: number | null;
+            /** Cost Paise */
+            cost_paise: number;
+            /** Expected Minutes */
+            expected_minutes: number;
+            /** Settle Pct */
+            settle_pct: number | null;
+            /** Pinned By Protocol */
+            pinned_by_protocol: boolean;
+        };
+        /**
+         * FlipView
+         * @description docs/06 §12: the most likely single evidence outcome that would change the decision.
+         */
+        FlipView: {
+            /** Source Key */
+            source_key: string;
+            /** Outcome */
+            outcome: string;
+            /** Probability */
+            probability: number;
+            /** New Decision */
+            new_decision: string;
+            /** Risk Change Paise */
+            risk_change_paise: number;
+        };
         /** HealthView */
         HealthView: {
             /**
@@ -1331,6 +1628,111 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["JobView"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    read_cases_api_v1_cases_get: {
+        parameters: {
+            query?: {
+                status?: components["schemas"]["CaseStatus"] | null;
+                type?: components["schemas"]["CaseType"] | null;
+                protocol?: components["schemas"]["CaseProtocol"] | null;
+                sort?: components["schemas"]["CaseSort"];
+                limit?: number;
+                cursor?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CasePage"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    read_case_api_v1_cases__case_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseDetail"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    dispose_case_api_v1_cases__case_id__disposition_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "If-Match"?: string | null;
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DispositionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseDetail"];
                 };
             };
             /** @description An RFC 9457 problem (docs/16 §1) */

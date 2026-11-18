@@ -1,0 +1,11 @@
+# How the simulated customer times its answers (docs/14 §5.2, #95). Gap fills: docs/14 gives
+# the answer outcomes, not the raw timings. Every range sits clearly on its side of the KB
+# classifier thresholds it is checked against (sim/customer.py), so the Guardian's classifier
+# recovers the drawn outcome. Live answers only: changing these changes no generated dataset.
+
+quick_answer_s: [2.0, 6.0]     # a biometric touch, a yes/no, the collect-intent check
+otp_typing_s: [8.0, 20.0]      # typing a 6-digit code; capped so all attempts fit the deadline
+margin_s: 0.5                  # how far a drawn latency stays from a classifier threshold
+slow_extra_s: [2.0, 20.0]      # how much slower than a threshold a hesitant answer is
+cooling_off_slack_s: 5.0       # the cooling-off answer arrives this long before its deadline
+min_latency_s: 1.0             # no answer is faster than this

@@ -6,9 +6,13 @@ root (``delphi.cli``) builds the ``delphi_sim`` engine and calls ``register_sim_
 **GENERATE_DATASET** generates a profile in memory, then writes it into the bank in one
 ``delphi_sim`` transaction: the bank and ground-truth rows (``delphi.sim.writer``), the
 ``delphi.datasets`` row with ``seed_completed_at`` (the marker demo reset deletes back to,
-docs/14 §10), and the persona manifest (docs/14 §6). Jobs run at least once, so the handler is
-idempotent: a retry finds the dataset its earlier attempt committed (by ``job_id``) and returns
-it. The bank holds one dataset; a second one is refused.
+docs/14 §10), the persona manifest (docs/14 §6), and the labels already due by the end of the
+history (``delphi.sim.delivery``), so a seeded bank knows its history's labels. Jobs run at least
+once, so the handler is idempotent: a retry finds the dataset its earlier attempt committed (by
+``job_id``) and returns it. The bank holds one dataset; a second one is refused.
+
+**LABEL_DELIVERY** (every 60 s, docs/04 §5.4) delivers the labels that fell due since, by the
+clock, mapped through the ACTIVE KB at delivery (docs/14 §7).
 """
 
 from __future__ import annotations
@@ -21,6 +25,7 @@ from uuid import UUID
 from sqlalchemy import Connection, Engine, exists, func, select
 
 from delphi.kb.model import KnowledgeBase
+from delphi.kb.store import active_version
 from delphi.platform.clock import Clock
 from delphi.platform.ids import uuid7
 from delphi.platform.jobs import JobContext, JobRegistry, JobType, enqueue
@@ -28,7 +33,8 @@ from delphi.platform.locks import DATASET_WRITE_LOCK_KEY
 from delphi.sim import bank
 from delphi.sim.catalog import READY, datasets
 from delphi.sim.dataset import generate_dataset
-from delphi.sim.generator_config import GeneratorConfig, load_generator_config
+from delphi.sim.delivery import deliver_labels
+from delphi.sim.generator_config import GeneratorConfig, history_end, load_generator_config
 from delphi.sim.personas import manifest_json
 from delphi.sim.response_models import load_config
 from delphi.sim.stats import StatsReport, dataset_stats
@@ -131,12 +137,9 @@ class GenerateDatasetJob:
             return self._then_train(ctx, done)
         self._report(ctx, PROGRESS_STARTED)
         config = params.config(self.config)
+        generated_at = self.clock.now()  # `demo` ends its history now (docs/14 §2)
         dataset = generate_dataset(
-            config,
-            params.profile,
-            kb=self.kb,
-            created_at=self.clock.now(),  # `demo` ends its history now (docs/14 §2)
-            personas=params.personas,
+            config, params.profile, kb=self.kb, created_at=generated_at, personas=params.personas
         )
         report = _report_json(dataset_stats(dataset, config))
         self._report(ctx, PROGRESS_GENERATED)
@@ -147,6 +150,10 @@ class GenerateDatasetJob:
                 return self._then_train(ctx, done)
             rows = dict(write_dataset(conn, dataset))
             now = self.clock.now()
+            ended = history_end(config, params.profile, created_at=generated_at)
+            rows["labels"] = deliver_labels(
+                conn, until=ended, active_hypotheses=_active_hypotheses(conn, self.kb), now=now
+            )
             dataset_id = uuid7(unix_ms=int(now.timestamp() * 1000))
             row = {
                 "id": dataset_id,
@@ -155,7 +162,9 @@ class GenerateDatasetJob:
                 "seed": config.profiles[params.profile].seed,
                 "generator_version": self.generator_version,
                 "status": READY,
-                "stats": {"rows": rows, "report": report},
+                # `history_end`: where the generated history stops (docs/14 §2), which the
+                # sensing trainers cut by (#162).
+                "stats": {"rows": rows, "report": report, "history_end": ended.isoformat()},
                 "seed_completed_at": now,
                 "created_at": now,
             }
@@ -180,7 +189,8 @@ class GenerateDatasetJob:
                 self.clock,
                 JobType.TRAIN_SENSING,
                 idempotency_key=f"TRAIN_SENSING:dataset-{summary['dataset_id']}",
-                params={"dataset_id": summary["dataset_id"]},
+                # The seed trains on what its history knew (sensing.jobs.SEED_CUTOFF).
+                params={"dataset_id": summary["dataset_id"], "cutoff": "history_end"},
             )
         return {**summary, "train_job_id": str(queued.job_id)}
 
@@ -188,6 +198,30 @@ class GenerateDatasetJob:
     def _report(ctx: JobContext, progress: float) -> None:
         if not ctx.report(progress):
             raise LeaseLostError(f"job {ctx.job.id} is no longer this worker's")
+
+
+def _active_hypotheses(conn: Connection, fallback: KnowledgeBase) -> frozenset[str]:
+    """The ACTIVE KB's hypothesis keys at delivery (docs/14 §7); the worker's KB if the bank has
+    none yet."""
+    active = active_version(conn)
+    return frozenset((active.kb if active is not None else fallback).hypotheses)
+
+
+@dataclass(frozen=True, slots=True)
+class LabelDeliveryJob:
+    """``LABEL_DELIVERY``: deliver the labels due by now (docs/14 §7–8)."""
+
+    sim_engine: Engine  # as delphi_sim: it reads sim_truth.label_schedule
+    clock: Clock
+    kb: KnowledgeBase
+
+    def __call__(self, ctx: JobContext) -> Mapping[str, Any] | None:
+        now = self.clock.now()
+        with self.sim_engine.begin() as conn:
+            delivered = deliver_labels(
+                conn, until=now, active_hypotheses=_active_hypotheses(conn, self.kb), now=now
+            )
+        return {"delivered": delivered, "until": now.isoformat()}
 
 
 def register_sim_jobs(
@@ -209,4 +243,7 @@ def register_sim_jobs(
             generator_version=load_config().generator_version,
             allowed_profiles=allowed_profiles,
         ),
+    )
+    registry.register(
+        JobType.LABEL_DELIVERY, LabelDeliveryJob(sim_engine=sim_engine, clock=clock, kb=kb)
     )

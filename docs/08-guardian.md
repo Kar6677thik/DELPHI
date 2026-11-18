@@ -40,10 +40,79 @@ Research §9.3–9.4. Module `delphi.guardian`. Decision profile `GUARDIAN_PAYME
 11 write audit entries; emit SSE events; the DD pack is available
 ```
 
-Steps 4–9 run as one asyncio task per session in the api process. After every step the session
-row and its probe runs are committed. On api start-up, sessions in `PASSIVE_PROBING` or
-`PLANNING` are resumed. Sessions stuck in `AWAITING_CUSTOMER` for longer than the timeout are
-resolved as timed out (FR-GDN-14).
+Steps 4–9 run as one asyncio task per session, in the process that owns it (the api for the mock
+phone, the worker for simulated customers; doc 04 §5.1). After every step the session
+row and its probe runs are committed.
+
+**Runner** (`delphi.guardian.runner.SessionRunner`, #95). One instance per process and runner
+kind (docs/04 §5.1). `submit` starts a session and drives it in its own task. `resume_all` runs at
+start-up and drives every unfinished session the process owns (FR-GDN-14):
+
+- CREATED and PASSIVE_PROBING sessions re-run the passive phase;
+- PLANNING sessions plan, reusing a PENDING run chosen before a crash, and issue;
+- AWAITING_CUSTOMER sessions wait out the rest of the run's `deadline_at`, then time it out.
+
+Answers never pass through the task. Whoever receives one (the phone's probe-responses handler, or
+the simulated customer) calls `GuardianService.respond`, so validation errors reach the caller,
+then signals the in-process `AnswerBoard`; the waiting task wakes and plans the next step. A
+cancel is signalled the same way, so the task does not sleep until the probe's deadline. The
+runner registers (`expect`s) a run before asking, so a fast answer is never lost; signals for runs
+nobody expects are dropped. The
+synchronous service steps run in threads, so the event loop never blocks on the database. An
+unexpected error in a task ends the session through the fail-safe. A cancelled task (shutdown)
+just stops, and its session is resumed next time.
+
+**Implementation** (`delphi.guardian.service.GuardianService`, #94). One method per step, each in
+its own transaction:
+
+- `start` (steps 1–3) commits the CREATED session on its own first, so a later failure still has
+  a session to hold, then builds the prior from `PriorPort` (the sensing inference, #92):
+  `with_payer_mule` → `engine.build_prior`. It persists `p_model`, `q`, `u`, the KB-only shares,
+  the top features and the prior, and takes the fast path on `p_model(GENUINE)`.
+- `passive` (step 4) runs the eligible passive probes through `delphi.probes.api`, for a CREATED
+  session or one left in PASSIVE_PROBING by a crash (see "Concurrency and resume" below); any
+  other status makes it a no-op. Each probe run stores VoI_1 and the net
+  value against the prior, for analytics (doc 06 §9).
+- `plan` (steps 5, 6, 8) either decides, or stores the chosen active probe as a PENDING probe run
+  carrying the candidates table, ready to issue. On STOP the last candidates table goes into the
+  `guardian.session.decided` audit entry, since the session row has no candidates column.
+- **RNG.** Each planning step draws from `default_rng([rng_seed, number of active runs so far])`,
+  a stream derived from the session's seed (doc 06 §10). A resumed or replayed session therefore
+  draws the same numbers without persisting generator state.
+- **The decision** (step 9) sets the payment's status through `sim.api.apply_guardian_decision`,
+  opens the case through `navigator.api.open_case` (idempotent for the same session), sets the
+  Scout flag, and writes the audit entry and the event in the same transaction.
+- **Concurrency and resume.** `plan` locks the session row; if a PENDING run already exists
+  (a crash between planning and issuing) it returns that run instead of choosing again. `passive`
+  also resumes a session left in PASSIVE_PROBING, and applies its results only to the session
+  version it moved, so a cancel during the passive phase wins. A decision closes any open probe
+  run (ERROR, `closed_by` the terminal reason). The session's age for `session_max_duration_s`
+  leaves out the COOLING_OFF window.
+- **Fail-safe** (FR-GDN-13). Any error in a step rolls that step back, and `fail_safe` then decides
+  HOLD_FOR_REVIEW with terminal reason ENGINE_ERROR in a fresh transaction, without running the
+  engine: the payment is HELD and a STANDARD case is opened. A finished session is left alone.
+  If that full fail-safe fails too (e.g. the bank step), the session still ends DECIDED
+  HOLD_FOR_REVIEW / ENGINE_ERROR, with the payment and the case left to an operator and an
+  audit entry `guardian.session.fail_safe_failed`. Planning a session that isn't PLANNING is a
+  caller error (409), not an engine error.
+- **Active probes** (step 7). `issue` turns a PENDING run into AWAITING_CUSTOMER and returns
+  what the channel shows: the question variant (doc 07 §9, rotated over the payer's earlier
+  sessions), or a fresh OTP code (the run stores `sha256(probe_run_id:code)` and never the code;
+  a wrong attempt is masked too). `respond` checks the client signals (§4), classifies (§5),
+  updates and returns to PLANNING; a COOLING_OFF cancel ends the session. The run stores its
+  `deadline_at` (issue time + `timeout_s`): an answer after it is refused (409), and `timeout`
+  before it is refused. `timeout` fails a step-up (FAILED_OR_ABANDONED, with an update) and
+  records any other probe as TIMED_OUT with no update. `respond` and `timeout` need the session
+  to be AWAITING_CUSTOMER, so a finished session is never reopened. `cancel` ends the session
+  CANCELLED_BY_CUSTOMER with the payment CANCELLED, and closes the open run (ERROR, `closed_by`
+  CUSTOMER_CANCELLED). A bad answer, an
+  implausible timing or a wrong state is a caller error (400/409), never an ENGINE_ERROR hold.
+  The screen for each non-question active probe (OTP, BIOMETRIC, COOLING_OFF) is fixed in code
+  (`guardian.active`), since probes are code (ADR-0006). On api start-up, sessions in `PASSIVE_PROBING` or
+  If that full fail-safe fails too (e.g. the bank step), the session still ends DECIDED
+  HOLD_FOR_REVIEW / ENGINE_ERROR, with the payment and the case left to an operator and an
+  audit entry `guardian.session.fail_safe_failed`.
+  Planning a session that isn't PLANNING is a caller error (409), not an engine error.
 
 ## 3. Fast path
 

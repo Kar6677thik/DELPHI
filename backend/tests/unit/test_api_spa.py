@@ -82,7 +82,7 @@ def test_missing_asset_is_404_not_index(client: TestClient) -> None:
     assert response.headers["content-type"] == "application/problem+json"
 
 
-@pytest.mark.parametrize("path", ["/api", "/api/nope", "/api/v1/nope", "/api/v1/cases/1"])
+@pytest.mark.parametrize("path", ["/api", "/api/nope", "/api/v1/nope", "/api/v1/nope/1"])
 def test_unknown_api_paths_stay_problem_json(client: TestClient, path: str) -> None:
     response = client.get(path)
     assert response.status_code == 404
@@ -123,7 +123,10 @@ def test_the_fallback_is_not_in_the_contract(client: TestClient) -> None:
 
 
 def _problem(response: object, status: int) -> None:
-    from httpx import Response
+    import httpx
+    import httpx2  # Starlette's TestClient uses httpx2 once it is installed (anthropic)
+
+    Response = (httpx.Response, httpx2.Response)
 
     assert isinstance(response, Response)
     assert response.status_code == status
@@ -134,7 +137,7 @@ def _problem(response: object, status: int) -> None:
     ("method", "path"),
     [
         ("POST", "/api/v1/nope"),
-        ("DELETE", "/api/v1/cases/1"),
+        ("DELETE", "/api/v1/nope/1"),
         ("PUT", "/api"),
         ("PATCH", "/api/v1/nope/"),
         ("POST", "/guardian"),

@@ -5,6 +5,7 @@ description = "DELPHI — Dynamic Evidence-Led Probing of fraud Hypotheses & Int
 requires-python = ">=3.12,<3.13"
 dependencies = [
   "alembic>=1.14",
+  "anthropic>=1.0",
   "argon2-cffi>=23.1",
   "fastapi>=0.115",
   "jinja2>=3.1",
@@ -140,8 +141,10 @@ type = "forbidden"
 source_modules = [
   "delphi.chase",
   "delphi.engine",
+  "delphi.guardian",
   "delphi.kb",
   "delphi.llm",
+  "delphi.navigator",
   "delphi.probes",
   "delphi.platform",
   "delphi.sensing",
@@ -156,12 +159,20 @@ source_modules = ["delphi.platform"]
 forbidden_modules = [
   "delphi.chase",
   "delphi.engine",
+  "delphi.guardian",
   "delphi.kb",
   "delphi.llm",
+  "delphi.navigator",
   "delphi.probes",
   "delphi.sensing",
   "delphi.sim",
 ]
+
+[[tool.importlinter.contracts]]
+name = "navigator does not import guardian: Guardian opens cases through navigator.api (no cycle)"
+type = "forbidden"
+source_modules = ["delphi.navigator"]
+forbidden_modules = ["delphi.guardian"]
 
 [[tool.importlinter.contracts]]
 name = "only sim and evaluation import ground truth (docs/04 §4.1 rule 5)"

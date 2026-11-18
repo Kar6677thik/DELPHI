@@ -5,15 +5,17 @@ asking the worker for a dataset (docs/16 §2 `POST /admin/datasets`, docs/23 §4
 Feature modules read the simulated bank through these re-exported `bank` tables (the probes'
 sim adapters, sensing, the Navigator evidence rules), so the schema is defined once, in
 `delphi.sim.bank`. They are **read-only** for everyone but the simulator, except
-`account_scores`, which the mule scorer writes (docs/13 §6). Nothing from
-`sim_truth` is exported: this module reads no ground truth, so the api may import it.
+`account_scores`, which the mule scorer writes (docs/13 §6). `labels` (`delphi.labels`, #159) is
+what the bank has observed so far, delivered from the simulator's schedule by `LABEL_DELIVERY`;
+the sensing trainers read it. Nothing from `sim_truth` is exported: this module reads no ground
+truth, so the api may import it.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Literal, get_args
 from uuid import UUID
 
@@ -23,6 +25,7 @@ from sqlalchemy.orm import Session
 from delphi.platform.clock import Clock
 from delphi.platform.errors import DelphiError, InvalidStateTransitionError, ProblemCode
 from delphi.platform.jobs import Enqueued, JobStatus, JobType, enqueue, requeue_failed
+from delphi.platform.labels import labels  # the labels the bank has observed (#159)
 from delphi.platform.locks import DATASET_REQUEST_LOCK_KEY
 from delphi.platform.tables import jobs
 from delphi.sim.bank import (
@@ -41,21 +44,41 @@ from delphi.sim.bank import (
     sim_registry_listings,
 )
 from delphi.sim.catalog import datasets
+from delphi.sim.generator_config import history_end, load_generator_config
+from delphi.sim.payments import (
+    STATUS_FOR_DECISION,
+    PaymentStatus,
+    PaymentView,
+    apply_case_disposition,
+    apply_guardian_decision,
+    cancel_payment,
+    get_payment,
+)
 
 # The read-only `bank` tables re-exported for feature modules, and this facade's own API.
 __all__ = [
     "DATASET_REQUEST_LOCK_KEY",
     "PROFILES",
+    "STATUS_FOR_DECISION",
     "DatasetInfo",
     "DatasetProfile",
+    "HistoryWindow",
+    "PaymentStatus",
+    "PaymentView",
     "account_scores",
     "accounts",
+    "apply_case_disposition",
+    "apply_guardian_decision",
+    "cancel_payment",
     "complaints",
     "crm_events",
     "current_dataset",
     "customers",
     "dataset_exists",
     "devices",
+    "get_payment",
+    "history_window",
+    "labels",
     "ledger_entries",
     "login_events",
     "payees",
@@ -84,14 +107,41 @@ class DatasetInfo:
     profile: str
     seed: int
     created_at: datetime
+    # Where the generated history ends (`stats.history_end`, #161); None on older datasets.
+    history_end: datetime | None = None
 
 
 def current_dataset(conn: Connection | Session) -> DatasetInfo | None:
     """The bank holds at most one dataset (docs/14 §10); ``None`` before seeding."""
+    d = datasets.c
     row = conn.execute(
-        select(datasets.c.id, datasets.c.profile, datasets.c.seed, datasets.c.created_at).limit(1)
+        select(d.id, d.profile, d.seed, d.created_at, d.stats["history_end"].astext).limit(1)
     ).first()
-    return DatasetInfo(row.id, row.profile, row.seed, row.created_at) if row is not None else None
+    if row is None:
+        return None
+    ended = datetime.fromisoformat(row[4]) if row[4] else None
+    return DatasetInfo(row.id, row.profile, row.seed, row.created_at, ended)
+
+
+@dataclass(frozen=True, slots=True)
+class HistoryWindow:
+    """The dataset's generated history, as the sensing trainers need it (docs/13 §4): it runs
+    from ``start`` to ``end``, and a GENUINE label arrives ``maturity_days`` after a payment."""
+
+    start: datetime
+    end: datetime
+    maturity_days: int
+
+
+def history_window(dataset: DatasetInfo) -> HistoryWindow:
+    """docs/14 §2: where the dataset's history ends, as the seed recorded it
+    (``stats.history_end``). A dataset written before that was recorded falls back to the
+    profile's rule: `demo` at its ``created_at`` (within the generation time), `test` and `eval`
+    at the generator's fixed epoch."""
+    config = load_generator_config()
+    profile = config.profiles[dataset.profile]
+    end = dataset.history_end or history_end(config, dataset.profile, created_at=dataset.created_at)
+    return HistoryWindow(end - timedelta(days=profile.history_days), end, profile.maturity_days)
 
 
 def request_dataset(

@@ -410,6 +410,31 @@ How the freeze is done (`delphi sim freeze-response-models`; the inputs are in
 - The snapshot test fails if the committed file differs from a fresh freeze. A deliberate change
   bumps `generator_version` and is recorded in `sim/config/CHANGELOG.md` (§5.4).
 
+**The simulated customer** (`delphi.sim.customer.SimulatedCustomer`, #95) answers live
+sessions in the worker, the only process with ground truth. For each active probe it reads the
+payment's scenario and whether the victim was coached, then draws the outcome with
+`sample_answer` on a stream keyed by (profile seed, "answer", payment id, probe), so a replay
+answers identically. It then builds the raw answer the customer channel carries (doc 08 §4)
+against the KB's classifier thresholds, so the Guardian's classifier recovers exactly the drawn
+outcome (a unit test checks every probe × outcome × scenario):
+
+- **Questions:** a normal purpose in normal time; the scam's own high-risk purpose (digital
+  arrest → a fee or "safe" account, investment → investment); a slow, fast or app-switched answer
+  for the timing outcomes.
+- **OTP:** the right code, or wrong codes until the attempts run out.
+- **Biometric:** MATCH, or CANCEL.
+- **Cooling-off:** the counts for the drawn outcome, sent just before its deadline.
+
+The answer timings are gap fills in `sim/config/customer.yaml` (live answers only, so they change
+no generated dataset); a test keeps them inside the KB thresholds, and all OTP attempts inside the
+deadline. A question without the option an outcome needs is refused, never answered with another
+outcome's key. **After a worker restart** a session waiting for a simulated answer is not asked
+again: its probe times out (doc 08 §2), so a step-up becomes FAILED_OR_ABANDONED and that session
+no longer replays identically. Evaluation runs (doc 22) must not restart mid-run. A story runner can register
+scripted answers per payment (the persona scripts, §6), and probes without a script use the
+response models. The Guardian's `SimCustomerChannel` sends the steps through
+`GuardianService.respond` and the `AnswerBoard`, the same contract as the mock phone.
+
 ### 5.3 Coaching adaptation (optional switch)
 
 `coaching_adaptation: [{scenario, probe, start_day, ramp_days, shift}]` gradually moves a
@@ -518,6 +543,18 @@ Label arrivals are delivered by the separate `LABEL_DELIVERY` job from
 `sim_truth.label_schedule` (doc 04 §5.4). `bank.sim_schedule` never holds labels, so the app
 role cannot see future labels.
 
+How delivery works (`delphi.sim.delivery`, #159):
+
+- A due label is copied into `delphi.labels` with `known_at = due_at`, mapped through the ACTIVE
+  KB at delivery (§7), and its schedule row is marked delivered. Delivery runs as `delphi_sim`
+  under one advisory lock and is idempotent: one label per (subject, source).
+- **At seed time**, `GENERATE_DATASET` delivers every label due by the end of the history, in the
+  transaction that writes the dataset, so a seeded bank already knows its history's labels and
+  `TRAIN_SENSING` can train on them straight away.
+- **Afterwards**, `LABEL_DELIVERY` delivers what falls due by the clock. On `test` and `eval` the
+  history ends at a fixed date in the past, so its first run delivers every remaining label.
+  That is harmless: the trainers keep only labels known by their training cutoff (doc 13 §4).
+
 **Story S-4 data.** The hidden scenario's natural rate (10 per 10k) is far too slow for a live
 demo. The `DEMO_STORY` S4 runner therefore **injects** 15 `UPI_COLLECT_REFUND` payments for
 15 pre-generated collect-refund victim customers (created at seed time, with no history of the
@@ -562,3 +599,6 @@ golden hour, SLA timers) is multiplied by `demo_time_scale` = 1/30. The UI shows
 - `POST /admin/demo/reset`: deletes every row created after the `seed_completed_at` marker
   (in dependency order, in one transaction), re-activates KB v1, and resets the persona state.
   Must finish in ≤ 60 s.
+  Labels (#159): it also deletes the `delphi.labels` rows known after the marker, sets
+  `sim_truth.label_schedule.delivered` back to false for the rows due after the history's end,
+  and lets `LABEL_DELIVERY` re-map complaint keys against the re-activated KB v1.

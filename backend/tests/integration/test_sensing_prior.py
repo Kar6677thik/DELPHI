@@ -1,8 +1,8 @@
 """The prior model trained on a generated dataset (docs/13 §4, FR-SNS-03).
 
-The bank has no table of observed labels yet (docs/17 `labels`, delivered by LABEL_DELIVERY), so
-this test builds "what the bank had observed by the cutoff" from the label schedule: the labels
-due by then. Only the test reads `sim_truth`; the trainer sees features and observed labels.
+The dataset is written and its history's labels delivered into `delphi.labels` as the seed does
+(#159), then the training data is loaded exactly as `TRAIN_SENSING`'s PRIOR trainer loads it
+(`delphi.sensing.trainers.load_prior_data`), from the bank and the observed labels only.
 """
 
 from __future__ import annotations
@@ -10,33 +10,20 @@ from __future__ import annotations
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import UTC, datetime
+from uuid import uuid4
 
 import numpy as np
 import pytest
-from sqlalchemy import select
 
 from delphi.kb.model import KnowledgeBase
-from delphi.sensing.config import SensingConfig, load_sensing_config
-from delphi.sensing.features import prior_feature_names, to_us
-from delphi.sensing.offline import OfflineHistories, load_bank_frames
-from delphi.sensing.prior import (
-    TEST,
-    TRAIN,
-    VALIDATION,
-    GateResult,
-    LabelObservation,
-    PriorModel,
-    Split,
-    encode_labels,
-    matured_split,
-    observed_labels,
-    train_prior,
-)
-from delphi.sim import api as bank
-from delphi.sim import truth
+from delphi.sensing.config import load_sensing_config
+from delphi.sensing.prior import GateResult, PriorModel, Split, train_prior
+from delphi.sensing.trainers import PriorData, load_prior_data
+from delphi.sim.api import DatasetInfo, history_window
 from delphi.sim.dataset import generate_dataset
-from delphi.sim.generator_config import history_end, load_generator_config
+from delphi.sim.delivery import deliver_labels
+from delphi.sim.generator_config import load_generator_config
 from delphi.sim.writer import write_dataset
 
 from ._db import engine_as, upgrade
@@ -47,70 +34,33 @@ class Trained:
     model: PriorModel
     gate: GateResult
     test: Split
+    data: PriorData
 
 
 def _train(create_database: Callable[[], str], kb: KnowledgeBase, profile: str) -> Trained:
-    generator = load_generator_config()
-    settings: SensingConfig = load_sensing_config()
+    settings = load_sensing_config()
     url = create_database()
     upgrade(url)
+    # `test` and `eval` end their history at the generator's fixed epoch, whatever created_at is.
+    dataset = DatasetInfo(uuid4(), profile, 1, datetime(2026, 11, 1, tzinfo=UTC))
+    window = history_window(dataset)
     sim = engine_as(url, "delphi_sim")
     with sim.begin() as conn:
-        write_dataset(conn, generate_dataset(generator, profile, kb=kb))
-    end = history_end(generator, profile)
-    cutoff_us = to_us(end)
-    params = generator.profiles[profile]
-    with sim.connect() as conn:  # the test's stand-in for the bank's labels table
-        ls = truth.label_schedule
-        observations = [
-            LabelObservation(str(r.subject_id), r.hypothesis_key, r.label_source, to_us(r.due_at))
-            for r in conn.execute(
-                select(ls.c.subject_id, ls.c.hypothesis_key, ls.c.label_source, ls.c.due_at).where(
-                    ls.c.subject_type == "PAYMENT"
-                )
-            )
-        ]
+        write_dataset(conn, generate_dataset(load_generator_config(), profile, kb=kb))
+        deliver_labels(
+            conn, until=window.end, active_hypotheses=frozenset(kb.hypotheses), now=window.end
+        )
     sim.dispose()
-    labels = observed_labels(
-        observations, cutoff_us=cutoff_us, precedence=settings.prior.label_precedence
-    )
-
     app = engine_as(url, "delphi_app")
     try:
         with app.connect() as conn:
-            p, a = bank.payments, bank.accounts
-            rows = conn.execute(
-                select(p.c.id, p.c.initiated_at)
-                .join(a, a.c.id == p.c.payer_account_id)
-                .where(a.c.customer_id.is_not(None))
-                .order_by(p.c.initiated_at, p.c.id)
-            ).all()
-            frames = load_bank_frames(conn)
+            data = load_prior_data(conn, window, settings)
     finally:
         app.dispose()
-    ids = [str(r.id) for r in rows if str(r.id) in labels]
-    at = np.array([to_us(r.initiated_at) for r in rows if str(r.id) in labels], dtype=np.int64)
-    split = matured_split(
-        at,
-        history_start_us=to_us(end - timedelta(days=params.history_days)),
-        cutoff_us=cutoff_us,
-        maturity_days=params.maturity_days,
-        parts=settings.prior.split_parts,
-    )
-    codes, known = encode_labels([labels[i] for i in ids], settings.prior.classes)
-    names = list(prior_feature_names(settings.features))
-    offline = OfflineHistories(frames, settings.features)
-
-    def part(code: int) -> Split:
-        mask = (split == code) & known
-        chosen = [i for i, m in zip(ids, mask, strict=True) if m]
-        matrix = offline.features(chosen)[names].to_numpy(dtype=np.float64)
-        return Split(matrix.reshape(len(chosen), len(names)), codes[mask])
-
     model, result = train_prior(
-        part(TRAIN), part(VALIDATION), part(TEST), names, settings.prior, profile=profile
+        data.train, data.validation, data.test, data.feature_list, settings.prior, profile=profile
     )
-    return Trained(model, result, part(TEST))
+    return Trained(model, result, data.test, data)
 
 
 def test_the_test_profile_trains_and_reports(

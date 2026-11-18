@@ -134,6 +134,14 @@ cases(id, type, protocol, status, subject_payment_id null, subject_account_id nu
       disposed_at null, dd_pack_complete bool, unexplained bool, version)
    partial unique (subject_payment_id) where status <> 'DISPOSED';
    partial unique (subject_account_id) where status <> 'DISPOSED' and type = 'ACCOUNT_REVIEW'
+   -- migration 0012 (#97). recommended_decision and risk_by_decision are null until the case
+   -- console evaluates the case (#103); campaign_id gets its foreign key with `campaigns` (M5).
+   -- CHECKs: the subject matches the type (a PAYMENT_HOLD names its Guardian session too, and a
+   -- composite FK (guardian_session_id, subject_payment_id) → guardian_sessions (id, payment_id)
+   -- keeps it the payment's own); DISPOSED ⇔ disposition and disposed_at; the disposition fits
+   -- the type; CONFIRM_FRAUD names its typology; disposition_confidence smallint 1–5; an
+   -- override has a rationale of ≥ 20 characters. 0012 also adds guardian_sessions.case_id →
+   -- cases.id, DEFERRABLE so demo reset can delete the pair in one transaction.
 evidence_records(id, case_id, source_key, outcome, raw jsonb, record_refs jsonb, fetch_ms,
                  posterior_before, posterior_after, info_yield_bits, rank_at_request,
                  net_value_at_request_paise, requested_by, requested_at, narrative null,
@@ -143,8 +151,11 @@ police_alert_drafts(id, case_id, status (DRAFT|SENT_SIMULATED|DISCARDED), payloa
                     acted_by null, acted_at null)
 campaigns(id, leading_hypothesis, case_count, f3_stage_max, expected_loss_paise,
           vulnerable_victims, rank_score, merged_into null, created_at, updated_at)
-labels(id, subject_type, subject_id, hypothesis_key, label_source, known_at,
-       unique(subject_type, subject_id, label_source))
+labels(id, subject_type, subject_id, hypothesis_key, label_source, known_at, created_at,
+       unique(subject_type, subject_id, label_source))   idx (subject_type, known_at)
+       -- migration 0011 (#159); delphi.platform.labels; filled by LABEL_DELIVERY (doc 14 §8)
+       -- subject_id has no foreign key: the subject is a payment or an account (polymorphic),
+       -- the one exception to "foreign keys are always declared" (§1)
 
 chase_operations(id, complaint_id null, source_payment_ids uuid[], status, reported_at,
                  reported_loss_paise, kb_version_id, golden_hour_ends_at, last_traced_at,

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -32,24 +33,33 @@ from delphi.sensing.artifacts import (
     artifacts_of_job,
     store_artifact,
 )
-from delphi.sim.api import DatasetInfo, current_dataset
+from delphi.sensing.trainers import NothingToTrainError, train_prior_artifact
+from delphi.sim.api import DatasetInfo, current_dataset, history_window
 
 log = get_logger(__name__)
 
 
+# The seed's TRAIN_SENSING asks for this cutoff (``params.cutoff``, docs/13 §7): the end of the
+# generated history, so the first models train on what the history knew. Any other run (the
+# manual retrain, POST /admin/sensing/train) trains on every label known when it runs.
+SEED_CUTOFF = "history_end"
+
+
 @dataclass(frozen=True, slots=True)
 class TrainingRequest:
-    """What a trainer gets: a read connection, the dataset and the job, for progress."""
+    """What a trainer gets: a read connection, the dataset, the job (for progress) and the
+    training cutoff: only labels the bank knew by then count (docs/13 §4)."""
 
     conn: Connection
     dataset: DatasetInfo
     ctx: JobContext
+    cutoff: datetime
 
 
 Trainer = Callable[[TrainingRequest], TrainedModel]
 
 # Registered by #89 (PRIOR), #90 (ANOMALY) and #91 (MULE) as each lands.
-DEFAULT_TRAINERS: Mapping[ArtifactKind, Trainer] = {}
+DEFAULT_TRAINERS: Mapping[ArtifactKind, Trainer] = {ArtifactKind.PRIOR: train_prior_artifact}
 
 
 class LeaseLostError(RuntimeError):
@@ -86,9 +96,15 @@ class TrainSensingJob:
             raise NoDatasetError("there is no dataset to train on; generate one first")
         if wanted is not None and UUID(str(wanted)) != dataset.id:
             raise NoDatasetError(f"dataset {wanted} is no longer in the bank ({dataset.id} is)")
+        cutoff = (
+            history_window(dataset).end
+            if ctx.job.params.get("cutoff") == SEED_CUTOFF
+            else self.clock.now()
+        )
         kinds = list(ArtifactKind)
         stored: list[dict[str, Any]] = []
         skipped: list[str] = []
+        not_trained: list[dict[str, str]] = []
         for i, kind in enumerate(kinds):
             if kind in done:
                 stored.append(_summary(done[kind]))
@@ -98,8 +114,14 @@ class TrainSensingJob:
                 skipped.append(kind.value)
                 log.warning("sensing.trainer_missing", kind=kind.value)
                 continue
-            with self.engine.connect() as conn:
-                model = trainer(TrainingRequest(conn, dataset, ctx))
+            try:
+                with self.engine.connect() as conn:
+                    model = trainer(TrainingRequest(conn, dataset, ctx, cutoff))
+            except NothingToTrainError as exc:
+                # Deterministic: retrying cannot help, and the other kinds may still train.
+                not_trained.append({"kind": kind.value, "reason": str(exc)})
+                log.warning("sensing.nothing_to_train", kind=kind.value, reason=str(exc))
+                continue
             if model.kind is not kind:
                 raise ValueError(f"the {kind} trainer returned a {model.kind} model")
             with self.sessions.begin() as session:
@@ -109,7 +131,13 @@ class TrainSensingJob:
             stored.append(_summary(artifact))
             if not ctx.report((i + 1) / len(kinds)):
                 raise LeaseLostError(f"job {ctx.job.id} is no longer this worker's")
-        return {"dataset_id": str(dataset.id), "artifacts": stored, "skipped": skipped}
+        return {
+            "dataset_id": str(dataset.id),
+            "cutoff": cutoff.isoformat(),
+            "artifacts": stored,
+            "skipped": skipped,
+            "not_trained": not_trained,
+        }
 
 
 def register_sensing_jobs(
