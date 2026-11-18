@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from datetime import timedelta
+from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
@@ -126,6 +127,7 @@ def test_one_session_carries_its_prior_probe_runs_baselines_and_etag(
     # ₹4,80,000 to a payee saved minutes ago (never, here): B1 holds; B2's r = 1 − P(GENUINE)
     # is far above 0.60 under a digital-arrest prior.
     assert body["baselines"] == {"B1": "HOLD_FOR_REVIEW", "B2": "HOLD_FOR_REVIEW"}
+    assert body["dd_pack_complete"] is True
     assert client.get(f"{API}/{uuid4()}").status_code == 404
 
 
@@ -148,3 +150,59 @@ def test_baselines_follow_b1_and_b2(env: Env, client: TestClient) -> None:
         payment, mode=SessionMode.LIVE, runner=Runner.API
     )
     assert client.get(f"{API}/{record.id}").json()["baselines"]["B1"] == "DECLINE"
+
+
+def _sections(pack: dict[str, Any]) -> dict[int, dict[str, Any]]:
+    return {s["number"]: s for s in pack["sections"]}
+
+
+def test_a_fast_path_pack_is_complete_with_no_observations(env: Env, client: TestClient) -> None:
+    fast, _, _ = _three(env)
+    pack = client.get(f"{API}/{fast}/dd-pack").json()
+    assert pack["complete"] is True
+    sections = _sections(pack)
+    assert sections[3]["content"] == "Not applicable" and not sections[3]["required"]
+    assert sections[3]["note"] == "Fast path: no observations."
+    assert sections[8]["content"]["ok"] is True and sections[8]["content"]["entries_checked"] >= 2
+    assert "KB version" in sections[9]["content"]
+    assert sections[1]["content"]["customer"].startswith("C-")  # a pseudonym, never a name
+    assert "CUST" not in str(pack)
+
+
+def test_a_full_session_pack_has_its_timeline_and_guardrails(env: Env, client: TestClient) -> None:
+    _, _, hold = _three(env)
+    pack = client.get(f"{API}/{hold}/dd-pack").json()
+    assert pack["complete"] is True
+    sections = _sections(pack)
+    timeline = sections[3]["content"]
+    assert timeline and all(step["posterior_after"] for step in timeline)
+    assert sections[4]["content"]  # a list of ineligible sources, or "None applied."
+    engine = sections[5]["content"]["engine"]
+    assert engine["decision"] == "PROTECTIVE_HOLD" and engine["baselines"]["B1"]
+    page = client.get(f"{API}/{hold}/dd-pack", params={"format": "html"})
+    assert page.status_code == 200 and page.headers["content-type"].startswith("text/html")
+    assert "<script" not in page.text and "9. Method note" in page.text
+
+
+def test_an_undecided_session_or_a_broken_audit_chain_is_not_complete(
+    env: Env, client: TestClient
+) -> None:
+    record = env.service(FixedPrior(GENUINE), CLEAN).start(
+        env.payment(480_000), mode=SessionMode.LIVE, runner=Runner.API
+    )
+    pack = client.get(f"{API}/{record.id}/dd-pack").json()
+    assert pack["complete"] is False and _sections(pack)[5]["content"] is None
+    assert client.get(f"{API}/{record.id}").json()["dd_pack_complete"] is False
+    fast, _, _ = _three(env)
+    with env.owner.begin() as conn:  # the owner role can; the app roles cannot (docs/17 §2)
+        conn.execute(
+            text(
+                "UPDATE delphi.audit_log SET payload = '{}'::jsonb"
+                " WHERE entity_id = :s AND action = 'guardian.session.decided'"
+            ),
+            {"s": str(fast)},
+        )
+    broken = client.get(f"{API}/{fast}/dd-pack").json()
+    assert broken["complete"] is False
+    assert "broken" in _sections(broken)[8]["note"]
+    assert client.get(f"{API}/{uuid4()}/dd-pack").status_code == 404

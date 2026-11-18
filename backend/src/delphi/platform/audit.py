@@ -160,6 +160,36 @@ def verify(
     return Verification(ok=True, checked=checked)
 
 
+def verify_entity(session: Session, *, entity_type: str, entity_id: str) -> Verification:
+    """Check every entry about one entity (a DD pack's section 8, docs/09 §7): each entry's hash
+    recomputes, and it links to the entry just before it in the whole chain."""
+    log = audit_log.c
+    checked = 0
+    rows = session.execute(
+        select(audit_log)
+        .where(log.entity_type == entity_type, log.entity_id == entity_id)
+        .order_by(log.id)
+    )
+    for row in rows:
+        before = session.execute(
+            select(log.hash).where(log.id < row.id).order_by(log.id.desc()).limit(1)
+        ).scalar_one_or_none()
+        recomputed = entry_hash(
+            row.prev_hash,
+            at=row.at,
+            actor_type=row.actor_type,
+            actor_id=row.actor_id,
+            action=row.action,
+            entity_type=row.entity_type,
+            entity_id=row.entity_id,
+            payload=row.payload,
+        )
+        if row.prev_hash != (before if before is not None else GENESIS) or recomputed != row.hash:
+            return Verification(ok=False, checked=checked, first_bad_id=row.id)
+        checked += 1
+    return Verification(ok=True, checked=checked)
+
+
 class AuditChainBroken(Exception):
     """Raised by the AUDIT_VERIFY job, so the failure shows up as a FAILED job (docs/20 §4)."""
 

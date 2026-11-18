@@ -42,6 +42,7 @@ from delphi.engine.planner import (
 from delphi.engine.prior import build_prior, is_fast_path, open_mass
 from delphi.engine.risk import decide, loss_matrix, risk_by_decision, voi_myopic
 from delphi.engine.types import CompiledProfile, Phase, PlanResult, StopReason
+from delphi.guardian import ddpack
 from delphi.guardian.active import (
     STEP_UPS,
     ClientSignals,
@@ -836,6 +837,9 @@ class GuardianService:
             entity_id=str(ctx.record.id),
             payload=payload,
         )
+        # docs/09 §7: the flag is recomputed on every change; a decision is the last one.
+        if ddpack.build(s, decided.id).complete:
+            decided = self._write(s, decided, dd_pack_complete=True)
         publish(s, EventType.GUARDIAN_SESSION_DECIDED, str(ctx.record.id), _event(decided))
         return decided
 
