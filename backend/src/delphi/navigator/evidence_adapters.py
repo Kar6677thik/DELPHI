@@ -16,7 +16,7 @@ from itertools import pairwise
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import and_, distinct, func, select
+from sqlalchemy import Text, and_, cast, func, select
 from sqlalchemy.orm import Session
 
 from delphi.kb.model import ClassifierThresholds
@@ -85,12 +85,14 @@ def device_sharing(s: Session, subject: EvidenceSubject, t: ClassifierThresholds
     le, dv, ac = bank.login_events.c, bank.devices.c, bank.accounts.c
     in_window = and_(le.at >= since, le.at <= subject.as_of)
     fingerprints = (
-        select(distinct(dv.fingerprint))
+        select(dv.fingerprint)
+        .distinct()
         .join(bank.login_events, le.device_id == dv.id)
         .where(le.customer_id == owner, in_window)
     ).scalar_subquery()
     others = s.execute(
-        select(distinct(ac.id))
+        select(ac.id)
+        .distinct()
         .select_from(bank.login_events)
         .join(bank.devices, dv.id == le.device_id)
         .join(bank.accounts, ac.customer_id == le.customer_id)
@@ -123,7 +125,7 @@ def inbound_fan_in(s: Session, subject: EvidenceSubject, t: ClassifierThresholds
         p.payee_account_id == subject.counterparty_account_id, p.initiated_at < since
     )
     rows = s.execute(
-        select(p.payer_account_id, func.min(p.id))
+        select(p.payer_account_id, func.min(cast(p.id, Text)))
         .where(
             p.payee_account_id == subject.counterparty_account_id,
             p.initiated_at >= since,
@@ -219,7 +221,7 @@ def linked_complaints(s: Session, subject: EvidenceSubject, t: ClassifierThresho
         str(i)
         for i in s.execute(
             select(c.id).where(
-                c.counterparty_account_ids.any(subject.counterparty_account_id),
+                c.counterparty_account_ids.contains([subject.counterparty_account_id]),
                 c.reported_at <= subject.now,
             )
         ).scalars()
