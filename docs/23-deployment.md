@@ -385,7 +385,8 @@ and the run summary shows its digest.
 
 ## 8. Backups and restore
 
-- `CronJob delphi-pg-backup` runs `30 21 * * *` UTC (= 03:00 IST). It writes `pg_dump -Fc` to
+- `CronJob delphi-pg-backup` runs `0 16 * * *` with `timeZone: Etc/UTC` (= 21:30 IST). Without
+  an explicit zone, k3s reads the schedule in the node's zone (#183). It writes `pg_dump -Fc` to
   PVC `delphi-backups` (5Gi, `local-path`) and keeps the 7 most recent. Recording each run in
   `delphi.ops_backup_runs`, for the Overview's backup-age alert (doc 20 §4), comes with that
   table (M9).
