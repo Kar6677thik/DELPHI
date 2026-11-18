@@ -65,17 +65,11 @@ def test_payments_stay_inside_the_history(test_dataset: Dataset) -> None:
 
 
 def test_routine_rate_follows_the_gamma_poisson_model(test_dataset: Dataset) -> None:
-    """λ ~ Gamma(2, 0.3) per day: 0.6 payments per customer per day on average to the payees
-    a customer starts with; a few are not made because the payer cannot fund them. (Payments
-    to payees saved during the history, #56/#166, come on top.)"""
+    """λ ~ Gamma(2, 0.3) per day: 0.6 payments per customer per day on average; a few are not
+    made because the payer cannot fund them. Payees saved during the history take a share of
+    those payments rather than adding to them (#166), so only their first payments come on top."""
     pop, history = test_dataset.population, test_dataset.history
-    owner = {a.id: a.customer_id for a in pop.accounts if a.customer_id}
-    known = {(p.customer_id, p.account_id) for p in pop.payees}
-    customer_payments = [
-        p
-        for p in history.payments
-        if p.device_id is not None and (owner.get(p.payer_account_id), p.payee_account_id) in known
-    ]
+    customer_payments = [p for p in history.payments if p.device_id is not None]
     days = (pop.history_end - pop.history_start).days
     rate = len(customer_payments) / len(pop.customers) / days
     assert 0.45 < rate < 0.65
