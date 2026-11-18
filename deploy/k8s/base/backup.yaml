@@ -1,4 +1,4 @@
-# Nightly logical backup (docs/23 §8): pg_dump -Fc at 03:00 IST, the 7 most recent kept.
+# Nightly logical backup (docs/23 §8): pg_dump -Fc at 21:30 IST, the 7 most recent kept.
 # The PVC is on the same disk as the database: this protects against mistakes, not against
 # losing the disk. An off-host copy is the owner's decision.
 apiVersion: v1
@@ -21,7 +21,10 @@ metadata:
     app.kubernetes.io/component: backup
     orbit.backup/scope: local # a copy on this host; Orbit tells it from off-host ones (#181)
 spec:
-  schedule: "30 21 * * *" # UTC = 03:00 IST
+  # Explicit zone: without it k3s reads the schedule in the node's zone (IST), which is how
+  # "30 21" ran at 16:00 UTC. The off-site copy (16:30 UTC) is timed after this run.
+  timeZone: Etc/UTC
+  schedule: "0 16 * * *" # = 21:30 IST
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
