@@ -193,7 +193,9 @@ Thresholds live in `kb/engine.yaml` under `classifiers:` (defaults below).
   VoI_1, net value, settle %, and selected (GREEDY/EXPLORE, propensity).
 - The decision with `risk_by_decision` ("Release would cost an expected ₹1,761; hold ₹6,323").
 - Baseline shadow verdicts for comparison: what B1 and B2 (doc 22 §2) would have done with this
-  payment, computed on the fly. This drives the demo line "OTP would pass".
+  payment, computed when the prior is built (B2 from the same prior) and stored with the session
+  (doc 16 `baselines`). B2's middle band shows as `OTP_STEP_UP`. This drives the demo line "OTP
+  would pass".
 
 ## 7. Customer-facing screens after a decision (mock phone)
 
