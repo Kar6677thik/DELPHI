@@ -82,8 +82,11 @@ def test_home_bank_mules_are_customers_with_devices(many_rings: MuleNetwork) -> 
 
 
 def test_account_age_and_balances(many_rings: MuleNetwork, population: Population) -> None:
+    """Fresh mule accounts are 5–400 days old; #166's aged or rented share (50%) 1–7 years."""
     ages = [(population.history_start - a.opened_at).days for a in many_rings.accounts]
-    assert min(ages) >= 4 and max(ages) <= 400
+    assert min(ages) >= 4 and max(ages) <= 2555
+    aged = sum(age >= 365 for age in ages) / len(ages)
+    assert aged == pytest.approx(0.5 + 0.5 * 35 / 395, abs=0.08)  # aged, plus fresh ≥ 365 d
     assert all(a.balance_paise > 0 for a in many_rings.accounts)
 
 

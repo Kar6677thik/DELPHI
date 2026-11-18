@@ -65,10 +65,17 @@ def test_payments_stay_inside_the_history(test_dataset: Dataset) -> None:
 
 
 def test_routine_rate_follows_the_gamma_poisson_model(test_dataset: Dataset) -> None:
-    """λ ~ Gamma(2, 0.3) per day: 0.6 payments per customer per day on average; a few are not
-    made because the payer cannot fund them."""
+    """λ ~ Gamma(2, 0.3) per day: 0.6 payments per customer per day on average to the payees
+    a customer starts with; a few are not made because the payer cannot fund them. (Payments
+    to payees saved during the history, #56/#166, come on top.)"""
     pop, history = test_dataset.population, test_dataset.history
-    customer_payments = [p for p in history.payments if p.device_id is not None]
+    owner = {a.id: a.customer_id for a in pop.accounts if a.customer_id}
+    known = {(p.customer_id, p.account_id) for p in pop.payees}
+    customer_payments = [
+        p
+        for p in history.payments
+        if p.device_id is not None and (owner.get(p.payer_account_id), p.payee_account_id) in known
+    ]
     days = (pop.history_end - pop.history_start).days
     rate = len(customer_payments) / len(pop.customers) / days
     assert 0.45 < rate < 0.65
@@ -272,11 +279,18 @@ def test_every_customer_session_starts_with_a_login(long_test: Dataset) -> None:
     home = {c.id: c.home_city for c in (*pop.customers, *long_test.network.customers)}
     attackers = {p.device_id for p in _by_scenario(long_test)["ATO"]}
     prefixes: dict[UUID, str] = {}
+    away = 0
     for login in history.logins:
-        # ATO logins come from the attacker's device, in another city (docs/14 §4).
-        assert (login.city == home[login.customer_id]) == (login.device_id not in attackers)
+        # ATO logins come from the attacker's device, in another city (docs/14 §4); the
+        # customers' own logins come from home, or from where they travel to (#166).
+        if login.device_id in attackers:
+            assert login.city != home[login.customer_id]
+        else:
+            away += login.city != home[login.customer_id]
         assert login.ip_prefix24.startswith("10.") and login.ip_prefix24.endswith(".0/24")
         assert prefixes.setdefault(login.device_id, login.ip_prefix24) == login.ip_prefix24
+    # A 2–7 day trip every 90 days or so: about 5% of the time away.
+    assert 0.02 < away / len(history.logins) < 0.10
 
 
 def test_the_device_prefix_cache_is_bounded() -> None:

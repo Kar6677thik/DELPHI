@@ -123,6 +123,13 @@ class NewMerchantPayeeConfig(NewPersonPayeeConfig):
     categories: tuple[str, ...]
 
 
+class NewPayeeAdoptionConfig(_Frozen):
+    """#166: a payee saved during the history joins the customer's routine."""
+
+    share: Probability  # of routine payments, while the customer has a recent payee
+    window_days: float = Field(gt=0)  # how long a saved payee counts as recent
+
+
 class TravelConfig(_Frozen):
     """#166: genuine customers travel, so a login from a new city is no ATO tell."""
 
@@ -143,6 +150,7 @@ class GenuineRoutineConfig(_Frozen):
     payroll_account_age_days: int = Field(ge=0)
     new_person_payee: NewPersonPayeeConfig
     new_merchant_payee: NewMerchantPayeeConfig
+    new_payee_adoption: NewPayeeAdoptionConfig
     travel: TravelConfig
 
     @model_validator(mode="after")

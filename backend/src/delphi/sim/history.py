@@ -637,7 +637,38 @@ class _Planner:
                 phones.append(phone)
         self.phones[customer.id] = phones
         employer = self.payroll[int(rng.integers(len(self.payroll)))]
+        # Payees saved during the history (#56, #166), planned first from their own streams.
+        # Once saved, a payee joins the routine: a share of routine payments go to one saved in
+        # the last few weeks, so the customer pays new payees instead of, not on top of, the
+        # docs/14 routine rate.
+        saved: list[tuple[datetime, UUID]] = []
+        if customer.persona_key is None:  # personas save no new people or shops (#64)
+            saved += self._new_people(
+                index,
+                habit=habit,
+                devices=(original, phones),
+                intents=intents,
+                instance=instance.id,
+            )
+            saved += self._new_merchants(
+                index,
+                habit=habit,
+                devices=(original, phones),
+                intents=intents,
+                instance=instance.id,
+            )
+        saved.sort()
+        saved_at = [t for t, _ in saved]
+        adoption = routine.new_payee_adoption
         for day in self._local_days():
+            recent = [
+                p
+                for _, p in saved[
+                    bisect.bisect_left(saved_at, day - timedelta(days=adoption.window_days)) : (
+                        bisect.bisect_left(saved_at, day)
+                    )
+                ]
+            ]
             if day.day == 1:
                 hour = routine.salary_hour.min + rng.random() * (
                     routine.salary_hour.max - routine.salary_hour.min
@@ -660,6 +691,8 @@ class _Planner:
                 )
             for _ in range(int(rng.poisson(rate)) if payees else 0):
                 payee = payees[min(bisect.bisect_right(cdf, rng.random()), len(payees) - 1)]
+                if recent and rng.random() < adoption.share:
+                    payee = recent[int(rng.integers(len(recent)))]
                 payee_type = _payee_type(self.accounts[payee])
                 amount = routine.amount_inr[payee_type]
                 channel = choice(rng, routine.channel[payee_type])
@@ -690,21 +723,6 @@ class _Planner:
                     intents=intents,
                     instances=instances,
                 )
-        if customer.persona_key is None:  # personas save no new people or shops (#64)
-            self._new_people(
-                index,
-                habit=habit,
-                devices=(original, phones),
-                intents=intents,
-                instance=instance.id,
-            )
-            self._new_merchants(
-                index,
-                habit=habit,
-                devices=(original, phones),
-                intents=intents,
-                instance=instance.id,
-            )
 
     def _new_merchants(
         self,
@@ -714,7 +732,7 @@ class _Planner:
         devices: tuple[list[Device], list[Device]],
         intents: list[_Intent],
         instance: UUID,
-    ) -> None:
+    ) -> list[tuple[datetime, UUID]]:
         """A genuine customer pays a shop they have never paid before (scan and pay), saved
         minutes before, now and then, and sometimes again later (#166): so a new payee, a young
         payee and a payee saved this week are no fraud tells. Its own stream,
@@ -727,11 +745,12 @@ class _Planner:
         amount = cfg.amount_inr or self.routine.amount_inr["MERCHANT"]
         channels = cfg.channel or self.routine.channel["MERCHANT"]
         original, phones = devices
+        saved: list[tuple[datetime, UUID]] = []
         at = self.pop.history_start
         while self.everyday_merchants:
             at += timedelta(days=float(rng.exponential(cfg.mean_days)))
             if at >= self.horizon:
-                return
+                break
             payee = self.everyday_merchants[int(rng.integers(len(self.everyday_merchants)))]
             if payee in {*self.payees.get(customer.id, []), *self.saved_during[customer.id]}:
                 continue  # paid there before: nothing new to save
@@ -749,6 +768,7 @@ class _Planner:
                     added_at=max(first - lead, self.pop.history_start),
                 )
             )
+            saved.append((self.new_payees[-1].added_at, payee))
             more = cfg.follow_up_payments
             follow_ups = int(rng.integers(int(more.min), int(more.max) + 1))
             later = [rng.random() * cfg.follow_up_days for _ in range(follow_ups)]
@@ -769,6 +789,7 @@ class _Planner:
                         instance=instance,
                     )
                 )
+        return saved
 
     def _new_people(
         self,
@@ -778,7 +799,7 @@ class _Planner:
         devices: tuple[list[Device], list[Device]],
         intents: list[_Intent],
         instance: UUID,
-    ) -> None:
+    ) -> list[tuple[datetime, UUID]]:
         """A genuine customer saves a new person (family or friend) as a payee now and then,
         minutes before first paying them, and pays them again later (#56). Its own stream,
         ``keyed_rng(seed, "person_payee", i)``, so the routine draws do not move."""
@@ -790,11 +811,12 @@ class _Planner:
         amount = cfg.amount_inr or self.routine.amount_inr["FAMILY"]
         channels = cfg.channel or self.routine.channel["FAMILY"]
         original, phones = devices
+        saved: list[tuple[datetime, UUID]] = []
         at = self.pop.history_start
         while True:
             at += timedelta(days=float(rng.exponential(cfg.mean_days)))
             if at >= self.horizon:
-                return
+                break
             taken = {*self.payees.get(customer.id, []), *self.saved_during[customer.id]}
             home = rng.random() < self.cfg.population.counterparty_home_bank_share
             pool = self.home_accounts if home else self.external_people
@@ -815,6 +837,7 @@ class _Planner:
                     added_at=max(first - lead, self.pop.history_start),
                 )
             )
+            saved.append((self.new_payees[-1].added_at, payee))
             more = cfg.follow_up_payments
             follow_ups = int(rng.integers(int(more.min), int(more.max) + 1))
             later = [rng.random() * cfg.follow_up_days for _ in range(follow_ups)]
@@ -835,6 +858,7 @@ class _Planner:
                         instance=instance,
                     )
                 )
+        return saved
 
 
 def generate_history(
