@@ -16,3 +16,12 @@ export type Permission = Schemas['Permission'];
 export type CaseView = Schemas['CaseView'];
 /** `GET /cases`: one keyset page of the case queue. */
 export type CasePage = Schemas['CasePage'];
+/** `GET /guardian/sessions`: one keyset page of the monitor's list (#98). */
+export type GuardianSessionPage = Schemas['GuardianSessionPage'];
+/** A row of `GET /guardian/sessions`. */
+export type GuardianSessionSummary = Schemas['GuardianSessionSummary'];
+/** `GET /guardian/sessions/{id}` (docs/16 `GuardianSessionView`). */
+export type GuardianSessionView = Schemas['GuardianSessionView'];
+export type ProbeRunView = Schemas['ProbeRunView'];
+/** `GET /kb/versions/{id}`, with the version's content. */
+export type KbVersionView = Schemas['KbVersionView'];
