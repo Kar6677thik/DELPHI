@@ -41,6 +41,14 @@ on the queue items from the last 30 days. Points labelled noise stay in the queu
 The output is `scout_clusters` rows plus one `typology_drafts` row per cluster, with status
 `CANDIDATE`.
 
+**Implementation** (#117): the clustering core is `delphi.scout.clustering` (pure functions):
+`matrix`, `cluster_labels`, `distinguishing_features` (absolute standardised mean difference,
+`(mean_c − mean_r) / sqrt((var_c + var_r) / 2)`, columns constant in both left out),
+`outcome_profile`, `draft_likelihoods` (ESS capped at `elicitation.default_ess`) and
+`template_name`, composed by `scout()`. Its numbers are the KB's `scout:` section. A feature
+missing from an item sits at its training mean (z = 0). The queue rules, the `RUN_SCOUT` job and
+its tables follow.
+
 ## 3. FDE drafting (`DRAFT`)
 
 An FDE_ENGINEER opens a candidate and edits:
