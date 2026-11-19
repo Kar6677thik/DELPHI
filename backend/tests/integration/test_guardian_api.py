@@ -3,7 +3,10 @@ sessions decided by the real service with fixture priors, then listed, read, and
 
 from __future__ import annotations
 
+import base64
+import json
 from collections.abc import Callable, Iterator
+from dataclasses import replace
 from datetime import timedelta
 from typing import Any
 from uuid import UUID, uuid4
@@ -14,7 +17,9 @@ from sqlalchemy import text
 
 from delphi.api.app import create_app
 from delphi.api.security import Permission, Principal, current_principal
-from delphi.guardian.service import Decided
+from delphi.engine import SessionFacts
+from delphi.guardian import ddpack
+from delphi.guardian.service import Decided, GuardianService
 from delphi.guardian.store import Runner, SessionMode
 from delphi.platform.db import migration_head
 from delphi.platform.settings import Settings
@@ -206,3 +211,79 @@ def test_an_undecided_session_or_a_broken_audit_chain_is_not_complete(
     assert broken["complete"] is False
     assert "broken" in _sections(broken)[8]["note"]
     assert client.get(f"{API}/{uuid4()}/dd-pack").status_code == 404
+
+
+def test_a_stop_with_no_eligible_source_lists_the_stop_steps_guardrails(
+    env: Env, client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The last planning step has no probe run: its ineligible sources come from the decided
+    audit entry's final candidates (docs/09 §7 sections 3 and 4)."""
+    facts = GuardianService._facts
+
+    def capped(self: GuardianService, s: Any, ctx: Any) -> SessionFacts:
+        return replace(facts(self, s, ctx), fairness_cap_reached=True)
+
+    monkeypatch.setattr(GuardianService, "_facts", capped)
+    session_id = _decide(env, DIGITAL_ARREST, SCAM, 480_000)
+    detail = client.get(f"{API}/{session_id}").json()
+    assert detail["terminal_reason"] == "BUDGET_EXHAUSTED"  # docs/06 §8: NO_ELIGIBLE_SOURCES
+    pack = client.get(f"{API}/{session_id}/dd-pack").json()
+    guardrails = _sections(pack)[4]["content"]
+    assert isinstance(guardrails, list)
+    assert {g["reason"] for g in guardrails} >= {"FAIRNESS_CAP"}
+    stop = _sections(pack)[3]["content"][-1]
+    assert stop["status"] == "STOPPED" and stop["outcome"] == "BUDGET_EXHAUSTED"
+    assert stop["alternatives"] and not any(a["eligible"] for a in stop["alternatives"])
+    assert pack["complete"] is True
+
+
+def test_a_failing_pack_build_never_blocks_the_decision(
+    env: Env, client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken(*_: Any) -> Any:
+        raise RuntimeError("the pack could not be built")
+
+    monkeypatch.setattr(ddpack, "build", broken)
+    session_id = _decide(env, DIGITAL_ARREST, SCAM, 480_000)
+    detail = client.get(f"{API}/{session_id}").json()
+    assert detail["status"] == "DECIDED" and detail["decision"] == "PROTECTIVE_HOLD"
+    assert detail["dd_pack_complete"] is False
+
+
+def _cursor(raw: object) -> str:
+    return base64.urlsafe_b64encode(json.dumps(raw).encode()).decode().rstrip("=")
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        {"at": "2026-01-01T00:00:00+00:00", "id": 5},  # an id that is not a string
+        ["2026-01-01T00:00:00+00:00"],  # not an object
+        {"at": 5, "id": "x"},
+    ],
+)
+def test_a_malformed_cursor_is_a_validation_failure(client: TestClient, raw: object) -> None:
+    response = client.get(API, params={"cursor": _cursor(raw)})
+    assert response.status_code == 422 and response.json()["code"] == "VALIDATION_FAILED"
+
+
+def test_paging_breaks_ties_on_id_and_keeps_the_filters(env: Env, client: TestClient) -> None:
+    """Sessions started at the same instant page by id; a cursor works together with filters."""
+    ids = [_decide(env, GENUINE_SURE, CLEAN, 2_000) for _ in range(3)]  # same clock: same start
+    _decide(env, DIGITAL_ARREST, SCAM, 480_000)  # a hold, filtered out below
+    first = client.get(API, params={"limit": 2, "decision": "RELEASE"}).json()
+    rest = client.get(
+        API, params={"limit": 2, "decision": "RELEASE", "cursor": first["next_cursor"]}
+    ).json()
+    paged = [i["id"] for i in first["items"]] + [i["id"] for i in rest["items"]]
+    assert paged == sorted((str(i) for i in ids), reverse=True)  # newest id first within a tie
+    assert rest["next_cursor"] is None
+
+
+def test_decision_and_mode_filters_follow_the_kb_and_the_session_modes(
+    env: Env, client: TestClient
+) -> None:
+    _three(env)
+    assert client.get(API, params={"decision": "SEND_MONEY"}).status_code == 422  # not in the KB
+    assert len(client.get(API, params={"mode": "LIVE"}).json()["items"]) == 3
+    assert client.get(API, params={"mode": "EVAL"}).json()["items"] == []

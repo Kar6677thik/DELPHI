@@ -725,11 +725,6 @@ export interface components {
          */
         DdPackFormat: "json" | "html";
         /**
-         * DecisionFilter
-         * @enum {string}
-         */
-        DecisionFilter: "RELEASE" | "HOLD_FOR_REVIEW" | "PROTECTIVE_HOLD" | "DECLINE";
-        /**
          * DiffOp
          * @enum {string}
          */
@@ -1217,10 +1212,15 @@ export interface components {
          */
         Role: "VIEWER" | "INVESTIGATOR" | "FDE_ENGINEER" | "ADMIN";
         /**
-         * SessionStatusFilter
+         * SessionMode
          * @enum {string}
          */
-        SessionStatusFilter: "CREATED" | "PASSIVE_PROBING" | "PLANNING" | "AWAITING_CUSTOMER" | "DECIDED" | "CANCELLED_BY_CUSTOMER";
+        SessionMode: "LIVE" | "AUTOPLAY" | "EVAL";
+        /**
+         * SessionStatus
+         * @enum {string}
+         */
+        SessionStatus: "CREATED" | "PASSIVE_PROBING" | "PLANNING" | "AWAITING_CUSTOMER" | "DECIDED" | "CANCELLED_BY_CUSTOMER";
         /** StatusView */
         StatusView: {
             /** Dataset Ready */
@@ -2030,9 +2030,11 @@ export interface operations {
     read_sessions_api_v1_guardian_sessions_get: {
         parameters: {
             query?: {
-                status?: components["schemas"]["SessionStatusFilter"] | null;
-                decision?: components["schemas"]["DecisionFilter"] | null;
+                status?: components["schemas"]["SessionStatus"] | null;
+                /** @description A decision of the ACTIVE KB's profile */
+                decision?: string | null;
                 unexplained?: boolean | null;
+                mode?: components["schemas"]["SessionMode"] | null;
                 from?: string | null;
                 to?: string | null;
                 limit?: number;

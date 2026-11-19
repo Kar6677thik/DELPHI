@@ -2,8 +2,8 @@
 
 `GET /guardian/sessions` lists sessions newest first, keyset-paged, with the docs/16 filters;
 `GET /guardian/sessions/{id}` returns the full `GuardianSessionView` with its probe runs and the
-B1/B2 verdicts (FR-GDN-15), and `ETag: "<version>"`. `GET /guardian/sessions/{id}/dd-pack`
-returns the session's due-diligence pack as JSON or a printable page (docs/09 §7, FR-GDN-12).
+B1/B2 verdicts (FR-GDN-12), and `ETag: "<version>"`. `GET /guardian/sessions/{id}/dd-pack`
+returns the session's due-diligence pack as JSON or a printable page (docs/09 §7, FR-GDN-15).
 Live updates come over `/events/stream?topics=guardian` (docs/16 §3).
 """
 
@@ -24,14 +24,17 @@ from pydantic import BaseModel
 from delphi.api.routers import API_PREFIX
 from delphi.api.security import Permission, Principal, require
 from delphi.guardian import ddpack
-from delphi.guardian.views import (
+from delphi.guardian.api import (
     SessionCursor,
     SessionFilter,
+    SessionMode,
     SessionRow,
+    SessionStatus,
     get_session_row,
     list_sessions,
     probe_run_rows,
 )
+from delphi.kb.store import active_version
 from delphi.platform.errors import DelphiError, NotFoundError, ProblemCode
 from delphi.platform.wiring import Platform
 
@@ -42,20 +45,7 @@ MAX_LIMIT = 200  # docs/16 §1
 PROBABILITY_DECIMALS = 6  # docs/16 §1
 
 
-class SessionStatusFilter(StrEnum):
-    CREATED = "CREATED"
-    PASSIVE_PROBING = "PASSIVE_PROBING"
-    PLANNING = "PLANNING"
-    AWAITING_CUSTOMER = "AWAITING_CUSTOMER"
-    DECIDED = "DECIDED"
-    CANCELLED_BY_CUSTOMER = "CANCELLED_BY_CUSTOMER"
-
-
-class DecisionFilter(StrEnum):
-    RELEASE = "RELEASE"
-    HOLD_FOR_REVIEW = "HOLD_FOR_REVIEW"
-    PROTECTIVE_HOLD = "PROTECTIVE_HOLD"
-    DECLINE = "DECLINE"
+GUARDIAN_PROFILE = "GUARDIAN_PAYMENT"  # docs/07: the decision profile Guardian sessions use
 
 
 class DdPackFormat(StrEnum):
@@ -217,12 +207,32 @@ def _encode_cursor(row: SessionRow) -> str:
 def _decode_cursor(cursor: str) -> SessionCursor:
     try:
         raw = json.loads(base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)))
+        if not (isinstance(raw, dict) and isinstance(raw.get("at"), str)):
+            raise ValueError("the cursor is not an object with a time")
+        if not isinstance(raw.get("id"), str):
+            raise ValueError("the cursor has no id")
         at = datetime.fromisoformat(raw["at"])
         if at.tzinfo is None:
             raise ValueError("the cursor's time has no zone")
         return SessionCursor(at, UUID(raw["id"]))
-    except (binascii.Error, ValueError, KeyError, TypeError):
+    except (binascii.Error, ValueError, KeyError, TypeError, AttributeError):
         raise DelphiError("The cursor is not valid.", code=ProblemCode.VALIDATION_FAILED) from None
+
+
+def _check_decision(session: Any, decision: str | None) -> None:
+    """Decisions come from the KB's decision profile (docs/07), not a fixed list."""
+    if decision is None:
+        return
+    active = active_version(session)
+    allowed = (
+        active.kb.decision_profiles[GUARDIAN_PROFILE].decisions
+        if active is not None and GUARDIAN_PROFILE in active.kb.decision_profiles
+        else ()
+    )
+    if decision not in allowed:
+        raise DelphiError(
+            f"`decision` must be one of {list(allowed)}.", code=ProblemCode.VALIDATION_FAILED
+        )
 
 
 def _aware(value: datetime | None, name: str) -> datetime | None:
@@ -238,9 +248,12 @@ def read_sessions(
     *,
     request: Request,
     _principal: Annotated[Principal, Depends(require(Permission.VIEW))],
-    status: Annotated[SessionStatusFilter | None, Query()] = None,
-    decision: Annotated[DecisionFilter | None, Query()] = None,
+    status: Annotated[SessionStatus | None, Query()] = None,
+    decision: Annotated[
+        str | None, Query(description="A decision of the ACTIVE KB's profile")
+    ] = None,
     unexplained: Annotated[bool | None, Query()] = None,
+    mode: Annotated[SessionMode | None, Query()] = None,
     from_: Annotated[datetime | None, Query(alias="from")] = None,
     to: Annotated[datetime | None, Query()] = None,
     limit: Annotated[int, Query(ge=1, le=MAX_LIMIT)] = DEFAULT_LIMIT,
@@ -248,10 +261,13 @@ def read_sessions(
 ) -> GuardianSessionPage:
     """The monitor's list: newest first. ``from`` is inclusive and ``to`` exclusive, on the
     session's start."""
+    with _platform(request).sessions() as session:
+        _check_decision(session, decision)
     where = SessionFilter(
         status=status.value if status else None,
-        decision=decision.value if decision else None,
+        decision=decision,
         unexplained=unexplained,
+        mode=mode.value if mode else None,
         started_from=_aware(from_, "from"),
         started_to=_aware(to, "to"),
     )
