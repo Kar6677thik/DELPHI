@@ -3,6 +3,8 @@ sessions decided by the real service with fixture priors, then listed, read, and
 
 from __future__ import annotations
 
+import base64
+import json
 from collections.abc import Callable, Iterator
 from datetime import timedelta
 from uuid import UUID, uuid4
@@ -148,3 +150,42 @@ def test_baselines_follow_b1_and_b2(env: Env, client: TestClient) -> None:
         payment, mode=SessionMode.LIVE, runner=Runner.API
     )
     assert client.get(f"{API}/{record.id}").json()["baselines"]["B1"] == "DECLINE"
+
+
+def _cursor(raw: object) -> str:
+    return base64.urlsafe_b64encode(json.dumps(raw).encode()).decode().rstrip("=")
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        {"at": "2026-01-01T00:00:00+00:00", "id": 5},  # an id that is not a string
+        ["2026-01-01T00:00:00+00:00"],  # not an object
+        {"at": 5, "id": "x"},
+    ],
+)
+def test_a_malformed_cursor_is_a_validation_failure(client: TestClient, raw: object) -> None:
+    response = client.get(API, params={"cursor": _cursor(raw)})
+    assert response.status_code == 422 and response.json()["code"] == "VALIDATION_FAILED"
+
+
+def test_paging_breaks_ties_on_id_and_keeps_the_filters(env: Env, client: TestClient) -> None:
+    """Sessions started at the same instant page by id; a cursor works together with filters."""
+    ids = [_decide(env, GENUINE_SURE, CLEAN, 2_000) for _ in range(3)]  # same clock: same start
+    _decide(env, DIGITAL_ARREST, SCAM, 480_000)  # a hold, filtered out below
+    first = client.get(API, params={"limit": 2, "decision": "RELEASE"}).json()
+    rest = client.get(
+        API, params={"limit": 2, "decision": "RELEASE", "cursor": first["next_cursor"]}
+    ).json()
+    paged = [i["id"] for i in first["items"]] + [i["id"] for i in rest["items"]]
+    assert paged == sorted((str(i) for i in ids), reverse=True)  # newest id first within a tie
+    assert rest["next_cursor"] is None
+
+
+def test_decision_and_mode_filters_follow_the_kb_and_the_session_modes(
+    env: Env, client: TestClient
+) -> None:
+    _three(env)
+    assert client.get(API, params={"decision": "SEND_MONEY"}).status_code == 422  # not in the KB
+    assert len(client.get(API, params={"mode": "LIVE"}).json()["items"]) == 3
+    assert client.get(API, params={"mode": "EVAL"}).json()["items"] == []

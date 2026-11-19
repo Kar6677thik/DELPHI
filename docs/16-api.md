@@ -55,7 +55,7 @@ Permission names refer to doc 19 §3.
 | Method & path | Perm | Request → Response |
 |---|---|---|
 | POST `/guardian/sessions` | `demo:drive` | `{payment: {payer_account_id, payee_account_id \| new_payee: {...}, amount_paise, channel, device_id, telemetry: {...}}}` → 201 `GuardianSessionView` |
-| GET `/guardian/sessions` | `view` | filters: `status, decision, unexplained, from, to` (on `started_at`; `from` inclusive, `to` exclusive, RFC 3339 with a zone). Newest first, keyset-paged; items are `GuardianSessionSummary`: the view below without `prior`, `risk_by_decision` and `probe_runs`, plus `leading_hypothesis` |
+| GET `/guardian/sessions` | `view` | filters: `status, decision, unexplained, mode, from, to`. `decision` must be one of the ACTIVE KB's `GUARDIAN_PAYMENT` decisions (422 otherwise); `mode` is `LIVE`, `AUTOPLAY` or `EVAL` (all modes when omitted; the evaluation harness runs in memory, #123, so EVAL rows are rare). `from`/`to` are on `started_at` ( `from` inclusive, `to` exclusive, RFC 3339 with a zone). Newest first, keyset-paged; items are `GuardianSessionSummary`: the view below without `prior`, `risk_by_decision` and `probe_runs`, plus `leading_hypothesis` |
 | GET `/guardian/sessions/{id}` | `view` | `GuardianSessionView`, with `ETag: "<version>"` |
 | POST `/guardian/sessions/{id}/probe-responses` | `demo:drive` | doc 08 §4 body → 200 `GuardianSessionView` |
 | POST `/guardian/sessions/{id}/cancel` | `demo:drive` | customer cancels → 200 |
