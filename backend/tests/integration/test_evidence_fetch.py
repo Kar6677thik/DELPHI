@@ -14,6 +14,7 @@ from sqlalchemy import func, select, text
 from delphi.api.security import Principal
 from delphi.kb.loader import load_and_validate
 from delphi.kb.store import KbStatus, insert_version
+from delphi.llm.template import render_narrative
 from delphi.navigator.api import CaseRecord, get_case
 from delphi.navigator.tables import evidence_records
 from delphi.platform.db import make_session_factory
@@ -127,6 +128,18 @@ def test_an_outreach_call_needs_its_recorded_outcome_and_labels_coercion(
     assert done.status_code == 200, done.text
     [card] = done.json()["evidence_records"]
     assert card["outcome"] == "CONFIRMS_COERCION" and card["facts"]["note"].startswith("Customer")
+    # docs/15 §7: exactly the outreach narrative's fields, and its template renders them.
+    assert set(card["facts"]) == {"result", "note"} and card["facts"]["result"] == card["outcome"]
+    text = render_narrative(
+        {
+            "source_key": "CUSTOMER_OUTREACH_CALL",
+            "record_id": card["id"],
+            "subject": "ACC-…5678",
+            "as_of": card["requested_at"],
+            "facts": card["facts"],
+        }
+    )
+    assert "confirms coercion" in text.lower() and f"[{card['id']}]" in text
     with env.owner.connect() as conn:
         label = conn.execute(
             select(labels.c.hypothesis_key, labels.c.label_source).where(
