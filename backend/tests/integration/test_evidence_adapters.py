@@ -21,9 +21,9 @@ from delphi.llm.port import Purpose
 from delphi.llm.schemas import EvidenceNarrative
 from delphi.llm.template import render_narrative
 from delphi.llm.validators import validate
-from delphi.navigator.evidence_adapters import ADAPTERS, EvidenceSubject
+from delphi.navigator.evidence_adapters import ADAPTERS, EvidenceSubject, Fetched
 from delphi.platform.db import make_session_factory
-from delphi.probes.evidence import EVIDENCE_CLASSIFIERS
+from delphi.probes.api import EVIDENCE_CLASSIFIERS
 from delphi.probes.registry import CLASSIFIER_NAMES
 from delphi.sim import bank as bank_tables
 from delphi.sim import truth
@@ -103,19 +103,29 @@ class Bank:
         )
 
     def pay(
-        self, payer: UUID, payee: UUID, amount_inr: int, at: datetime, status: str = "EXECUTED"
+        self,
+        payer: UUID,
+        payee: UUID,
+        amount_inr: int,
+        at: datetime,
+        status: str = "EXECUTED",
+        *,
+        executed_at: datetime | None = None,
     ) -> UUID:
+        """A payment initiated at ``at``; an EXECUTED one executes then unless told otherwise."""
         p = uuid4()
+        done = executed_at or (at if status == "EXECUTED" else None)
         self.sql(
             "INSERT INTO bank.payments (id, payer_account_id, payee_account_id, amount_paise,"
-            " channel, initiated_at, status, origin)"
-            " VALUES (:p, :a, :b, :m, 'IMPS', :t, :s, 'SIM_HISTORY')",
+            " channel, initiated_at, status, executed_at, origin)"
+            " VALUES (:p, :a, :b, :m, 'IMPS', :t, :s, :e, 'SIM_HISTORY')",
             p=p,
             a=payer,
             b=payee,
             m=amount_inr * INR,
             t=at,
             s=status,
+            e=done,
         )
         return p
 
@@ -175,9 +185,24 @@ def test_device_sharing_counts_other_owners_accounts_on_the_same_fingerprint(ban
     late = bank.customer()  # outside the 30-day window: not counted
     bank.account(late)
     bank.login(late, bank.device(late, "fp-ring"), AS_OF - timedelta(days=31), "Delhi", 28.6, 77.2)
+    after = bank.customer()  # a login after as_of: not counted
+    bank.account(after)
+    bank.login(
+        after, bank.device(after, "fp-ring"), AS_OF + timedelta(hours=1), "Delhi", 28.6, 77.2
+    )
+    unopened = bank.customer()  # its only account was opened after as_of: not counted
+    bank.account(unopened, age_days=-1)
+    bank.login(
+        unopened, bank.device(unopened, "fp-ring"), AS_OF - timedelta(days=1), "Delhi", 28, 77
+    )
     outcome, fetched = _run(bank, "BENEFICIARY_DEVICE_SHARING", counterparty_account_id=subject)
     assert (outcome, fetched.facts["shared_accounts"]) == ("SHARED_3_PLUS", 3)
     assert len(fetched.record_refs) == 3
+    edge = bank.customer()  # exactly 30 days before as_of: inside the window
+    bank.account(edge)
+    bank.login(edge, bank.device(edge, "fp-ring"), AS_OF - timedelta(days=30), "Delhi", 28.6, 77.2)
+    _, fetched = _run(bank, "BENEFICIARY_DEVICE_SHARING", counterparty_account_id=subject)
+    assert fetched.facts["shared_accounts"] == 4
     external = bank.account(None)
     assert _run(bank, "BENEFICIARY_DEVICE_SHARING", counterparty_account_id=external)[0] == (
         "NOT_SHARED"
@@ -194,6 +219,35 @@ def test_fan_in_counts_new_payers_in_48_hours(bank: Bank) -> None:
     bank.pay(bank.account(bank.customer()), subject, 100, AS_OF - timedelta(hours=49))  # too old
     outcome, fetched = _run(bank, "INBOUND_FAN_IN", counterparty_account_id=subject)
     assert (outcome, fetched.facts["unrelated_payers"]) == ("MODERATE", 3)
+
+
+def test_fan_in_counts_only_payments_that_credited_the_account_before_as_of(bank: Bank) -> None:
+    """#193 review: the case's own held payment, declined attempts and later credits never
+    count, and an old declined attempt is not a prior relation."""
+    subject = bank.account(bank.customer())
+    for _ in range(2):  # two genuinely new payers
+        bank.pay(bank.account(bank.customer()), subject, 100, AS_OF - timedelta(hours=10))
+    victim = bank.account(bank.customer())
+    bank.pay(victim, subject, 50_000, AS_OF, status="HELD")  # the case's held payment
+    bank.pay(bank.account(bank.customer()), subject, 100, AS_OF - timedelta(hours=2), "DECLINED")
+    tried = bank.account(bank.customer())  # declined 10 days ago, credited now: still new
+    bank.pay(tried, subject, 100, AS_OF - timedelta(days=10), status="DECLINED")
+    bank.pay(tried, subject, 100, AS_OF - timedelta(hours=3))
+    late = bank.account(bank.customer())  # initiated in the window, executed after as_of
+    bank.pay(late, subject, 100, AS_OF - timedelta(hours=1), executed_at=AS_OF + timedelta(hours=1))
+    at_as_of = bank.account(bank.customer())  # executed exactly at as_of: not before it
+    bank.pay(at_as_of, subject, 100, AS_OF - timedelta(minutes=5), executed_at=AS_OF)
+    edge = bank.account(bank.customer())  # executed exactly 48 h before as_of: in the window
+    bank.pay(edge, subject, 100, AS_OF - timedelta(hours=48))
+    outcome, fetched = _run(bank, "INBOUND_FAN_IN", counterparty_account_id=subject)
+    assert fetched.facts["unrelated_payers"] == 4  # the two, `tried` and `edge`
+    assert outcome == "MODERATE"
+    lone = bank.account(bank.customer())
+    bank.pay(bank.account(bank.customer()), lone, 100, AS_OF - timedelta(hours=1))
+    bank.pay(bank.account(bank.customer()), lone, 100, AS_OF - timedelta(hours=1))
+    bank.pay(victim, lone, 50_000, AS_OF, status="HELD")
+    outcome, fetched = _run(bank, "INBOUND_FAN_IN", counterparty_account_id=lone)
+    assert (outcome, fetched.facts["unrelated_payers"]) == ("LOW", 2)  # not MODERATE, 3
 
 
 def test_dwell_follows_each_credit_out_fifo(bank: Bank) -> None:
@@ -222,11 +276,38 @@ def test_dwell_counts_an_older_balance_ahead_of_the_credit(bank: Bank) -> None:
     out = bank.pay(subject, onward, 25_000, t0 + timedelta(minutes=10))
     bank.ledger(subject, out, -25_000, 5_000, t0 + timedelta(minutes=10))  # only 50% of the credit
     outcome, fetched = _run(bank, "PASS_THROUGH_DWELL", counterparty_account_id=subject)
-    assert outcome == "OVER_24_H"
-    assert fetched.facts["median_dwell_minutes"] == 2 * 24 * 60  # dwelt since, a lower bound
+    assert outcome == "OVER_24_H"  # the credit is still dwelling: unknown, never measured
+    assert fetched.facts["median_dwell_minutes"] is None
+    assert (fetched.facts["credits"], fetched.facts["still_dwelling"]) == (1, 1)
     assert _run(bank, "PASS_THROUGH_DWELL", counterparty_account_id=bank.account(None))[0] == (
         "OVER_24_H"
     )
+
+
+def test_one_fresh_unmoved_credit_is_not_a_fast_pass_through(bank: Bank) -> None:
+    """#191 review: ₹50,000 credited 10 minutes before as_of, none of it moved."""
+    subject = bank.account(bank.customer())
+    credit = bank.pay(bank.account(bank.customer()), subject, 50_000, AS_OF - timedelta(minutes=10))
+    bank.ledger(subject, credit, 50_000, 50_000, AS_OF - timedelta(minutes=10))
+    outcome, fetched = _run(bank, "PASS_THROUGH_DWELL", counterparty_account_id=subject)
+    assert outcome == "OVER_24_H" and outcome != "UNDER_30_MIN"
+    assert fetched.facts["median_dwell_minutes"] is None
+    assert fetched.facts["still_dwelling"] == 1
+
+
+def test_dwell_reads_the_ledger_from_7_days_before_as_of_up_to_it(bank: Bank) -> None:
+    subject = bank.account(bank.customer())
+    payer, onward = bank.account(bank.customer()), bank.account(bank.customer())
+    t0 = AS_OF - timedelta(days=7)  # exactly 7 days: in the window
+    credit = bank.pay(payer, subject, 1_000, t0)
+    bank.ledger(subject, credit, 1_000, 1_000, t0)
+    out = bank.pay(subject, onward, 900, t0 + timedelta(minutes=20))
+    bank.ledger(subject, out, -900, 100, t0 + timedelta(minutes=20))
+    later = bank.pay(payer, subject, 1_000, AS_OF + timedelta(minutes=1))  # after as_of: ignored
+    bank.ledger(subject, later, 1_000, 1_100, AS_OF + timedelta(minutes=1))
+    outcome, fetched = _run(bank, "PASS_THROUGH_DWELL", counterparty_account_id=subject)
+    assert (outcome, fetched.facts["credits"]) == ("UNDER_30_MIN", 1)
+    assert fetched.facts["median_dwell_minutes"] == 20.0
 
 
 @pytest.mark.parametrize(
@@ -241,6 +322,13 @@ def test_account_profile(bank: Bank, age: int, kyc: str, expected: str) -> None:
     subject = bank.account(bank.customer(), age_days=age, kyc=kyc)
     outcome, fetched = _run(bank, "ACCOUNT_PROFILE", counterparty_account_id=subject)
     assert outcome == expected and fetched.facts["kyc_level"] == kyc
+
+
+def test_an_account_the_bank_does_not_hold_is_not_a_new_account(bank: Bank) -> None:
+    """#193 review: an unknown age is not evidence of a new account."""
+    outcome, fetched = _run(bank, "ACCOUNT_PROFILE", counterparty_account_id=uuid4())
+    assert outcome == "ESTABLISHED"
+    assert fetched.facts == {"account_age_days": None, "kyc_level": None}
 
 
 def test_linked_complaints_counts_those_known_by_now(bank: Bank) -> None:
@@ -262,7 +350,7 @@ def test_linked_complaints_counts_those_known_by_now(bank: Bank) -> None:
 
 def test_crm_contact_history_looks_back_14_days(bank: Bank) -> None:
     payer = bank.customer()
-    for kind, days in (("SIM_SWAP_REPORTED", 15), ("DEVICE_LOST_REPORTED", -1)):  # too old, later
+    for kind, days in (("SIM_SWAP_REPORTED", 14.01), ("DEVICE_LOST_REPORTED", -1)):  # old, later
         bank.sql(
             "INSERT INTO bank.crm_events (id, customer_id, type, at) VALUES (:i, :c, :k, :t)",
             i=uuid4(),
@@ -281,6 +369,17 @@ def test_crm_contact_history_looks_back_14_days(bank: Bank) -> None:
     outcome, fetched = _run(bank, "CRM_CONTACT_HISTORY", payer_customer_id=payer)
     assert outcome == "SIM_SWAP_OR_DEVICE_LOSS_REPORTED"
     assert (fetched.facts["event"], fetched.facts["days_ago"]) == ("DEVICE_LOST_REPORTED", 13)
+    edge = bank.customer()  # exactly 14 days before as_of: inside the look-back
+    bank.sql(
+        "INSERT INTO bank.crm_events (id, customer_id, type, at) VALUES (:i, :c, :k, :t)",
+        i=uuid4(),
+        c=edge,
+        k="SIM_SWAP_REPORTED",
+        t=AS_OF - timedelta(days=14),
+    )
+    assert _run(bank, "CRM_CONTACT_HISTORY", payer_customer_id=edge)[0] == (
+        "SIM_SWAP_OR_DEVICE_LOSS_REPORTED"
+    )
 
 
 def test_login_geo_velocity(bank: Bank) -> None:
@@ -293,6 +392,25 @@ def test_login_geo_velocity(bank: Bank) -> None:
     bank.login(payer, phone, AS_OF - timedelta(hours=2, minutes=30), "Mumbai", 19.0760, 72.8777)
     outcome, fetched = _run(bank, "LOGIN_GEO_VELOCITY", payer_customer_id=payer)
     assert outcome == "IMPOSSIBLE_TRAVEL" and fetched.facts["speed_kmh"] > 2000
+
+
+def test_geo_velocity_uses_the_window_and_ignores_logins_after_as_of(bank: Bank) -> None:
+    payer = bank.customer()
+    phone = bank.device(payer, "fp-own")
+    # Mumbai exactly 24 h before as_of (in the window), Delhi 30 min later: impossible.
+    bank.login(payer, phone, AS_OF - timedelta(hours=24), "Mumbai", 19.0760, 72.8777)
+    bank.login(payer, phone, AS_OF - timedelta(hours=23, minutes=30), "Delhi", 28.6139, 77.2090)
+    assert _run(bank, "LOGIN_GEO_VELOCITY", payer_customer_id=payer)[0] == "IMPOSSIBLE_TRAVEL"
+    other = bank.customer()
+    tablet = bank.device(other, "fp-tab")
+    bank.login(other, tablet, AS_OF - timedelta(days=9), "Delhi", 28.6139, 77.2090)
+    bank.login(other, tablet, AS_OF - timedelta(days=5), "Delhi", 28.6139, 77.2090)
+    # A login after as_of from a new, far city is not seen.
+    bank.login(other, tablet, AS_OF + timedelta(minutes=5), "Chennai", 13.0827, 80.2707)
+    outcome, fetched = _run(bank, "LOGIN_GEO_VELOCITY", payer_customer_id=other)
+    assert outcome == "USUAL"
+    # The last login at or before as_of is days old: it still names the city.
+    assert fetched.facts["last_city"] == "Delhi" and fetched.facts["new_city"] is False
 
 
 def test_a_new_city_without_impossible_travel(bank: Bank) -> None:
@@ -315,6 +433,15 @@ def test_payee_relationship_counts_earlier_executed_payments(bank: Bank) -> None
     assert _run(bank, "PAYEE_RELATIONSHIP", **subject)[0] == "NO_PRIOR_RELATION"
     bank.pay(payer, payee, 4_999, AS_OF - timedelta(days=9))
     bank.pay(payer, payee, 90_000, AS_OF - timedelta(days=8), status="DECLINED")  # not executed
+    assert _run(bank, "PAYEE_RELATIONSHIP", **subject)[0] == "PRIOR_SMALL_PAYMENTS"
+    # Initiated before as_of but executed after it: not yet a prior payment (#193 review).
+    bank.pay(
+        payer,
+        payee,
+        80_000,
+        AS_OF - timedelta(hours=1),
+        executed_at=AS_OF + timedelta(hours=2),
+    )
     assert _run(bank, "PAYEE_RELATIONSHIP", **subject)[0] == "PRIOR_SMALL_PAYMENTS"
     bank.pay(payer, payee, 5_000, AS_OF - timedelta(days=7))
     outcome, fetched = _run(bank, "PAYEE_RELATIONSHIP", **subject)
@@ -370,11 +497,38 @@ def test_nfr_04_evidence_fetch_on_the_demo_dataset(
     assert p95 <= NFR_04_SECONDS
 
 
+NEUTRAL = {
+    "BENEFICIARY_DEVICE_SHARING": "NOT_SHARED",
+    "INBOUND_FAN_IN": "LOW",
+    "PASS_THROUGH_DWELL": "OVER_24_H",
+    "ACCOUNT_PROFILE": "ESTABLISHED",
+    "LINKED_COMPLAINTS": "NONE",
+    "CRM_CONTACT_HISTORY": "NONE",
+    "LOGIN_GEO_VELOCITY": "USUAL",
+    "PAYEE_RELATIONSHIP": "NO_PRIOR_RELATION",
+}
+
+
+@pytest.mark.parametrize("key", sorted(NEUTRAL))
+def test_with_no_subject_every_adapter_gives_its_neutral_outcome(bank: Bank, key: str) -> None:
+    """No counterparty, payer or customer: the neutral outcome, and facts the template renders."""
+    outcome, fetched = _run(bank, key)
+    assert outcome == NEUTRAL[key]
+    assert set(fetched.facts) == FACTS_CONTRACT[key]
+    _assert_renders(key, fetched)
+
+
 # docs/15 §7: the narrative payload's facts, per source, exactly.
 FACTS_CONTRACT = {
     "BENEFICIARY_DEVICE_SHARING": {"shared_accounts", "window_days"},
     "INBOUND_FAN_IN": {"unrelated_payers", "window_h"},
-    "PASS_THROUGH_DWELL": {"median_dwell_minutes", "credits", "window_days", "departure_share"},
+    "PASS_THROUGH_DWELL": {
+        "median_dwell_minutes",
+        "credits",
+        "still_dwelling",
+        "window_days",
+        "departure_share",
+    },
     "ACCOUNT_PROFILE": {"account_age_days", "kyc_level"},
     "LINKED_COMPLAINTS": {"complaints"},
     "CRM_CONTACT_HISTORY": {"event", "days_ago", "window_days"},
@@ -402,15 +556,31 @@ def test_every_adapter_returns_the_narrative_facts_contract(bank: Bank) -> None:
     for key in ADAPTERS:
         _, fetched = _run(bank, key, **subjects)
         assert set(fetched.facts) == FACTS_CONTRACT[key], key
-        payload = {
-            "source_key": key,
-            "record_id": "EV-1",
-            "subject": "ACC-…5678",
-            "as_of": AS_OF.isoformat(),
-            "facts": dict(fetched.facts),
-        }
-        text = render_narrative(payload)
-        verdict = validate(
-            Purpose.EVIDENCE_NARRATIVE, EvidenceNarrative(finding=text, citations=["EV-1"]), payload
-        )
-        assert verdict.passed, (key, text, verdict.failures)
+        _assert_renders(key, fetched)
+
+
+def _assert_renders(key: str, fetched: Any) -> None:
+    payload = {
+        "source_key": key,
+        "record_id": "EV-1",
+        "subject": "ACC-…5678",
+        "as_of": AS_OF.isoformat(),
+        "facts": dict(fetched.facts),
+    }
+    text = render_narrative(payload)
+    verdict = validate(
+        Purpose.EVIDENCE_NARRATIVE, EvidenceNarrative(finding=text, citations=["EV-1"]), payload
+    )
+    assert verdict.passed, (key, text, verdict.failures)
+
+
+@pytest.mark.parametrize(
+    "facts",
+    [
+        {"median_dwell_minutes": None, "credits": 3, "still_dwelling": 2},  # median unknown
+        {"median_dwell_minutes": 12.0, "credits": 3, "still_dwelling": 1},  # measured decides
+    ],
+)
+def test_the_dwell_narrative_says_when_credits_are_still_dwelling(facts: dict[str, Any]) -> None:
+    fetched = Fetched(None, {**facts, "window_days": 7, "departure_share": 0.8})
+    _assert_renders("PASS_THROUGH_DWELL", fetched)
