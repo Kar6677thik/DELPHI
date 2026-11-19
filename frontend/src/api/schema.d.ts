@@ -435,10 +435,42 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/cases/{case_id}/police-alert/{action}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Act On Police Alert
+         * @description Send (recorded as SENT_SIMULATED, with the case's evidence list) or discard the coercion
+         *     case's police alert draft (docs/09 §6). Only a human call does this: nothing sends an alert
+         *     automatically (FR-NAV-10). 404 for a case without one, 409 once it was acted on.
+         */
+        post: operations["act_on_police_alert_api_v1_cases__case_id__police_alert__action__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * AlertAction
+         * @enum {string}
+         */
+        AlertAction: "send" | "discard";
+        /**
+         * AlertStatus
+         * @enum {string}
+         */
+        AlertStatus: "DRAFT" | "SENT_SIMULATED" | "DISCARDED";
         /**
          * ArtifactKind
          * @description The sensing models (docs/13 §1).
@@ -537,6 +569,7 @@ export interface components {
             what_would_change_my_mind: components["schemas"]["FlipView"] | null;
             /** Evidence Records */
             evidence_records: components["schemas"]["EvidenceRecordView"][];
+            police_alert: components["schemas"]["PoliceAlertView"] | null;
         };
         /** CasePage */
         CasePage: {
@@ -978,6 +1011,26 @@ export interface components {
          * @enum {string}
          */
         Permission: "view" | "demo:drive" | "case:write" | "chase:write" | "fde" | "admin";
+        /**
+         * PoliceAlertView
+         * @description docs/09 §6: the coercion case's police alert draft and what a human did with it.
+         */
+        PoliceAlertView: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            status: components["schemas"]["AlertStatus"];
+            /** Payload */
+            payload: {
+                [key: string]: unknown;
+            };
+            /** Acted By */
+            acted_by: string | null;
+            /** Acted At */
+            acted_at: string | null;
+        };
         /**
          * Problem
          * @description The body of every error response: RFC 9457 plus the stable ``code`` (docs/16 §1).
@@ -1852,6 +1905,38 @@ export interface operations {
                 "application/json": components["schemas"]["EvidenceRequest"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseDetail"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    act_on_police_alert_api_v1_cases__case_id__police_alert__action__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                case_id: string;
+                action: components["schemas"]["AlertAction"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {

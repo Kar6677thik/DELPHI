@@ -50,6 +50,7 @@ ACCESS: dict[tuple[str, str], str | Permission] = {
     ("GET", "/api/v1/cases/{case_id}"): Permission.VIEW,
     ("POST", "/api/v1/cases/{case_id}/disposition"): Permission.CASE_WRITE,
     ("POST", "/api/v1/cases/{case_id}/evidence-requests"): Permission.CASE_WRITE,
+    ("POST", "/api/v1/cases/{case_id}/police-alert/{action}"): Permission.CASE_WRITE,
 }
 PASSWORD = "correct horse battery"
 BROWSER = {"X-Delphi-Csrf": "1", "Origin": "https://testserver"}
@@ -118,6 +119,7 @@ def test_access(
         .replace("{user_id}", str(uuid4()))
         .replace("{version_id}", "999")
         .replace("{case_id}", str(uuid4()))
+        .replace("{action}", "send")
     )
     if (method, path) in {("POST", "/api/v1/auth/logout")}:
         # Signing out would end this module's shared session; check access with a probe

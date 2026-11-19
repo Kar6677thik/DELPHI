@@ -148,6 +148,15 @@ When protocol = `COERCION`:
    recorded as `SENT_SIMULATED`, or `DISCARD` it. Nothing is sent automatically (FR-NAV-10).
 3. The SLA is 30 minutes (configurable).
 
+**Implementation** (#106): `open_case` drafts the alert (`delphi.navigator.police_alert`,
+`police_alert_drafts`) in the case's own transaction: the victim's pseudonym, the amount and
+channel, the beneficiary account and the time. `POST /cases/{id}/police-alert/send|discard`
+(`case:write`) is the only way to act on it. SEND records SENT_SIMULATED with the case's
+evidence list at that moment; either action names the investigator and the time, is audited
+(`police_alert.sent` / `.discarded`) and is final (409 afterwards). `GET /cases/{id}` shows the
+alert. The outreach outcomes' `OUTREACH_CONFIRMED` labels are recorded by the evidence fetch
+(§3).
+
 ## 7. Due-diligence pack
 
 `GET /cases/{id}/dd-pack?format=json|html` (also `/guardian/sessions/{id}/dd-pack`). Sections,
