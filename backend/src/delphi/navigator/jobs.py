@@ -24,7 +24,6 @@ from delphi.llm.service import LlmService
 from delphi.navigator.evidence import narrative_subject
 from delphi.navigator.store import get_case
 from delphi.navigator.tables import evidence_records
-from delphi.platform.clock import Clock
 from delphi.platform.events import EventType, publish
 from delphi.platform.jobs import JobContext, JobRegistry, JobType
 
@@ -56,7 +55,6 @@ class NarrativeJob:
     """``LLM_NARRATIVE``: ``params = {"evidence_record_id": …}``."""
 
     sessions: sessionmaker[Session]
-    clock: Clock
     llm: LlmService
 
     def __call__(self, ctx: JobContext) -> Mapping[str, Any] | None:
@@ -93,6 +91,6 @@ class NarrativeJob:
 
 
 def register_navigator_jobs(
-    registry: JobRegistry, *, sessions: sessionmaker[Session], clock: Clock, llm: LlmService
+    registry: JobRegistry, *, sessions: sessionmaker[Session], llm: LlmService
 ) -> None:
-    registry.register(JobType.LLM_NARRATIVE, NarrativeJob(sessions, clock, llm))
+    registry.register(JobType.LLM_NARRATIVE, NarrativeJob(sessions, llm))

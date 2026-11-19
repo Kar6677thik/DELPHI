@@ -98,7 +98,7 @@ it through the same `request_evidence`, as the app role, with no requester.
 investigator records the result by choosing one outcome (`CONFIRMS_COERCION`, …), and its
 `raw` holds the note. In simulation/autoplay, the api enqueues a `SIM_OUTREACH_CALL` job. The
 worker, which may read scenario truth, samples the outcome from the response model and records
-it through the same service. The UI receives it over SSE. `CONFIRMS_COERCION` and `DENIES_INITIATING` create a label with source
+it through the same service. The UI receives it over SSE. The answer is drawn from the dataset's own seed (`datasets.seed`, doc 14 §9), so every policy hears the same answer. The api refuses a simulated call (503) when no simulator is configured. A call that ends without a record (no ground truth for the payment) can be asked for again, and one for a case disposed in the meantime ends without recording anything. `CONFIRMS_COERCION` and `DENIES_INITIATING` create a label with source
 `OUTREACH_CONFIRMED` (the hypothesis is the case's leading fraud hypothesis consistent with the
 outcome: coercion → leading APP_* hypothesis; denies → ATO).
 

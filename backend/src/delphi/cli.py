@@ -28,8 +28,8 @@ from delphi.kb.loader import load_and_validate
 from delphi.kb.model import KnowledgeBase
 from delphi.kb.store import active_version, ensure_kb_v1
 from delphi.llm.service import LlmService, primary_provider
-from delphi.navigator.evidence import OUTREACH as OUTREACH_SOURCE
-from delphi.navigator.evidence import request_evidence
+from delphi.navigator.api import OUTREACH as OUTREACH_SOURCE
+from delphi.navigator.api import request_evidence
 from delphi.navigator.jobs import register_navigator_jobs
 from delphi.platform.accounts import BootstrapError, ensure_bootstrap_admin
 from delphi.platform.clock import SystemClock
@@ -201,7 +201,7 @@ def worker_registry(
         primary_provider(settings),
         settings.llm_daily_token_budget,
     )
-    register_navigator_jobs(registry, sessions=platform.sessions, clock=platform.clock, llm=llm)
+    register_navigator_jobs(registry, sessions=platform.sessions, llm=llm)
     if settings.sim_database_url is None:
         log.warning("worker.sim_jobs_disabled", reason="DELPHI_SIM_DATABASE_URL is not set")
         return registry, None

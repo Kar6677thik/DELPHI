@@ -27,6 +27,7 @@ from sqlalchemy import Connection, Engine, exists, func, select
 from delphi.kb.model import KnowledgeBase
 from delphi.kb.store import active_version
 from delphi.platform.clock import Clock
+from delphi.platform.errors import DelphiError, ProblemCode
 from delphi.platform.ids import uuid7
 from delphi.platform.jobs import JobContext, JobRegistry, JobType, enqueue
 from delphi.platform.locks import DATASET_WRITE_LOCK_KEY
@@ -238,7 +239,6 @@ class OutreachCallJob:
     Navigator's evidence fetch (the composition root wires it, as the app role)."""
 
     sim_engine: Engine
-    config: GeneratorConfig
     models: ResponseModels
     record: OutreachRecorder
 
@@ -252,19 +252,30 @@ class OutreachCallJob:
                 .join(scenario_instances, si.id == pt.scenario_instance_id)
                 .where(pt.payment_id == payment_id)
             ).one_or_none()
-            profile = conn.execute(
-                select(datasets.c.profile).order_by(datasets.c.created_at.desc()).limit(1)
+            # The seed the bank was generated with (docs/14 §9): a dataset may override its
+            # profile's default seed, and every policy must hear the same answer.
+            seed = conn.execute(
+                select(datasets.c.seed).order_by(datasets.c.created_at.desc()).limit(1)
             ).scalar_one_or_none()
-        if row is None or profile is None:
+        if row is None or seed is None:
             return {"recorded": False, "reason": "no ground truth for this payment"}
         answer = outreach_answer(
             self.models,
-            self.config.profiles[profile].seed,
+            int(seed),
             str(payment_id),
             ScenarioType(row.scenario_type),
             coached=bool(row.coached),
+            # sim_day stays 0: the call is about one held payment, not a day of the stream, so
+            # docs/14 §5.3's adaptation (scammers coaching better over the days) does not apply.
+            sim_day=0.0,
         )
-        self.record(case_id, answer)
+        try:
+            self.record(case_id, answer)
+        except DelphiError as exc:
+            if exc.code is not ProblemCode.INVALID_STATE_TRANSITION:
+                raise
+            # The case was disposed before the call came back: nothing to record, not a failure.
+            return {"recorded": False, "reason": "case disposed", "outcome": answer}
         return {"recorded": True, "outcome": answer}
 
 
@@ -298,7 +309,6 @@ def register_sim_jobs(
             JobType.SIM_OUTREACH_CALL,
             OutreachCallJob(
                 sim_engine=sim_engine,
-                config=load_generator_config(),
                 models=load_response_models(),
                 record=record_outreach,
             ),
