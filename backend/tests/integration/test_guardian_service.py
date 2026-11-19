@@ -531,3 +531,50 @@ def test_when_the_fail_safe_itself_fails_the_session_still_ends(
         )
         == 1
     )
+
+
+def test_the_b1_and_b2_verdicts_are_stored_with_the_prior(env: Env) -> None:
+    """docs/08 §6, FR-GDN-15: what B1 and B2 (docs/22 §2) would have done, for the monitor.
+    ₹4,80,000 to a payee never saved, from no known device: B1 holds. B2's r = 1 − P(GENUINE)
+    from this same prior: low for a confident genuine prior, high for a digital-arrest one."""
+    svc = env.service(FixedPrior(GENUINE_SURE, p_mule=None), CLEAN)
+    calm = svc.start(env.payment(480_000), mode=SessionMode.LIVE, runner=Runner.API)
+    small = svc.start(env.payment(2_000), mode=SessionMode.LIVE, runner=Runner.API)
+    scam = env.service(FixedPrior(DIGITAL_ARREST, p_mule=None), CLEAN).start(
+        env.payment(480_000), mode=SessionMode.LIVE, runner=Runner.API
+    )
+    with env.owner.connect() as conn:
+        stored = {
+            r.id: r.baseline_decisions
+            for r in conn.execute(
+                select(guardian_sessions.c.id, guardian_sessions.c.baseline_decisions)
+            )
+        }
+    assert stored[calm.id] == {"B1": "HOLD_FOR_REVIEW", "B2": "RELEASE"}
+    assert stored[small.id] == {"B1": "RELEASE", "B2": "RELEASE"}
+    assert stored[scam.id] == {"B1": "HOLD_FOR_REVIEW", "B2": "HOLD_FOR_REVIEW"}
+
+
+def test_b1_counts_only_executed_payments_and_no_device_as_not_new(env: Env) -> None:
+    """#186 review: the monitor's B1 inputs match the history's (``history.py`` ``_decide``). A
+    held attempt is no earlier payment, and a payment with no device is not from a new device."""
+    held = env.payment(60_000)
+    with env.owner.begin() as conn:
+        conn.execute(
+            text("UPDATE bank.payments SET status = 'HELD', initiated_at = :t WHERE id = :p"),
+            {"t": T0 - timedelta(days=3), "p": held},
+        )
+    retry = env.another_payment(held, 60_000)  # the same payer and payee, days later
+    small = env.payment(15_000)  # ₹15,000 with no device_id: under B1's new-payee threshold
+    svc = env.service(FixedPrior(GENUINE_SURE, p_mule=None), CLEAN)
+    retried = svc.start(retry, mode=SessionMode.LIVE, runner=Runner.API)
+    deviceless = svc.start(small, mode=SessionMode.LIVE, runner=Runner.API)
+    with env.owner.connect() as conn:
+        stored = {
+            r.id: r.baseline_decisions
+            for r in conn.execute(
+                select(guardian_sessions.c.id, guardian_sessions.c.baseline_decisions)
+            )
+        }
+    assert stored[retried.id]["B1"] == "HOLD_FOR_REVIEW"  # still a new payee: the attempt was held
+    assert stored[deviceless.id]["B1"] == "RELEASE"  # no device is not a new device
