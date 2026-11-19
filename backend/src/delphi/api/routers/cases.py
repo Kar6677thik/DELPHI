@@ -493,15 +493,12 @@ def request_case_evidence(
                     "Only CUSTOMER_OUTREACH_CALL can be simulated.",
                     code=ProblemCode.VALIDATION_FAILED,
                 )
-            if platform.settings.sim_database_url is None:
-                # The worker registers SIM_OUTREACH_CALL only with the simulator's database, so
-                # a queued call would never run: say so now rather than leave a 202 hanging.
-                raise DelphiError(
-                    "The simulator is not configured, so no simulated call can be placed.",
-                    code=ProblemCode.NOT_INITIALISED,
-                )
             request_simulated_outreach(
-                session, platform.clock, case_id, requested_by=principal.user_id
+                session,
+                platform.clock,
+                case_id,
+                requested_by=principal.user_id,
+                simulator=platform.settings.simulation_enabled,
             )
             record = get_case(session, case_id)
             assert record is not None

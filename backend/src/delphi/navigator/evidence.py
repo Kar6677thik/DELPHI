@@ -369,13 +369,21 @@ def request_evidence(
 
 
 def request_simulated_outreach(
-    session: Session, clock: Clock, case_id: UUID, *, requested_by: UUID | None
+    session: Session,
+    clock: Clock,
+    case_id: UUID,
+    *,
+    requested_by: UUID | None,
+    simulator: bool,
 ) -> bool:
     """docs/09 §3: in simulation the outreach call is the worker's (`SIM_OUTREACH_CALL`): it
     samples the customer's answer and records it through ``request_evidence``. Returns whether a
     call was queued: not when the case already has the call's record, nor while an earlier call
     is still queued or running. A call that ended without a record (no ground truth, a failure)
-    can be placed again: each attempt has its own job key."""
+    can be placed again: each attempt has its own job key. ``simulator`` says whether this
+    deployment runs the simulator's jobs (``DELPHI_SIMULATION_ENABLED``); without it the call
+    could never run, so it is refused (503) rather than queued, once the case itself is known
+    to be valid (404 and 409 come first)."""
     case = get_case(session, case_id)
     if case is None:
         raise NotFoundError("No case with this id.")
@@ -385,6 +393,11 @@ def request_simulated_outreach(
         )
     if case.subject_payment_id is None:
         raise _invalid("A simulated outreach call is about a held payment.")
+    if not simulator:
+        raise DelphiError(
+            "This deployment does not run the simulator, so no simulated call can be placed.",
+            code=ProblemCode.NOT_INITIALISED,
+        )
     if OUTREACH in observed_sources(session, case_id):
         return False
     j = jobs.c

@@ -202,6 +202,13 @@ def worker_registry(
         settings.llm_daily_token_budget,
     )
     register_navigator_jobs(registry, sessions=platform.sessions, llm=llm)
+    if settings.simulation_enabled and settings.sim_database_url is None:
+        # The api accepts simulated calls on this flag; a worker without the simulator's pool
+        # would leave them queued for ever (docs/09 §3).
+        raise SettingsError(
+            "DELPHI_SIMULATION_ENABLED is set but DELPHI_SIM_DATABASE_URL is not: the worker"
+            " could not run the simulator's jobs."
+        )
     if settings.sim_database_url is None:
         log.warning("worker.sim_jobs_disabled", reason="DELPHI_SIM_DATABASE_URL is not set")
         return registry, None

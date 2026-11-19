@@ -89,12 +89,12 @@ def test_each_fetch_queues_its_narrative_and_the_job_writes_the_template_text(
 
 @pytest.fixture
 def sim_writer(env: Env) -> Iterator[TestClient]:  # noqa: F811 - the imported fixture
-    """An investigator's client on an api whose settings name the simulator's database (so
-    simulated outreach calls can be placed)."""
+    """An investigator's client on an api of a deployment that runs the simulator. Like a real
+    api it holds no sim database URL (docs/17 §2): only the non-secret flag."""
     platform = Platform(
         settings=Settings(
             database_url="postgresql://unused/db",
-            sim_database_url="postgresql://unused/sim",
+            simulation_enabled=True,
             migrations_dir=MIGRATIONS_DIR,
         ),
         engine=env.owner,
@@ -143,7 +143,14 @@ def _a_seed_that_answers_differently(payment_id: UUID) -> int:
     return next(s for s in range(7_000, 8_000) if answer(s) != answer(PROFILE_SEED))
 
 
-EXPECTED_LABEL = {"CONFIRMS_COERCION": "APP_DIGITAL_ARREST", "DENIES_INITIATING": "ATO"}
+def _a_seed_answering(payment_id: UUID, outcome: str) -> int:
+    """A dataset seed whose outreach answer for this payment is ``outcome`` (deterministic, so
+    the label path is exercised on every run, #196 review)."""
+    return next(
+        s
+        for s in range(1, 10_000)
+        if outreach_answer(MODELS, s, str(payment_id), ScenarioType.APP_DIGITAL_ARREST) == outcome
+    )
 
 
 def test_a_simulated_outreach_call_is_queued_then_recorded_from_the_dataset_seed(
@@ -169,8 +176,15 @@ def test_a_simulated_outreach_call_is_queued_then_recorded_from_the_dataset_seed
     [card] = client.get(f"/api/v1/cases/{case.id}").json()["evidence_records"]
     assert card["source_key"] == OUTREACH and card["outcome"] == expected
     assert card["requested_by"] is None
-    with env.owner.connect() as conn:
-        found = list(
+    # Once recorded, another simulate request queues nothing new.
+    _finish(env, queued.id)
+    assert _fetch(client, case, source_key=OUTREACH, simulate=True).status_code == 202
+    assert len(_jobs(env, JobType.SIM_OUTREACH_CALL)) == 1
+
+
+def _outreach_labels(e: Env, case: CaseRecord) -> list[str]:
+    with e.owner.connect() as conn:
+        return list(
             conn.execute(
                 select(labels.c.hypothesis_key).where(
                     labels.c.subject_id == case.subject_payment_id,
@@ -178,11 +192,22 @@ def test_a_simulated_outreach_call_is_queued_then_recorded_from_the_dataset_seed
                 )
             ).scalars()
         )
-    assert found == ([EXPECTED_LABEL[expected]] if expected in EXPECTED_LABEL else [])
-    # Once recorded, another simulate request queues nothing new.
-    _finish(env, queued.id)
-    assert _fetch(client, case, source_key=OUTREACH, simulate=True).status_code == 202
-    assert len(_jobs(env, JobType.SIM_OUTREACH_CALL)) == 1
+
+
+def test_a_simulated_coercion_answer_records_its_label(
+    env: Env,  # noqa: F811 - the imported fixture
+    sim_writer: TestClient,
+) -> None:
+    """docs/09 §3: a sampled CONFIRMS_COERCION labels the payment with the leading APP_*."""
+    case = _held_case(env, "PROTECTIVE_HOLD")
+    assert _fetch(sim_writer, case, source_key=OUTREACH, simulate=True).status_code == 202
+    [queued] = _jobs(env, JobType.SIM_OUTREACH_CALL)
+    assert case.subject_payment_id is not None
+    seed = _a_seed_answering(case.subject_payment_id, "CONFIRMS_COERCION")
+    _ground_truth(env, case, queued.id, seed=seed)
+    result = _outreach_job(env)(_context(env, queued))
+    assert result == {"recorded": True, "outcome": "CONFIRMS_COERCION"}
+    assert _outreach_labels(env, case) == ["APP_DIGITAL_ARREST"]
 
 
 def test_a_simulated_call_needs_the_simulator_and_can_be_placed_again_after_a_miss(
@@ -192,10 +217,21 @@ def test_a_simulated_call_needs_the_simulator_and_can_be_placed_again_after_a_mi
 ) -> None:
     """#196 review: no 202 that never resolves."""
     case = _held_case(env, "PROTECTIVE_HOLD")
-    plain, _ = writer  # an api without the simulator's database
+    plain, _ = writer  # a deployment that does not run the simulator
     refused = _fetch(plain, case, source_key=OUTREACH, simulate=True)
     assert refused.status_code == 503 and refused.json()["code"] == "NOT_INITIALISED"
     assert _jobs(env, JobType.SIM_OUTREACH_CALL) == []
+    # The case is checked first: an unknown case is 404 and a disposed one 409, not 503.
+    missing = plain.post(
+        f"/api/v1/cases/{uuid4()}/evidence-requests",
+        json={"source_key": OUTREACH, "simulate": True},
+        headers={"Idempotency-Key": str(uuid4()), **BROWSER},
+    )
+    assert missing.status_code == 404
+    disposed = _held_case(env, "PROTECTIVE_HOLD")
+    _dispose(env, disposed)
+    gone = _fetch(plain, disposed, source_key=OUTREACH, simulate=True)
+    assert gone.status_code == 409 and gone.json()["code"] == "INVALID_STATE_TRANSITION"
     assert _fetch(sim_writer, case, source_key=OUTREACH, simulate=True).status_code == 202
     assert _fetch(sim_writer, case, source_key=OUTREACH, simulate=True).status_code == 202
     [first] = _jobs(env, JobType.SIM_OUTREACH_CALL)  # still queued: nothing new
@@ -206,6 +242,17 @@ def test_a_simulated_call_needs_the_simulator_and_can_be_placed_again_after_a_mi
     assert len(_jobs(env, JobType.SIM_OUTREACH_CALL)) == 2  # a fresh attempt
 
 
+def _dispose(e: Env, case: CaseRecord) -> None:
+    with e.owner.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE delphi.cases SET status = 'DISPOSED', disposition = 'RELEASE',"
+                " disposed_at = opened_at WHERE id = :c"
+            ),
+            {"c": case.id},
+        )
+
+
 def test_a_call_for_a_case_disposed_meanwhile_ends_cleanly(
     env: Env,  # noqa: F811 - the imported fixture
     sim_writer: TestClient,
@@ -214,14 +261,7 @@ def test_a_call_for_a_case_disposed_meanwhile_ends_cleanly(
     assert _fetch(sim_writer, case, source_key=OUTREACH, simulate=True).status_code == 202
     [queued] = _jobs(env, JobType.SIM_OUTREACH_CALL)
     _ground_truth(env, case, queued.id, seed=PROFILE_SEED)
-    with env.owner.begin() as conn:
-        conn.execute(
-            text(
-                "UPDATE delphi.cases SET status = 'DISPOSED', disposition = 'RELEASE',"
-                " disposed_at = opened_at WHERE id = :c"
-            ),
-            {"c": case.id},
-        )
+    _dispose(env, case)
     result = _outreach_job(env)(_context(env, queued))
     assert result is not None and result["recorded"] is False
     assert result["reason"] == "case disposed"
