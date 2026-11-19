@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from hypothesis import given, settings
+from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
 from delphi.chase.tracer import (
@@ -185,6 +185,14 @@ def test_a_source_whose_credit_is_not_visible_still_taints_its_payee() -> None:
     prune=st.sampled_from([0, 50, MIN]),
     hidden=st.sets(st.integers(0, 50), max_size=5),
 )
+# #174: the source's own credit is hidden, and its payee sends most of its balance on before
+# the end of the trace; the taint must follow those debits, not land on what is left.
+@example(
+    transfers=[(0, 1, 39, False), (0, 1, 81, False), (0, 1, 96, False)],
+    source_share=47,
+    prune=0,
+    hidden={0, 7},
+)
 def test_taint_is_conserved_and_never_exceeds_the_balance(
     transfers: list[tuple[int, int, int, bool]],
     source_share: int,
@@ -217,3 +225,24 @@ def test_taint_is_conserved_and_never_exceeds_the_balance(
     assert conservation_gap(result) == 0
     for account, taint in result.taint_now.items():
         assert 0 < taint <= bank.balances[account]
+
+
+def test_a_hidden_source_credit_taints_its_payee_before_its_later_debits() -> None:
+    """#174: the source's credit is not visible, but its debit is. The payee is tainted at the
+    source's time, so its later forward carries the taint on instead of leaving it behind on a
+    smaller balance."""
+    bank = Bank()
+    bank.fund("victim", 10_000_00)
+    bank.fund("m1", 1_000_00)
+    source = bank.pay("victim", "m1", 10_000_00)
+    bank.pay("m1", "m2", 10_000_00)
+    visible = [m for m in bank.moves if not (m.payment_id == source and m.delta_paise > 0)]
+    result = trace(
+        [SourcePayment(source, "m1", 10_000_00)],
+        visible,
+        min_trace_paise=0,
+        cash_out_channel=CASH,
+    )
+    assert conservation_gap(result) == 0
+    assert result.taint_now["m1"] <= bank.balances["m1"]
+    assert result.taint_now == {"m1": 90_909, "m2": 909_091}  # 10,000 of 11,000 sent on
