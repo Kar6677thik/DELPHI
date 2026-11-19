@@ -529,4 +529,6 @@ def act_on_police_alert(
             user_id=principal.user_id,
             evidence=evidence,
         )
-        return _detail(session, record, platform.clock.now())
+        acted = get_case(session, case_id)  # the new version
+        assert acted is not None
+        return _detail(session, acted, platform.clock.now())
