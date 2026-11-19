@@ -18,6 +18,7 @@ from delphi.navigator.evidence import (
     current_records,
     observed_sources,
     request_evidence,
+    request_simulated_outreach,
 )
 from delphi.navigator.police_alert import (
     AlertAction,
@@ -69,5 +70,6 @@ __all__ = [
     "open_case",
     "open_case_for_payment",
     "request_evidence",
+    "request_simulated_outreach",
     "vulnerable_payer",
 ]

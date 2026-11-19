@@ -793,6 +793,11 @@ export interface components {
             outcome?: string | null;
             /** Note */
             note?: string | null;
+            /**
+             * Simulate
+             * @default false
+             */
+            simulate: boolean;
         };
         /**
          * EvidenceRowView

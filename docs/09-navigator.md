@@ -86,7 +86,13 @@ refuses a disposed one, returns the current record for a source already fetched 
 adapter (`delphi.navigator.evidence_adapters`, as the app role) and the rule, updates the case
 posterior with the KB likelihoods (the case moves to IN_PROGRESS), stores the record, and writes
 the audit entry `evidence.recorded` and the event `case.updated`. The console plans with the
-case's observed sources. The narrative job and `SIM_OUTREACH_CALL` follow.
+case's observed sources. Each new record queues `LLM_NARRATIVE` (`navigator.jobs.NarrativeJob`):
+the worker builds the doc 15 §7 payload (the adapter's facts, an `ACC-…` pseudonym of the
+source's subject account, the case's `as_of`), gets the text from `LlmService` (the model, or the
+source's template), stores it with its source and citations, and publishes
+`evidence.narrative_ready`. `{simulate: true}` on `CUSTOMER_OUTREACH_CALL` queues
+`SIM_OUTREACH_CALL` (202): the worker's sim handler samples the answer (docs/14 §9) and records
+it through the same `request_evidence`, as the app role, with no requester.
 
 `CUSTOMER_OUTREACH_CALL` is special. In the demo UI it opens a call script dialog. The
 investigator records the result by choosing one outcome (`CONFIRMS_COERCION`, …), and its
