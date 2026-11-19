@@ -1247,7 +1247,7 @@
             "schema": {
               "anyOf": [
                 {
-                  "$ref": "#/components/schemas/SessionStatusFilter"
+                  "$ref": "#/components/schemas/SessionStatus"
                 },
                 {
                   "type": "null"
@@ -1263,14 +1263,16 @@
             "schema": {
               "anyOf": [
                 {
-                  "$ref": "#/components/schemas/DecisionFilter"
+                  "type": "string"
                 },
                 {
                   "type": "null"
                 }
               ],
+              "description": "A decision of the ACTIVE KB's profile",
               "title": "Decision"
-            }
+            },
+            "description": "A decision of the ACTIVE KB's profile"
           },
           {
             "name": "unexplained",
@@ -1286,6 +1288,22 @@
                 }
               ],
               "title": "Unexplained"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/SessionMode"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Mode"
             }
           },
           {
@@ -1403,60 +1421,6 @@
                   "$ref": "#/components/schemas/GuardianSessionView"
                 }
               }
-            }
-          },
-          "default": {
-            "description": "An RFC 9457 problem (docs/16 §1)",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/guardian/sessions/{session_id}/dd-pack": {
-      "get": {
-        "tags": [
-          "guardian"
-        ],
-        "summary": "Read Dd Pack",
-        "description": "The session's due-diligence pack (docs/09 §7): JSON, or a printable HTML page.",
-        "operationId": "read_dd_pack_api_v1_guardian_sessions__session_id__dd_pack_get",
-        "parameters": [
-          {
-            "name": "session_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Session Id"
-            }
-          },
-          {
-            "name": "format",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "$ref": "#/components/schemas/DdPackFormat",
-              "default": "json"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "title": "Response Read Dd Pack Api V1 Guardian Sessions  Session Id  Dd Pack Get"
-                }
-              },
-              "text/html": {}
             }
           },
           "default": {
@@ -2165,24 +2129,6 @@
           "profile"
         ],
         "title": "DatasetRequest"
-      },
-      "DdPackFormat": {
-        "type": "string",
-        "enum": [
-          "json",
-          "html"
-        ],
-        "title": "DdPackFormat"
-      },
-      "DecisionFilter": {
-        "type": "string",
-        "enum": [
-          "RELEASE",
-          "HOLD_FOR_REVIEW",
-          "PROTECTIVE_HOLD",
-          "DECLINE"
-        ],
-        "title": "DecisionFilter"
       },
       "DiffOp": {
         "type": "string",
@@ -3664,7 +3610,16 @@
         ],
         "title": "Role"
       },
-      "SessionStatusFilter": {
+      "SessionMode": {
+        "type": "string",
+        "enum": [
+          "LIVE",
+          "AUTOPLAY",
+          "EVAL"
+        ],
+        "title": "SessionMode"
+      },
+      "SessionStatus": {
         "type": "string",
         "enum": [
           "CREATED",
@@ -3674,7 +3629,7 @@
           "DECIDED",
           "CANCELLED_BY_CUSTOMER"
         ],
-        "title": "SessionStatusFilter"
+        "title": "SessionStatus"
       },
       "StatusView": {
         "properties": {

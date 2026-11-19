@@ -451,26 +451,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/guardian/sessions/{session_id}/dd-pack": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Read Dd Pack
-         * @description The session's due-diligence pack (docs/09 §7): JSON, or a printable HTML page.
-         */
-        get: operations["read_dd_pack_api_v1_guardian_sessions__session_id__dd_pack_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -719,16 +699,6 @@ export interface components {
              */
             seed?: number | null;
         };
-        /**
-         * DdPackFormat
-         * @enum {string}
-         */
-        DdPackFormat: "json" | "html";
-        /**
-         * DecisionFilter
-         * @enum {string}
-         */
-        DecisionFilter: "RELEASE" | "HOLD_FOR_REVIEW" | "PROTECTIVE_HOLD" | "DECLINE";
         /**
          * DiffOp
          * @enum {string}
@@ -1217,10 +1187,15 @@ export interface components {
          */
         Role: "VIEWER" | "INVESTIGATOR" | "FDE_ENGINEER" | "ADMIN";
         /**
-         * SessionStatusFilter
+         * SessionMode
          * @enum {string}
          */
-        SessionStatusFilter: "CREATED" | "PASSIVE_PROBING" | "PLANNING" | "AWAITING_CUSTOMER" | "DECIDED" | "CANCELLED_BY_CUSTOMER";
+        SessionMode: "LIVE" | "AUTOPLAY" | "EVAL";
+        /**
+         * SessionStatus
+         * @enum {string}
+         */
+        SessionStatus: "CREATED" | "PASSIVE_PROBING" | "PLANNING" | "AWAITING_CUSTOMER" | "DECIDED" | "CANCELLED_BY_CUSTOMER";
         /** StatusView */
         StatusView: {
             /** Dataset Ready */
@@ -2030,9 +2005,11 @@ export interface operations {
     read_sessions_api_v1_guardian_sessions_get: {
         parameters: {
             query?: {
-                status?: components["schemas"]["SessionStatusFilter"] | null;
-                decision?: components["schemas"]["DecisionFilter"] | null;
+                status?: components["schemas"]["SessionStatus"] | null;
+                /** @description A decision of the ACTIVE KB's profile */
+                decision?: string | null;
                 unexplained?: boolean | null;
+                mode?: components["schemas"]["SessionMode"] | null;
                 from?: string | null;
                 to?: string | null;
                 limit?: number;
@@ -2082,40 +2059,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GuardianSessionView"];
-                };
-            };
-            /** @description An RFC 9457 problem (docs/16 §1) */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-        };
-    };
-    read_dd_pack_api_v1_guardian_sessions__session_id__dd_pack_get: {
-        parameters: {
-            query?: {
-                format?: components["schemas"]["DdPackFormat"];
-            };
-            header?: never;
-            path: {
-                session_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                    "text/html": unknown;
                 };
             };
             /** @description An RFC 9457 problem (docs/16 §1) */
