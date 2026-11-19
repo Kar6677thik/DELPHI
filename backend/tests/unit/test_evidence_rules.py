@@ -24,6 +24,7 @@ from delphi.probes.evidence import (
     inbound_fan_in,
     linked_complaints,
     login_geo_velocity,
+    median_dwell,
     pass_through_dwell,
     payee_relationship,
 )
@@ -82,12 +83,38 @@ def test_inbound_fan_in(m: int, outcome: str) -> None:
         ([5, 10, 2000], "UNDER_30_MIN"),  # the median, not the mean
         ([5, 50], "UNDER_30_MIN"),  # even count: the middle two averaged, 27.5
         ([20, 50], "BETWEEN_30_MIN_24_H"),  # 35
-        ([10, 3000, 4000], "OVER_24_H"),  # two credits still in the account days later
+        ([10, 3000, 4000], "OVER_24_H"),  # two credits that took days to leave
         ([10, 20, 4000], "UNDER_30_MIN"),
     ],
 )
 def test_pass_through_dwell(minutes: list[float], outcome: str) -> None:
     assert pass_through_dwell(DwellObs(minutes), T) == outcome
+
+
+@pytest.mark.parametrize(
+    ("measured", "dwelling", "outcome", "median"),
+    [
+        # One ₹50,000 credit 10 min before as_of, none of it moved: unknown, at least 10 min.
+        # Never UNDER_30_MIN from a censored value (#191 review).
+        ([], 1, "OVER_24_H", None),
+        ([5], 1, "OVER_24_H", None),  # even count: the middle two are 5 and +∞
+        ([5, 10], 1, "UNDER_30_MIN", 10.0),  # still dwelling is a minority: measured decides
+        ([5, 10, 12], 2, "UNDER_30_MIN", 12.0),
+        ([40, 50], 1, "BETWEEN_30_MIN_24_H", 50.0),
+        ([5, 10], 3, "OVER_24_H", None),  # the median falls on a credit still dwelling
+    ],
+)
+def test_a_credit_still_dwelling_counts_as_longer_than_any_measured(
+    measured: list[float], dwelling: int, outcome: str, median: float | None
+) -> None:
+    obs = DwellObs(measured, still_dwelling=dwelling)
+    assert pass_through_dwell(obs, T) == outcome
+    assert median_dwell(obs) == median  # the narrative's median_dwell_minutes (docs/15 §7)
+    assert obs.credits == len(measured) + dwelling
+
+
+def test_no_credits_has_no_median() -> None:
+    assert median_dwell(DwellObs([])) is None
 
 
 @pytest.mark.parametrize(

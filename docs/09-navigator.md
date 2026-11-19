@@ -110,9 +110,12 @@ material the LLM narrative may cite.
 
 The rules are `delphi.probes.evidence` (pure; thresholds from `kb/engine.yaml` `classifiers:`,
 the look-back windows named in the module). In `PASS_THROUGH_DWELL`, a credit that is not yet
-80% gone by `as_of` counts at the minutes it has dwelt so far (a lower bound), so it raises the
-median rather than being left out, and the rule and the narrative's `median_dwell_minutes`
-(doc 15 §7) are the same number.
+80% gone by `as_of` is *still dwelling*: its dwell is unknown but at least its age, so the rule
+counts it as longer than any measured dwell (+∞). It pushes the median up and is never classified
+as if its age were a measured dwell; one fresh, unmoved credit gives `OVER_24_H`, not
+`UNDER_30_MIN`. The narrative's `median_dwell_minutes` (doc 15 §7) is the same median, or null
+when that median falls on a credit still dwelling; the facts also carry `still_dwelling`, the
+number of such credits, so the narrative can say so.
 
 ## 5. Investigator traces
 
