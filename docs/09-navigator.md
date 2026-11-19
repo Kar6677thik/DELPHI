@@ -96,6 +96,13 @@ it through the same service. The UI receives it over SSE. `CONFIRMS_COERCION` an
 `OUTREACH_CONFIRMED` (the hypothesis is the case's leading fraud hypothesis consistent with the
 outcome: coercion → leading APP_* hypothesis; denies → ATO).
 
+A `refresh` replaces the source's observation; it does not add a second one. The superseded
+record's likelihood is divided out of the case posterior before the new outcome's is applied, so
+the same outcome again leaves the posterior unchanged, and the new record's `posterior_before`
+is the case without the old observation. A refreshed outreach call replaces its
+`OUTREACH_CONFIRMED` label (or removes it when the new outcome gives none). A source disabled in
+the case's KB version cannot be fetched.
+
 ## 4. Evidence outcome rules (deterministic)
 
 Windows are relative to the case's `as_of` time (the time of the held payment, or of case
