@@ -12,10 +12,15 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, select, text
 
 from delphi.api.security import Principal
+from delphi.kb.loader import load_and_validate
+from delphi.kb.store import KbStatus, insert_version
 from delphi.navigator.api import CaseRecord, get_case
 from delphi.navigator.tables import evidence_records
+from delphi.platform.db import make_session_factory
 from delphi.platform.labels import labels
 from delphi.platform.tables import audit_log, outbox_events
+from delphi.probes.registry import CLASSIFIER_NAMES
+from tests.conftest import KB_DIR
 
 from .test_cases import BROWSER, _held_case, env, writer  # noqa: F401 - pytest fixtures
 from .test_guardian_store import Env
@@ -87,6 +92,13 @@ def test_a_source_is_fetched_once_unless_refreshed(
     refreshed = _fetch(client, case, source_key="LINKED_COMPLAINTS", refresh=True).json()
     [card] = refreshed["evidence_records"]
     assert card["id"] != first["evidence_records"][0]["id"]
+    # The same outcome again replaces the observation: the posterior does not move (#194).
+    [was] = first["evidence_records"]
+    assert card["outcome"] == was["outcome"]
+    assert card["posterior_before"] == pytest.approx(was["posterior_before"], abs=1e-9)
+    assert card["posterior_after"] == pytest.approx(was["posterior_after"], abs=1e-9)
+    assert refreshed["posterior"] == pytest.approx(first["posterior"], abs=1e-6)
+    assert card["info_yield_bits"] == pytest.approx(was["info_yield_bits"], abs=1e-9)
     assert _count(env, select(func.count()).select_from(evidence_records)) == 2
     assert (
         _count(
@@ -148,3 +160,71 @@ def test_bad_requests_are_refused(
         headers={"Idempotency-Key": str(uuid4()), **BROWSER},
     )
     assert missing.status_code == 404
+
+
+def test_a_refresh_after_other_evidence_takes_out_only_its_own_observation(
+    env: Env,  # noqa: F811 - the imported fixture
+    writer: tuple[TestClient, Principal],  # noqa: F811
+) -> None:
+    client, _ = writer
+    case = _held_case(env)
+    _fetch(client, case, source_key="LINKED_COMPLAINTS")
+    after_profile = _fetch(client, case, source_key="ACCOUNT_PROFILE").json()
+    again = _fetch(client, case, source_key="LINKED_COMPLAINTS", refresh=True).json()
+    assert again["posterior"] == pytest.approx(after_profile["posterior"], abs=1e-6)
+
+
+def test_a_disabled_source_or_a_stray_recorded_outcome_is_refused(
+    env: Env,  # noqa: F811 - the imported fixture
+    writer: tuple[TestClient, Principal],  # noqa: F811
+) -> None:
+    client, _ = writer
+    case = _held_case(env)
+    stray = _fetch(client, case, source_key="ACCOUNT_PROFILE", outcome="CONFIRMS_COERCION")
+    assert stray.status_code == 422 and stray.json()["code"] == "VALIDATION_FAILED"
+    noted = _fetch(client, case, source_key="ACCOUNT_PROFILE", note="called them")
+    assert noted.status_code == 422
+    kb = load_and_validate(KB_DIR, CLASSIFIER_NAMES)
+    off = kb.sources["LINKED_COMPLAINTS"].model_copy(update={"enabled": False})
+    changed = kb.model_copy(update={"sources": {**kb.sources, "LINKED_COMPLAINTS": off}})
+    with make_session_factory(env.owner).begin() as s:  # as the owner, like a KB author
+        version = insert_version(
+            s, env.clock, changed, status=KbStatus.CANDIDATE, change_summary="complaints off"
+        )
+    with env.owner.begin() as conn:
+        conn.execute(
+            text("UPDATE delphi.cases SET kb_version_id = :v WHERE id = :c"),
+            {"v": version, "c": case.id},
+        )
+    disabled = _fetch(client, case, source_key="LINKED_COMPLAINTS")
+    assert disabled.status_code == 422 and "disabled" in disabled.json()["detail"]
+    assert _count(env, select(func.count()).select_from(evidence_records)) == 0
+
+
+def _outreach_labels(e: Env, case: CaseRecord) -> list[str]:
+    with e.owner.connect() as conn:
+        return list(
+            conn.execute(
+                select(labels.c.hypothesis_key).where(
+                    labels.c.subject_id == case.subject_payment_id,
+                    labels.c.label_source == "OUTREACH_CONFIRMED",
+                )
+            ).scalars()
+        )
+
+
+def test_a_refreshed_outreach_call_replaces_its_label(
+    env: Env,  # noqa: F811 - the imported fixture
+    writer: tuple[TestClient, Principal],  # noqa: F811
+) -> None:
+    """#194 review: a denial (ATO) corrected to coercion must not keep the ATO label."""
+    client, _ = writer
+    case = _held_case(env)
+    call = {"source_key": "CUSTOMER_OUTREACH_CALL"}
+    assert _fetch(client, case, **call, outcome="DENIES_INITIATING").status_code == 200
+    assert _outreach_labels(env, case) == ["ATO"]
+    fixed = _fetch(client, case, **call, outcome="CONFIRMS_COERCION", refresh=True)
+    assert fixed.status_code == 200
+    assert _outreach_labels(env, case) == ["APP_DIGITAL_ARREST"]
+    assert _fetch(client, case, **call, outcome="UNREACHABLE", refresh=True).status_code == 200
+    assert _outreach_labels(env, case) == []

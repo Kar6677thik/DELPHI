@@ -102,6 +102,13 @@ it through the same service. The UI receives it over SSE. `CONFIRMS_COERCION` an
 `OUTREACH_CONFIRMED` (the hypothesis is the case's leading fraud hypothesis consistent with the
 outcome: coercion → leading APP_* hypothesis; denies → ATO).
 
+A `refresh` replaces the source's observation; it does not add a second one. The superseded
+record's likelihood is divided out of the case posterior before the new outcome's is applied, so
+the same outcome again leaves the posterior unchanged, and the new record's `posterior_before`
+is the case without the old observation. A refreshed outreach call replaces its
+`OUTREACH_CONFIRMED` label (or removes it when the new outcome gives none). A source disabled in
+the case's KB version cannot be fetched.
+
 ## 4. Evidence outcome rules (deterministic)
 
 Windows are relative to the case's `as_of` time (the time of the held payment, or of case
@@ -124,9 +131,24 @@ material the LLM narrative may cite.
 
 The rules are `delphi.probes.evidence` (pure; thresholds from `kb/engine.yaml` `classifiers:`,
 the look-back windows named in the module). In `PASS_THROUGH_DWELL`, a credit that is not yet
-80% gone by `as_of` counts at the minutes it has dwelt so far (a lower bound), so it raises the
-median rather than being left out, and the rule and the narrative's `median_dwell_minutes`
-(doc 15 §7) are the same number.
+80% gone by `as_of` is *still dwelling*: its dwell is unknown but at least its age, so the rule
+counts it as longer than any measured dwell (+∞). It pushes the median up and is never classified
+as if its age were a measured dwell; one fresh, unmoved credit gives `OVER_24_H`, not
+`UNDER_30_MIN`. The narrative's `median_dwell_minutes` (doc 15 §7) is the same median, or null
+when that median falls on a credit still dwelling; the facts also carry `still_dwelling`, the
+number of such credits, so the narrative can say so.
+
+The adapters (`delphi.navigator.evidence_adapters`) read the bank as of `as_of`:
+
+- Payments count only once `EXECUTED`, by `executed_at < as_of` (`INBOUND_FAN_IN` on both the
+  window and the "prior relation" side, `PAYEE_RELATIONSHIP`). A held, declined or pending
+  payment, including the case's own held payment, never credited the account.
+- `BENEFICIARY_DEVICE_SHARING` counts only accounts opened by `as_of`.
+- `ACCOUNT_PROFILE` for an account this bank does not hold is `ESTABLISHED` with null facts: an
+  unknown age is not evidence of a new account.
+- `LOGIN_GEO_VELOCITY`'s "last login" is the customer's last login at or before `as_of`, which
+  may be older than the 24 h window; its city is new if no earlier login (at any time) was from
+  it, and a first-ever login is not a new city. The speed uses only the logins in the window.
 
 ## 5. Investigator traces
 

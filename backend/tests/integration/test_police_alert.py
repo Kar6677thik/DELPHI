@@ -7,9 +7,10 @@ from typing import Any
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 
 from delphi.api.security import Principal
+from delphi.llm.minimise import pseudonym
 from delphi.navigator.api import CaseRecord
 from delphi.navigator.tables import police_alert_drafts
 from delphi.platform.tables import audit_log
@@ -20,6 +21,17 @@ from .test_guardian_store import Env
 
 def _act(client: TestClient, case: CaseRecord, action: str) -> Any:
     return client.post(f"/api/v1/cases/{case.id}/police-alert/{action}", headers=BROWSER)
+
+
+def _payer(e: Env, case: CaseRecord) -> Any:
+    with e.owner.connect() as conn:
+        return conn.execute(
+            text(
+                "SELECT a.customer_id FROM bank.payments p"
+                " JOIN bank.accounts a ON a.id = p.payer_account_id WHERE p.id = :p"
+            ),
+            {"p": case.subject_payment_id},
+        ).scalar_one()
 
 
 def _status(e: Env, case: CaseRecord) -> str:
@@ -42,8 +54,11 @@ def test_a_coercion_case_drafts_an_alert_that_nothing_sends_by_itself(
     view = client.get(f"/api/v1/cases/{case.id}").json()
     alert = view["police_alert"]
     assert alert["status"] == "DRAFT" and alert["acted_by"] is None
-    assert alert["payload"]["victim"].startswith("C-") and alert["payload"]["amount_paise"] > 0
-    assert "CUST" not in str(alert)  # a pseudonym, never the customer's name
+    customer = _payer(env, case)
+    # docs/15 §6: the same CUST-… pseudonym as the LLM payloads, never the name or the id.
+    assert alert["payload"]["victim"] == pseudonym("CUST", customer)
+    assert alert["payload"]["amount_paise"] > 0
+    assert str(customer) not in str(alert) and "display_name" not in str(alert)
     headers = {"Idempotency-Key": str(uuid4()), **BROWSER}
     fetched = client.post(
         f"/api/v1/cases/{case.id}/evidence-requests",
@@ -52,8 +67,10 @@ def test_a_coercion_case_drafts_an_alert_that_nothing_sends_by_itself(
     )
     assert fetched.status_code == 200
     assert _status(env, case) == "DRAFT"  # evidence does not send it
+    before = client.get(f"/api/v1/cases/{case.id}").json()["version"]
     sent = _act(client, case, "send")
     assert sent.status_code == 200, sent.text
+    assert sent.json()["version"] == before + 1  # the alert changed the case view (#195 review)
     alert = sent.json()["police_alert"]
     assert alert["status"] == "SENT_SIMULATED" and alert["acted_by"] == str(principal.user_id)
     assert [e["source_key"] for e in alert["payload"]["evidence"]] == ["ACCOUNT_PROFILE"]
@@ -78,6 +95,7 @@ def test_an_alert_can_be_discarded_and_a_standard_case_has_none(
     discarded = _act(client, coercion, "discard")
     assert discarded.status_code == 200
     assert discarded.json()["police_alert"]["status"] == "DISCARDED"
+    assert discarded.json()["version"] == coercion.version + 1
     assert _status(env, coercion) == "DISCARDED"
     standard = _held_case(env, "HOLD_FOR_REVIEW")
     assert client.get(f"/api/v1/cases/{standard.id}").json()["police_alert"] is None

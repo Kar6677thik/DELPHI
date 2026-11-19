@@ -12,6 +12,10 @@
    writes the audit entry and the `case.updated` event. An outreach call that confirms coercion
    or a denial also records an `OUTREACH_CONFIRMED` label (docs/09 §3).
 
+A refresh replaces an observation, it does not add one: the superseded record's likelihood is
+divided out of the case posterior before the new outcome's is applied, so the same outcome again
+leaves the posterior where it was. A refreshed outreach call replaces its label too.
+
 The narrative job (docs/15) and the simulated outreach call come next (#102 part 3).
 """
 
@@ -43,8 +47,8 @@ from delphi.platform.errors import DelphiError, NotFoundError, ProblemCode
 from delphi.platform.events import EventType, publish
 from delphi.platform.ids import uuid7
 from delphi.platform.jobs import JobType, enqueue
-from delphi.platform.labels import LabelRow, record_labels
-from delphi.probes.evidence import EVIDENCE_CLASSIFIERS, RECORDED_EVIDENCE
+from delphi.platform.labels import LabelRow, replace_label
+from delphi.probes.api import EVIDENCE_CLASSIFIERS, RECORDED_EVIDENCE
 from delphi.sim import api as bank
 
 OUTREACH = "CUSTOMER_OUTREACH_CALL"
@@ -153,7 +157,7 @@ def _leading(posterior: Mapping[str, float], order: Sequence[str]) -> str:
     return max(order, key=lambda h: (posterior.get(h, 0.0), -order.index(h)))
 
 
-def _outreach_label(case: CaseRecord, outcome: str, posterior: Mapping[str, float]) -> str | None:
+def _outreach_label(outcome: str, posterior: Mapping[str, float]) -> str | None:
     """docs/09 §3: coercion → the leading APP_* hypothesis; a denial → ATO."""
     if outcome == "DENIES_INITIATING":
         return ATO
@@ -241,6 +245,10 @@ def request_evidence(
     source = profile.sources.get(source_key)
     if source is None:
         raise _invalid(f"{source_key} is not an evidence source for a {case.type.value} case.")
+    if not source.enabled:  # docs/06 §8: a disabled source is never eligible
+        raise _invalid(f"{source_key} is disabled in KB version {case.kb_version_id}.")
+    if source_key not in RECORDED_EVIDENCE and (recorded_outcome is not None or note is not None):
+        raise _invalid(f"{source_key} takes no recorded outcome or note; its rule decides.")
     current = {r.source_key: r for r in current_records(session, case_id)}
     if source_key in current and not refresh:
         return current[source_key]  # docs/09 §3: idempotent per (case, source)
@@ -264,6 +272,9 @@ def request_evidence(
         note=note,
     )
     before = belief_vector(profile, case.posterior)
+    if source_key in current:  # a refresh: take the superseded observation back out first
+        old = source.likelihood[source.outcomes.index(current[source_key].outcome)]
+        before = bayes_update(before, 1.0 / old)  # the KB floors likelihoods, so never 0
     after = bayes_update(before, source.likelihood[source.outcomes.index(outcome)])
     names = profile.hypotheses
     posterior_before = {h: float(p) for h, p in zip(names, before, strict=True)}
@@ -311,19 +322,22 @@ def request_evidence(
         )
     )
     if source_key == OUTREACH and case.subject_payment_id is not None:
-        hypothesis = _outreach_label(case, outcome, posterior_after)
-        if hypothesis is not None:
-            record_labels(
+        hypothesis = _outreach_label(outcome, posterior_after)
+        if hypothesis is not None or source_key in current:  # a refresh corrects the label
+            replace_label(
                 session.connection(),
-                [
-                    LabelRow(
-                        subject_type="PAYMENT",
-                        subject_id=case.subject_payment_id,
-                        hypothesis_key=hypothesis,
-                        label_source=OUTREACH_LABEL,
-                        known_at=now,
-                    )
-                ],
+                subject_type="PAYMENT",
+                subject_id=case.subject_payment_id,
+                label_source=OUTREACH_LABEL,
+                row=None
+                if hypothesis is None
+                else LabelRow(
+                    subject_type="PAYMENT",
+                    subject_id=case.subject_payment_id,
+                    hypothesis_key=hypothesis,
+                    label_source=OUTREACH_LABEL,
+                    known_at=now,
+                ),
                 now=now,
             )
     record(

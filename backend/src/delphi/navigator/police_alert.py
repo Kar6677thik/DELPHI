@@ -9,7 +9,6 @@ again. Each action is audited (docs/17 §9: police-alert sends).
 
 from __future__ import annotations
 
-import hashlib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -20,7 +19,8 @@ from uuid import UUID
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from delphi.navigator.tables import police_alert_drafts
+from delphi.llm.minimise import pseudonym
+from delphi.navigator.tables import cases, police_alert_drafts
 from delphi.platform.audit import ActorType, record
 from delphi.platform.clock import Clock
 from delphi.platform.errors import DelphiError, NotFoundError, ProblemCode
@@ -63,11 +63,12 @@ class PoliceAlert:
         )
 
 
-def pseudonym(customer_id: UUID | None) -> str | None:
+CUSTOMER_PREFIX = "CUST"  # docs/15 §6: the same pseudonym the LLM payloads and DD packs use
+
+
+def victim_pseudonym(customer_id: UUID | None) -> str | None:
     """A stable pseudonym, so the alert names no customer (docs/19)."""
-    if customer_id is None:
-        return None
-    return "C-" + hashlib.sha256(str(customer_id).encode()).hexdigest()[:8].upper()
+    return None if customer_id is None else pseudonym(CUSTOMER_PREFIX, customer_id)
 
 
 def draft_alert(session: Session, clock: Clock, *, case_id: UUID, payment_id: UUID) -> PoliceAlert:
@@ -78,7 +79,7 @@ def draft_alert(session: Session, clock: Clock, *, case_id: UUID, payment_id: UU
     now = clock.now()
     alert_id = uuid7(int(now.timestamp() * _MS))
     payload: dict[str, Any] = {
-        "victim": pseudonym(payment.payer_customer_id),
+        "victim": victim_pseudonym(payment.payer_customer_id),
         "amount_paise": payment.amount_paise,
         "channel": payment.channel,
         "beneficiary_account_id": str(payment.payee_account_id),
@@ -138,6 +139,8 @@ def act_on_alert(
         .where(pa.id == row.id)
         .values(status=status.value, payload=payload, acted_by=user_id, acted_at=now)
     )
+    # The case view changes with its alert, so its version (the ETag) moves too (docs/16 §1).
+    session.execute(update(cases).where(cases.c.id == case_id).values(version=cases.c.version + 1))
     record(
         session,
         clock,
