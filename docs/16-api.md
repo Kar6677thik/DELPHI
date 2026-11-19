@@ -55,8 +55,8 @@ Permission names refer to doc 19 §3.
 | Method & path | Perm | Request → Response |
 |---|---|---|
 | POST `/guardian/sessions` | `demo:drive` | `{payment: {payer_account_id, payee_account_id \| new_payee: {...}, amount_paise, channel, device_id, telemetry: {...}}}` → 201 `GuardianSessionView` |
-| GET `/guardian/sessions` | `view` | filters: `status, decision, unexplained, from, to` |
-| GET `/guardian/sessions/{id}` | `view` | `GuardianSessionView` |
+| GET `/guardian/sessions` | `view` | filters: `status, decision, unexplained, mode, from, to`. `decision` must be one of the ACTIVE KB's `GUARDIAN_PAYMENT` decisions (422 otherwise); `mode` is `LIVE`, `AUTOPLAY` or `EVAL` (all modes when omitted; the evaluation harness runs in memory, #123, so EVAL rows are rare). `from`/`to` are on `started_at` ( `from` inclusive, `to` exclusive, RFC 3339 with a zone). Newest first, keyset-paged; items are `GuardianSessionSummary`: the view below without `prior`, `risk_by_decision` and `probe_runs`, plus `leading_hypothesis` |
+| GET `/guardian/sessions/{id}` | `view` | `GuardianSessionView`, with `ETag: "<version>"` |
 | POST `/guardian/sessions/{id}/probe-responses` | `demo:drive` | doc 08 §4 body → 200 `GuardianSessionView` |
 | POST `/guardian/sessions/{id}/cancel` | `demo:drive` | customer cancels → 200 |
 | GET `/guardian/sessions/{id}/dd-pack` | `view` | `?format=json\|html` |
@@ -72,8 +72,14 @@ Permission names refer to doc 19 §3.
   probe_runs: [ { id, seq, probe_key, mode, status, selected_by, propensity, outcome,
                   posterior_before, posterior_after, info_yield_bits, voi_myopic_paise,
                   net_value_paise, cost_paise, candidates: [...], started_at, completed_at } ],
-  baselines: { B1: decision, B2: decision }, case_id }
+  baselines: { B1: decision, B2: decision }, case_id, dd_pack_complete, version }
 ```
+
+`baselines` (doc 08 §6, doc 22 §2) are computed when the prior is built, from what the bank knew
+at initiation, and stored in `guardian_sessions.baseline_decisions`. B1 is `RELEASE`,
+`HOLD_FOR_REVIEW` or `DECLINE`. B2 is `RELEASE`, `HOLD_FOR_REVIEW`, or `OTP_STEP_UP` in its
+middle band: B2 releases only if the OTP passes, which the bank cannot know without asking (the
+monitor's "OTP would pass" line). Risks are whole paise; probabilities have 6 decimals.
 
 ### Navigator
 
