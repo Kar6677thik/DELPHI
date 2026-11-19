@@ -14,6 +14,10 @@ from sqlalchemy import Engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from delphi.kb.loader import load_and_validate
+from delphi.llm.port import Purpose
+from delphi.llm.schemas import EvidenceNarrative
+from delphi.llm.template import render_narrative
+from delphi.llm.validators import validate
 from delphi.navigator.evidence_adapters import ADAPTERS, EvidenceSubject
 from delphi.platform.db import make_session_factory
 from delphi.probes.evidence import EVIDENCE_CLASSIFIERS
@@ -162,7 +166,7 @@ def test_device_sharing_counts_other_owners_accounts_on_the_same_fingerprint(ban
     bank.account(late)
     bank.login(late, bank.device(late, "fp-ring"), AS_OF - timedelta(days=31), "Delhi", 28.6, 77.2)
     outcome, fetched = _run(bank, "BENEFICIARY_DEVICE_SHARING", counterparty_account_id=subject)
-    assert (outcome, fetched.facts["other_accounts"]) == ("SHARED_3_PLUS", 3)
+    assert (outcome, fetched.facts["shared_accounts"]) == ("SHARED_3_PLUS", 3)
     assert len(fetched.record_refs) == 3
     external = bank.account(None)
     assert _run(bank, "BENEFICIARY_DEVICE_SHARING", counterparty_account_id=external)[0] == (
@@ -194,7 +198,7 @@ def test_dwell_follows_each_credit_out_fifo(bank: Bank) -> None:
     bank.ledger(subject, out2, -3_500, 1_500, t0 + timedelta(minutes=12))  # 85% gone at 12 min
     outcome, fetched = _run(bank, "PASS_THROUGH_DWELL", counterparty_account_id=subject)
     assert outcome == "UNDER_30_MIN"
-    assert fetched.facts["minutes_to_80pct_out"] == [12.0]
+    assert fetched.facts["median_dwell_minutes"] == 12.0
     assert fetched.record_refs  # the credit's ledger entry
 
 
@@ -208,7 +212,8 @@ def test_dwell_counts_an_older_balance_ahead_of_the_credit(bank: Bank) -> None:
     out = bank.pay(subject, onward, 25_000, t0 + timedelta(minutes=10))
     bank.ledger(subject, out, -25_000, 5_000, t0 + timedelta(minutes=10))  # only 50% of the credit
     outcome, fetched = _run(bank, "PASS_THROUGH_DWELL", counterparty_account_id=subject)
-    assert outcome == "OVER_24_H" and fetched.facts["still_dwelling"] == 1
+    assert outcome == "OVER_24_H"
+    assert fetched.facts["median_dwell_minutes"] == 2 * 24 * 60  # dwelt since, a lower bound
     assert _run(bank, "PASS_THROUGH_DWELL", counterparty_account_id=bank.account(None))[0] == (
         "OVER_24_H"
     )
@@ -264,7 +269,8 @@ def test_crm_contact_history_looks_back_14_days(bank: Bank) -> None:
         t=AS_OF - timedelta(days=13),
     )
     outcome, fetched = _run(bank, "CRM_CONTACT_HISTORY", payer_customer_id=payer)
-    assert outcome == "SIM_SWAP_OR_DEVICE_LOSS_REPORTED" and fetched.facts["reports"] == 1
+    assert outcome == "SIM_SWAP_OR_DEVICE_LOSS_REPORTED"
+    assert (fetched.facts["event"], fetched.facts["days_ago"]) == ("DEVICE_LOST_REPORTED", 13)
 
 
 def test_login_geo_velocity(bank: Bank) -> None:
@@ -276,7 +282,7 @@ def test_login_geo_velocity(bank: Bank) -> None:
     # Delhi → Mumbai (~1,150 km) in 30 minutes: impossible.
     bank.login(payer, phone, AS_OF - timedelta(hours=2, minutes=30), "Mumbai", 19.0760, 72.8777)
     outcome, fetched = _run(bank, "LOGIN_GEO_VELOCITY", payer_customer_id=payer)
-    assert outcome == "IMPOSSIBLE_TRAVEL" and fetched.facts["max_speed_kmh"] > 2000
+    assert outcome == "IMPOSSIBLE_TRAVEL" and fetched.facts["speed_kmh"] > 2000
 
 
 def test_a_new_city_without_impossible_travel(bank: Bank) -> None:
@@ -303,3 +309,49 @@ def test_payee_relationship_counts_earlier_executed_payments(bank: Bank) -> None
     bank.pay(payer, payee, 5_000, AS_OF - timedelta(days=7))
     outcome, fetched = _run(bank, "PAYEE_RELATIONSHIP", **subject)
     assert outcome == "ESTABLISHED_PAYEE" and fetched.facts["prior_payments"] == 2
+
+
+# docs/15 §7: the narrative payload's facts, per source, exactly.
+FACTS_CONTRACT = {
+    "BENEFICIARY_DEVICE_SHARING": {"shared_accounts", "window_days"},
+    "INBOUND_FAN_IN": {"unrelated_payers", "window_h"},
+    "PASS_THROUGH_DWELL": {"median_dwell_minutes", "credits", "window_days", "departure_share"},
+    "ACCOUNT_PROFILE": {"account_age_days", "kyc_level"},
+    "LINKED_COMPLAINTS": {"complaints"},
+    "CRM_CONTACT_HISTORY": {"event", "days_ago", "window_days"},
+    "LOGIN_GEO_VELOCITY": {"last_city", "speed_kmh", "new_city", "window_h"},
+    "PAYEE_RELATIONSHIP": {"prior_payments", "max_prior_amount_paise"},
+}
+
+
+def test_every_adapter_returns_the_narrative_facts_contract(bank: Bank) -> None:
+    """docs/15 §7: each adapter's facts are exactly its source's narrative fields, and the
+    source's template renders them into text that passes the docs/15 §5 validators."""
+    payer_customer = bank.customer()
+    payer = bank.account(payer_customer)
+    payee = bank.account(bank.customer(), age_days=20, kyc="MINIMAL")
+    phone = bank.device(payer_customer, "fp")
+    bank.login(payer_customer, phone, AS_OF - timedelta(hours=3), "Delhi", 28.6, 77.2)
+    paid = bank.pay(payer, payee, 6_000, AS_OF - timedelta(days=3))
+    bank.ledger(payee, paid, 6_000, 6_000, AS_OF - timedelta(days=3))
+    subjects: dict[str, Any] = {
+        "counterparty_account_id": payee,
+        "payer_account_id": payer,
+        "payer_customer_id": payer_customer,
+    }
+    assert set(FACTS_CONTRACT) == set(ADAPTERS)
+    for key in ADAPTERS:
+        _, fetched = _run(bank, key, **subjects)
+        assert set(fetched.facts) == FACTS_CONTRACT[key], key
+        payload = {
+            "source_key": key,
+            "record_id": "EV-1",
+            "subject": "ACC-…5678",
+            "as_of": AS_OF.isoformat(),
+            "facts": dict(fetched.facts),
+        }
+        text = render_narrative(payload)
+        verdict = validate(
+            Purpose.EVIDENCE_NARRATIVE, EvidenceNarrative(finding=text, citations=["EV-1"]), payload
+        )
+        assert verdict.passed, (key, text, verdict.failures)
