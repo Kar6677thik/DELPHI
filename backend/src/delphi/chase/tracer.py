@@ -16,6 +16,12 @@ applied in time order:
 Taint is moved in whole paise, so it is conserved exactly:
 ``Σ T_now + leakage + in_flight + pruned = initial`` (a property test checks it).
 
+No account holds more taint than money (FR-CHS-05): a credit adds ``x ≥ τ`` to ``B`` and
+``τ`` to ``T``, and a debit keeps ``T − round(x·T/B) ≤ B − x`` whenever ``T ≤ B`` (both sides
+are whole paise and the exact value is ``T·(B − x)/B``). A source whose credit is not visible
+taints its payee at the source's debit, so the payee's later debits are cut from that taint too
+(#174).
+
 Balances come from the ledger itself (``balance_after_paise − delta_paise`` is the balance before
 each entry), so an account first reached mid-way is traced with its real balance. A payment's
 debit is always applied before its credit, whatever their entry ids. The tracer is pure: the
@@ -130,7 +136,6 @@ def trace(
         source_payees[source.payment_id] = source.payee_account_id
         result.initial_paise += source.amount_paise
         result.depth.setdefault(source.payee_account_id, 1)
-    sources_seen: set[str] = set()
     taint = result.taint_now
 
     def settle(account: str) -> None:
@@ -141,10 +146,18 @@ def trace(
         elif held == 0:
             taint.pop(account, None)
 
+    def arrive(payment_id: str, account: str) -> None:
+        taint[account] = taint.get(account, 0) + carried.pop(payment_id)
+        settle(account)
+
     ordered = sorted(moves, key=lambda m: (m.at_us, m.entry_id))
     first_at: dict[str, tuple[int, int]] = {}
     for m in ordered:
         first_at.setdefault(m.payment_id, (m.at_us, m.entry_id))
+    # A source with no visible entry at all was credited before anything here (#174).
+    for payment_id, payee in source_payees.items():
+        if payment_id not in first_at:
+            arrive(payment_id, payee)
     by_payment = sorted(ordered, key=lambda m: (*first_at[m.payment_id], m.delta_paise > 0))
     for payment_id, group in groupby(by_payment, key=lambda m: m.payment_id):
         entries = list(group)
@@ -158,17 +171,14 @@ def trace(
                 taint[debit.account_id] -= out
                 _send(result, carried, debit, credit, out, cash_out_channel=cash_out_channel)
             settle(debit.account_id)
-        if credit is not None and payment_id in carried:
-            arriving = carried.pop(payment_id)
-            if payment_id in source_payees:
-                sources_seen.add(payment_id)
-            taint[credit.account_id] = taint.get(credit.account_id, 0) + arriving
-            settle(credit.account_id)
-    # A source whose credit is not in the visible ledger still taints its payee.
-    for payment_id, payee in source_payees.items():
-        if payment_id not in sources_seen and payment_id in carried:
-            taint[payee] = taint.get(payee, 0) + carried.pop(payment_id)
-            settle(payee)
+        if payment_id not in carried:
+            continue
+        if credit is not None:
+            arrive(payment_id, credit.account_id)
+        elif payment_id in source_payees:
+            # A source whose credit is not visible still taints its payee, at the source's own
+            # time (its debit), so the payee's later debits carry their share on (#174).
+            arrive(payment_id, source_payees[payment_id])
     return result
 
 

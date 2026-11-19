@@ -99,6 +99,7 @@ FALLBACK_LANGUAGE = "en"
 CALL_STATUS_CONSENT = "call_status"  # kb/sources/probes/CALL_STATUS.yaml requires_consent
 FAIRNESS_WINDOW = timedelta(days=30)  # docs/06 §8: the rolling 30 days of the fairness cap
 DONE = frozenset({SessionStatus.DECIDED, SessionStatus.CANCELLED_BY_CUSTOMER})
+GENUINE = "GENUINE"
 
 log = get_logger(__name__)
 
@@ -262,10 +263,19 @@ class GuardianService:
         kb_only = [h for h in profile.hypotheses if h not in p_model and h != UNEXPLAINED]
         shares = {h: profile.open_mass_shares.get(h, 0.0) for h in kb_only}
         risks = risk_by_decision(prior, ctx.losses())
+        prior_probs = ctx.as_dict(prior)
+        # B1/B2's verdicts for the monitor (docs/08 §6, FR-GDN-15): B2 from this same prior.
+        baselines = bank.baseline_decisions(
+            s,
+            ctx.payment,
+            p_genuine=prior_probs.get(GENUINE, 0.0),
+            new_device_days=ctx.version.kb.config.classifiers.new_device_days,
+        )
         self._write(
             s,
             ctx.record,
-            prior=ctx.as_dict(prior),
+            baseline_decisions=baselines,
+            prior=prior_probs,
             p_model=dict(p_model),
             anomaly_percentile=q,
             open_mass=u,
@@ -276,7 +286,7 @@ class GuardianService:
         )
         fast = ctx.version.kb.config.engine.fast_path
         if is_fast_path(
-            float(p_model.get("GENUINE", 0.0)),
+            float(p_model.get(GENUINE, 0.0)),
             float(ctx.payment.amount_paise),
             q,
             min_p_genuine=fast.min_p_genuine,
