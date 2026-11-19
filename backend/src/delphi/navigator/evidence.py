@@ -209,7 +209,8 @@ def _fetch(
                 f"{source_key} needs the recorded outcome, one of "
                 f"{sorted(RECORDED_EVIDENCE[source_key])}."
             )
-        return recorded_outcome, {"recorded_outcome": recorded_outcome, "note": note}, [], 0
+        # docs/15 §7: the outreach narrative's facts are {result, note}.
+        return recorded_outcome, {"result": recorded_outcome, "note": note}, [], 0
     thresholds = kb.config.classifiers
     fetched = ADAPTERS[source_key](session, _subject(session, case, now), thresholds)
     outcome = EVIDENCE_CLASSIFIERS[source_key].classify(fetched.observation, thresholds)
