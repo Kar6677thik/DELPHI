@@ -23,8 +23,14 @@ queue since the last run.
 - amount band (log10 amount, z-scored);
 - F3 stage indicators of the customer's last 24 h of events.
 
-**Clustering:** scikit-learn `HDBSCAN(min_cluster_size=5, min_samples=3, metric="euclidean")`
-on the queue items from the last 30 days. Points labelled noise stay in the queue.
+**Clustering:** scikit-learn `HDBSCAN(min_cluster_size=5, min_samples=3, metric="euclidean",
+allow_single_cluster=True)` on the queue items from the last 30 days. A queue holding one
+pattern (the Scout's main case: in S-4, collect-refund scams dominate the queue) is one cluster,
+not all noise. With a single cluster, HDBSCAN keeps only its densest members unless
+`cluster_selection_epsilon` is set; **proposed** (#197, awaiting approval as a KB v1 change):
+`scout.cluster_selection_epsilon: 1.0`, below the √2 distance of one differing outcome, so a
+pattern keeps all its members while a pattern that differs in one answer stays separate. Points
+labelled noise stay in the queue.
 
 **For each cluster:**
 
@@ -43,11 +49,15 @@ The output is `scout_clusters` rows plus one `typology_drafts` row per cluster, 
 
 **Implementation** (#117): the clustering core is `delphi.scout.clustering` (pure functions):
 `matrix`, `cluster_labels`, `distinguishing_features` (absolute standardised mean difference,
-`(mean_c − mean_r) / sqrt((var_c + var_r) / 2)`, columns constant in both left out),
+`(mean_c − mean_r) / sqrt((var_c + var_r) / 2)`; a column constant in both groups at different
+values separates them perfectly and ranks first, reported as `smd: null, separates: true`; a
+column with no difference beyond float noise is left out; with no known-typology items to
+compare against there are no distinguishing features),
 `outcome_profile`, `draft_likelihoods` (ESS capped at `elicitation.default_ess`) and
 `template_name`, composed by `scout()`. Its numbers are the KB's `scout:` section. A feature
 missing from an item sits at its training mean (z = 0). The queue rules, the `RUN_SCOUT` job and
-its tables follow.
+its tables follow, together with each cluster's `size` and time span (which need the items'
+timestamps from the queue).
 
 ## 3. FDE drafting (`DRAFT`)
 

@@ -8,8 +8,11 @@ import pytest
 from delphi.kb.loader import load_and_validate
 from delphi.probes.registry import CLASSIFIER_NAMES
 from delphi.scout.clustering import (
+    NOISE,
     FeatureSpace,
     ScoutItem,
+    cluster_labels,
+    distinguishing_features,
     draft_likelihoods,
     matrix,
     outcome_profile,
@@ -107,7 +110,18 @@ def test_two_planted_patterns_become_two_clusters_and_scattered_points_stay_in_t
     a = next(c for c in result.clusters if "a0" in c.member_ids)
     top = [d["feature"] for d in a.distinguishing_features]
     assert len(top) <= 8
-    assert {"DEVICE_POSTURE=REMOTE_ACCESS_ACTIVE", "z:amount_log10", "channel=IMPS"} & set(top[:4])
+    # The planted columns: every A member has them and no reference item does, so they
+    # separate the groups perfectly and rank first (traits the cluster has before those the
+    # reference has, e.g. NOT_ON_CALL), and they name the cluster.
+    planted = {
+        "CALL_STATUS=ON_CALL_UNKNOWN_NUMBER",
+        "DEVICE_POSTURE=REMOTE_ACCESS_ACTIVE",
+        "channel=IMPS",
+    }
+    assert set(top[:3]) == planted
+    assert all(d["separates"] and d["smd"] is None for d in a.distinguishing_features[:3])
+    assert all(d["cluster_mean"] == 1.0 for d in a.distinguishing_features[:3])
+    assert a.suggested_name.endswith(", ".join(str(f) for f in top[:3]))
     assert a.outcome_profile["DEVICE_POSTURE"]["REMOTE_ACCESS_ACTIVE"] == 1.0
     assert "PURPOSE_QUESTION" not in a.outcome_profile  # never observed by the cluster
     assert a.suggested_name.startswith(f"Candidate pattern {a.number}: ")
@@ -139,3 +153,83 @@ def test_too_few_items_are_all_noise_and_the_name_template_degrades() -> None:
     assert template_name(
         2, [{"feature": "a"}, {"feature": "b"}, {"feature": "c"}, {"feature": "d"}]
     ) == ("Candidate pattern 2: a, b, c")
+
+
+# Proposed KB value (docs/11 §2, #197): `scout.cluster_selection_epsilon`, pending approval.
+PROPOSED_EPSILON = 1.0
+SCATTERED = [
+    ScoutItem(f"n{i}", {}, {"amount_log10": float(v)}, "UPI_PUSH")
+    for i, v in enumerate((-10.0, 15.0, 30.0))
+]
+
+
+def _run(queue: list[ScoutItem], epsilon: float = PROPOSED_EPSILON) -> object:
+    return scout(
+        queue,
+        REFERENCE,
+        SPACE,
+        min_cluster_size=KB.config.scout.min_cluster_size,
+        min_samples=KB.config.scout.min_samples,
+        max_ess=KB.config.elicitation.default_ess,
+        selection_epsilon=epsilon,
+    )
+
+
+def test_a_queue_holding_one_pattern_is_one_cluster_not_all_noise() -> None:
+    """#197 review: the Scout's main case (S-4's collect-refund scams fill the queue)."""
+    result = _run([*PATTERN_B, *SCATTERED])
+    [cluster] = result.clusters  # type: ignore[attr-defined]
+    assert sorted(cluster.member_ids) == sorted(i.id for i in PATTERN_B)
+    assert set(result.noise_ids) == {"n0", "n1", "n2"}  # type: ignore[attr-defined]
+    [alone] = _run(PATTERN_B).clusters  # type: ignore[attr-defined]
+    assert len(alone.member_ids) == len(PATTERN_B)
+
+
+def test_without_an_epsilon_one_pattern_still_gives_its_dense_core() -> None:
+    """With HDBSCAN's default (no epsilon) the single cluster keeps its densest members only:
+    one cluster, never zero, which is why the KB value is proposed."""
+    [core] = _run(PATTERN_B, epsilon=0.0).clusters  # type: ignore[attr-defined]
+    assert KB.config.scout.min_cluster_size <= len(core.member_ids) <= len(PATTERN_B)
+    assert set(core.member_ids) <= {i.id for i in PATTERN_B}
+
+
+def test_identical_items_are_one_cluster() -> None:
+    labels = cluster_labels(np.ones((12, 4)), min_cluster_size=5, min_samples=3)
+    assert set(labels.tolist()) == {0}
+
+
+def test_a_pattern_one_answer_apart_stays_its_own_cluster() -> None:
+    near = _items("m", 8, {"PURPOSE_QUESTION": "HIGH_RISK_PURPOSE"}, 3.2, "UPI_COLLECT_APPROVAL")
+    result = _run([*PATTERN_B, *near])
+    members = sorted(sorted(c.member_ids) for c in result.clusters)  # type: ignore[attr-defined]
+    assert members == sorted([sorted(i.id for i in PATTERN_B), sorted(i.id for i in near)])
+    assert NOISE == -1
+
+
+COLUMNS = ["flag", "noise", "same", "spread"]
+
+
+def test_a_column_constant_in_both_groups_at_different_values_ranks_first() -> None:
+    """#197 review: the clearest signal (every member has it, no reference item does) must
+    not score 0; float noise must not get through as a feature."""
+    cluster = np.array([[1.0, 0.3, 1.0, 2.0], [1.0, 0.3, 1.0, 4.0], [1.0, 0.3, 1.0, 6.0]])
+    reference = np.array([[0.0, 0.3 + 1e-16, 1.0, 0.0], [0.0, 0.3, 1.0, 1.0], [0.0, 0.3, 1.0, 2.0]])
+    found = distinguishing_features(cluster, reference, COLUMNS)
+    assert [d["feature"] for d in found] == ["flag", "spread"]  # not "noise", not "same"
+    flag = found[0]
+    assert flag["separates"] is True and flag["smd"] is None
+    assert (flag["cluster_mean"], flag["reference_mean"]) == (1.0, 0.0)
+    # spread: diff 3, pooled sqrt((8/3 + 2/3) / 2) = sqrt(5/3)
+    assert found[1]["separates"] is False
+    assert found[1]["smd"] == pytest.approx(3 / np.sqrt(5 / 3), abs=1e-4)
+
+
+def test_with_no_reference_items_there_are_no_distinguishing_features() -> None:
+    cluster = np.ones((5, len(COLUMNS)))
+    assert distinguishing_features(cluster, np.zeros((0, len(COLUMNS))), COLUMNS) == []
+    result = scout(
+        PATTERN_A, [], SPACE, min_cluster_size=5, min_samples=3, max_ess=20, selection_epsilon=1.0
+    )
+    [cluster_a] = result.clusters
+    assert cluster_a.distinguishing_features == []
+    assert cluster_a.suggested_name == f"Candidate pattern {cluster_a.number}"

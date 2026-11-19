@@ -6,7 +6,11 @@ items, with no I/O. The ``RUN_SCOUT`` job loads the items and stores what this r
   standard deviations; the channel one-hot; and the F3 stage indicators of the customer's last
   24 h.
 - **Clustering:** scikit-learn ``HDBSCAN`` with the KB's ``scout.min_cluster_size`` and
-  ``min_samples`` (Euclidean). Noise (-1) stays in the queue.
+  ``min_samples`` (Euclidean), allowing a single cluster: a queue that holds one pattern (the
+  Scout's main case, e.g. S-4's collect-refund scams) gives that one cluster, not all noise.
+  In that case HDBSCAN keeps only the pattern's densest members unless a
+  ``selection_epsilon`` (its ``cluster_selection_epsilon``) is given; the caller passes the
+  KB's value (docs/11 §2). Noise (-1) stays in the queue.
 - **Per cluster:** the top 8 distinguishing features by absolute standardised mean difference
   against the known-typology items of the same period; the outcome profile (empirical
   frequencies per observed source); draft likelihood rows, Laplace-smoothed, with ESS
@@ -83,13 +87,21 @@ def matrix(items: Sequence[ScoutItem], space: FeatureSpace) -> FloatArray:
     return np.asarray(rows, dtype=np.float64).reshape(len(items), len(space.columns))
 
 
-def cluster_labels(x: FloatArray, *, min_cluster_size: int, min_samples: int) -> NDArray[np.int64]:
+def cluster_labels(
+    x: FloatArray, *, min_cluster_size: int, min_samples: int, selection_epsilon: float = 0.0
+) -> NDArray[np.int64]:
     """HDBSCAN labels (``NOISE`` for points in no cluster). Fewer items than a cluster needs:
-    all noise."""
+    all noise. ``selection_epsilon`` is HDBSCAN's ``cluster_selection_epsilon`` (0: none): with
+    a single cluster, the points still in it at that distance are its members."""
     if len(x) < min_cluster_size:
         return np.full(len(x), NOISE, dtype=np.int64)
     model = HDBSCAN(
-        min_cluster_size=min_cluster_size, min_samples=min_samples, metric="euclidean", copy=True
+        min_cluster_size=min_cluster_size,
+        min_samples=min_samples,
+        metric="euclidean",
+        allow_single_cluster=True,  # docs/11 §2: one pattern in the queue is one cluster
+        cluster_selection_epsilon=selection_epsilon,
+        copy=True,
     )
     labels: NDArray[np.int64] = model.fit_predict(x).astype(np.int64)
     return labels
@@ -97,23 +109,42 @@ def cluster_labels(x: FloatArray, *, min_cluster_size: int, min_samples: int) ->
 
 def distinguishing_features(
     cluster: FloatArray, reference: FloatArray, columns: Sequence[str], top: int = TOP_FEATURES
-) -> list[dict[str, float | str]]:
+) -> list[dict[str, float | str | bool | None]]:
     """The ``top`` columns by absolute standardised mean difference, cluster vs reference:
-    (mean_c − mean_r) / sqrt((var_c + var_r) / 2), with columns constant in both left out."""
+    (mean_c − mean_r) / sqrt((var_c + var_r) / 2).
+
+    - A column constant in both groups at **different** values separates them perfectly (its
+      pooled spread is 0, so the ratio is unbounded). It ranks first, ahead of every finite
+      score (by the size of the difference among themselves, then traits the cluster has
+      before traits it lacks, so the top 3 that name the cluster say what it is), and is
+      reported with ``smd: None`` and ``separates: True`` (JSON has no infinity).
+    - A column whose difference is float noise (``|smd|`` or ``|diff|`` within ``_EPS``) is
+      left out, as is a column constant in both at the same value.
+    - With no reference items there is nothing to compare against: no features.
+    """
+    if len(reference) == 0 or len(cluster) == 0:
+        return []
     mean_c, mean_r = cluster.mean(axis=0), reference.mean(axis=0)
     pooled = np.sqrt((cluster.var(axis=0) + reference.var(axis=0)) / 2)
     diff = mean_c - mean_r
+    separates = (pooled <= _EPS) & (np.abs(diff) > _EPS)
     smd = np.where(pooled > _EPS, diff / np.maximum(pooled, _EPS), 0.0)
-    order = np.argsort(-np.abs(smd), kind="stable")
+    # Perfect separators first (score = +inf, ties by |diff|), then by |smd|; then traits the
+    # cluster has (diff > 0) before those it lacks; stable by column.
+    score = np.where(separates, np.inf, np.abs(smd))
+    tie = np.where(separates, np.abs(diff), 0.0)
+    lacks = (diff <= 0).astype(np.int64)
+    order = np.lexsort((lacks, -tie, -score))
+    keep = [i for i in order if separates[i] or abs(smd[i]) > _EPS]
     return [
         {
             "feature": columns[i],
-            "smd": round(float(smd[i]), 4),
+            "smd": None if separates[i] else round(float(smd[i]), 4),
+            "separates": bool(separates[i]),
             "cluster_mean": round(float(mean_c[i]), 4),
             "reference_mean": round(float(mean_r[i]), 4),
         }
-        for i in order[:top]
-        if abs(smd[i]) > 0
+        for i in keep[:top]
     ]
 
 
@@ -159,7 +190,7 @@ def template_name(number: int, distinguishing: Sequence[Mapping[str, Any]]) -> s
 class Cluster:
     number: int
     member_ids: tuple[str, ...]
-    distinguishing_features: list[dict[str, float | str]]
+    distinguishing_features: list[dict[str, float | str | bool | None]]
     outcome_profile: dict[str, dict[str, float]]
     draft_likelihoods: dict[str, dict[str, Any]]
     suggested_name: str
@@ -179,14 +210,21 @@ def scout(
     min_cluster_size: int,
     min_samples: int,
     max_ess: float,
+    selection_epsilon: float = 0.0,
 ) -> ScoutResult:
     """One Scout run over the queue (the last ``lookback_days``), against the known-typology
     items of the same period."""
     if not queue:
         return ScoutResult(())
     x = matrix(queue, space)
-    labels = cluster_labels(x, min_cluster_size=min_cluster_size, min_samples=min_samples)
-    ref = matrix(reference, space) if reference else np.zeros((1, x.shape[1]))
+    labels = cluster_labels(
+        x,
+        min_cluster_size=min_cluster_size,
+        min_samples=min_samples,
+        selection_epsilon=selection_epsilon,
+    )
+    # No known-typology items in the period: nothing to compare against, so no features.
+    ref = matrix(reference, space) if reference else np.zeros((0, x.shape[1]))
     columns = space.columns
     clusters = []
     for number, label in enumerate(sorted(set(labels.tolist()) - {NOISE}), start=1):
