@@ -117,6 +117,18 @@ as if its age were a measured dwell; one fresh, unmoved credit gives `OVER_24_H`
 when that median falls on a credit still dwelling; the facts also carry `still_dwelling`, the
 number of such credits, so the narrative can say so.
 
+The adapters (`delphi.navigator.evidence_adapters`) read the bank as of `as_of`:
+
+- Payments count only once `EXECUTED`, by `executed_at < as_of` (`INBOUND_FAN_IN` on both the
+  window and the "prior relation" side, `PAYEE_RELATIONSHIP`). A held, declined or pending
+  payment, including the case's own held payment, never credited the account.
+- `BENEFICIARY_DEVICE_SHARING` counts only accounts opened by `as_of`.
+- `ACCOUNT_PROFILE` for an account this bank does not hold is `ESTABLISHED` with null facts: an
+  unknown age is not evidence of a new account.
+- `LOGIN_GEO_VELOCITY`'s "last login" is the customer's last login at or before `as_of`, which
+  may be older than the 24 h window; its city is new if no earlier login (at any time) was from
+  it, and a first-ever login is not a new city. The speed uses only the logins in the window.
+
 ## 5. Investigator traces
 
 Every interaction appends a `trace_events` row: `CASE_OPENED`, `CASE_VIEWED`,
