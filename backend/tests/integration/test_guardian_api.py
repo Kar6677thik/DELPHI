@@ -21,6 +21,7 @@ from delphi.engine import SessionFacts
 from delphi.guardian import ddpack
 from delphi.guardian.service import Decided, GuardianService
 from delphi.guardian.store import Runner, SessionMode
+from delphi.llm.minimise import pseudonym
 from delphi.platform.db import migration_head
 from delphi.platform.settings import Settings
 from delphi.platform.wiring import Platform
@@ -170,8 +171,18 @@ def test_a_fast_path_pack_is_complete_with_no_observations(env: Env, client: Tes
     assert sections[3]["note"] == "Fast path: no observations."
     assert sections[8]["content"]["ok"] is True and sections[8]["content"]["entries_checked"] >= 2
     assert "KB version" in sections[9]["content"]
-    assert sections[1]["content"]["customer"].startswith("C-")  # a pseudonym, never a name
-    assert "CUST" not in str(pack)
+    payment_id = sections[1]["content"]["payment_id"]
+    with env.owner.connect() as conn:
+        customer_id = conn.execute(
+            text(
+                "SELECT a.customer_id FROM bank.payments p"
+                " JOIN bank.accounts a ON a.id = p.payer_account_id WHERE p.id = :p"
+            ),
+            {"p": payment_id},
+        ).scalar_one()
+    # docs/15 §6's pseudonym, never the name or the id
+    assert sections[1]["content"]["customer"] == pseudonym("CUST", customer_id)
+    assert str(customer_id) not in str(pack) and "display_name" not in str(pack)
 
 
 def test_a_full_session_pack_has_its_timeline_and_guardrails(env: Env, client: TestClient) -> None:
