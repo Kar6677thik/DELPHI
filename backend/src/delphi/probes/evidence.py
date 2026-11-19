@@ -49,9 +49,10 @@ class FanInObs:
 @dataclass(frozen=True, slots=True)
 class DwellObs:
     """Minutes until 80% of each credit in the last 7 days had left the account (FIFO). A credit
-    not yet 80% gone is still dwelling: ``None`` (it counts as longer than any measured one)."""
+    not yet 80% gone by ``as_of`` counts at the minutes it has dwelt so far (a lower bound), so
+    the rule and the narrative (docs/15 §7 `median_dwell_minutes`) use the same number."""
 
-    minutes_to_out: Sequence[float | None]
+    minutes_to_out: Sequence[float]
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,12 +116,15 @@ def _median(values: Sequence[float]) -> float:
     return ordered[mid] if len(ordered) % 2 else (ordered[mid - 1] + ordered[mid]) / 2
 
 
+def median_dwell(obs: DwellObs) -> float | None:
+    """The median dwell in minutes, ``None`` with no credits."""
+    return _median(obs.minutes_to_out) if obs.minutes_to_out else None
+
+
 def pass_through_dwell(obs: DwellObs, t: ClassifierThresholds) -> str:
-    """The median dwell; a credit still in the account counts as longer than every other, so the
-    median is taken over the measured times plus that many "infinite" ones."""
-    if not obs.minutes_to_out:
+    median = median_dwell(obs)
+    if median is None:
         return "OVER_24_H"  # docs/09 §4: "also OVER_24_H if there are no credits"
-    median = _median([m if m is not None else float("inf") for m in obs.minutes_to_out])
     if median < t.dwell_fast_min:
         return "UNDER_30_MIN"
     if median <= t.dwell_slow_h * _MINUTES_PER_HOUR:
