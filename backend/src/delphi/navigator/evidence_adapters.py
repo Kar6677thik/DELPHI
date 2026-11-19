@@ -35,6 +35,7 @@ from delphi.probes.evidence import (
     FanInObs,
     GeoVelocityObs,
     PayeeRelationshipObs,
+    median_dwell,
 )
 from delphi.sim import api as bank
 
@@ -66,6 +67,14 @@ class Fetched:
 Adapter = Callable[[Session, EvidenceSubject, ClassifierThresholds], Fetched]
 
 
+def _days(window: timedelta) -> int:
+    return window.days
+
+
+def _hours(window: timedelta) -> int:
+    return int(window.total_seconds() // _SECONDS_PER_HOUR)
+
+
 def _owner(session: Session, account_id: UUID | None) -> UUID | None:
     if account_id is None:
         return None
@@ -81,7 +90,9 @@ def device_sharing(s: Session, subject: EvidenceSubject, t: ClassifierThresholds
     owner = _owner(s, subject.counterparty_account_id)
     since = subject.as_of - DEVICE_SHARING_WINDOW
     if owner is None:  # an external account: the bank sees no logins for it
-        return Fetched(DeviceSharingObs(0), {"owner_known": False, "other_accounts": 0})
+        return Fetched(
+            DeviceSharingObs(0), {"shared_accounts": 0, "window_days": _days(DEVICE_SHARING_WINDOW)}
+        )
     le, dv, ac = bank.login_events.c, bank.devices.c, bank.accounts.c
     in_window = and_(le.at >= since, le.at <= subject.as_of)
     fingerprints = (
@@ -106,11 +117,7 @@ def device_sharing(s: Session, subject: EvidenceSubject, t: ClassifierThresholds
     ids = sorted(str(a) for a in others)
     return Fetched(
         DeviceSharingObs(len(ids)),
-        {
-            "owner_known": True,
-            "other_accounts": len(ids),
-            "window_days": DEVICE_SHARING_WINDOW.days,
-        },
+        {"shared_accounts": len(ids), "window_days": _days(DEVICE_SHARING_WINDOW)},
         ids,
     )
 
@@ -118,7 +125,7 @@ def device_sharing(s: Session, subject: EvidenceSubject, t: ClassifierThresholds
 def inbound_fan_in(s: Session, subject: EvidenceSubject, t: ClassifierThresholds) -> Fetched:
     """Distinct payers into the subject account in the last 48 h that never paid it before."""
     if subject.counterparty_account_id is None:
-        return Fetched(FanInObs(0), {"unrelated_payers": 0})
+        return Fetched(FanInObs(0), {"unrelated_payers": 0, "window_h": _hours(FAN_IN_WINDOW)})
     p = bank.payments.c
     since = subject.as_of - FAN_IN_WINDOW
     earlier = select(p.payer_account_id).where(
@@ -136,16 +143,17 @@ def inbound_fan_in(s: Session, subject: EvidenceSubject, t: ClassifierThresholds
     ).all()
     return Fetched(
         FanInObs(len(rows)),
-        {"unrelated_payers": len(rows), "window_hours": int(FAN_IN_WINDOW.total_seconds() // 3600)},
+        {"unrelated_payers": len(rows), "window_h": _hours(FAN_IN_WINDOW)},
         sorted(str(r[1]) for r in rows),
     )
 
 
 def pass_through_dwell(s: Session, subject: EvidenceSubject, t: ClassifierThresholds) -> Fetched:
     """For each credit in the last 7 days, the minutes until 80% of it had left (FIFO, with the
-    balance before the window ahead of it in the queue); ``None`` if it hasn't by ``as_of``."""
+    balance before the window ahead of it in the queue); a credit not yet 80% gone by ``as_of``
+    counts at the minutes it has dwelt so far (a lower bound)."""
     if subject.counterparty_account_id is None:
-        return Fetched(DwellObs(()), {"credits": 0})
+        return Fetched(DwellObs(()), _dwell_facts(DwellObs(())))
     le = bank.ledger_entries.c
     since = subject.as_of - DWELL_WINDOW
     entries = s.execute(
@@ -158,18 +166,20 @@ def pass_through_dwell(s: Session, subject: EvidenceSubject, t: ClassifierThresh
         .order_by(le.at, le.id)
     ).all()
     if not entries:
-        return Fetched(DwellObs(()), {"credits": 0})
+        return Fetched(DwellObs(()), _dwell_facts(DwellObs(())))
     first = entries[0]
     queue: list[list[Any]] = []  # [remaining, amount, credited_at, index or None]
     opening = first.balance_after_paise - first.delta_paise
     if opening > 0:
         queue.append([opening, opening, None, None])
     minutes: list[float | None] = []
+    credited: list[datetime] = []
     refs: list[str] = []
     for e in entries:
         if e.delta_paise > 0:
             queue.append([e.delta_paise, e.delta_paise, e.at, len(minutes)])
             minutes.append(None)
+            credited.append(e.at)
             refs.append(str(e.id))
             continue
         out = -e.delta_paise
@@ -184,14 +194,22 @@ def pass_through_dwell(s: Session, subject: EvidenceSubject, t: ClassifierThresh
                 minutes[index] = (e.at - head[2]).total_seconds() / _SECONDS_PER_MINUTE
             if head[0] == 0:
                 queue.pop(0)
-    measured = [m for m in minutes if m is not None]
-    facts = {
-        "credits": len(minutes),
-        "still_dwelling": len(minutes) - len(measured),
-        "minutes_to_80pct_out": [round(m, 1) for m in measured],
-        "window_days": DWELL_WINDOW.days,
+    so_far = [
+        m if m is not None else (subject.as_of - at).total_seconds() / _SECONDS_PER_MINUTE
+        for m, at in zip(minutes, credited, strict=True)
+    ]
+    obs = DwellObs(tuple(so_far))
+    return Fetched(obs, _dwell_facts(obs), refs)
+
+
+def _dwell_facts(obs: DwellObs) -> dict[str, Any]:
+    median = median_dwell(obs)
+    return {
+        "median_dwell_minutes": None if median is None else round(median, 1),
+        "credits": len(obs.minutes_to_out),
+        "window_days": _days(DWELL_WINDOW),
+        "departure_share": DWELL_OUT_SHARE,
     }
-    return Fetched(DwellObs(tuple(minutes)), facts, refs)
 
 
 def account_profile(s: Session, subject: EvidenceSubject, t: ClassifierThresholds) -> Fetched:
@@ -200,15 +218,13 @@ def account_profile(s: Session, subject: EvidenceSubject, t: ClassifierThreshold
         select(ac.id, ac.opened_at, ac.kyc_level).where(ac.id == subject.counterparty_account_id)
     ).one_or_none()
     if row is None:
-        return Fetched(AccountProfileObs(0.0, "UNKNOWN"), {"known": False})
+        return Fetched(
+            AccountProfileObs(0.0, "UNKNOWN"), {"account_age_days": 0, "kyc_level": "UNKNOWN"}
+        )
     age = (subject.as_of - row.opened_at).total_seconds() / timedelta(days=1).total_seconds()
     return Fetched(
         AccountProfileObs(age, row.kyc_level),
-        {
-            "age_days": round(age, 1),
-            "kyc_level": row.kyc_level,
-            "opened_at": row.opened_at.isoformat(),
-        },
+        {"account_age_days": math.floor(age), "kyc_level": row.kyc_level},
         (str(row.id),),
     )
 
@@ -230,8 +246,9 @@ def linked_complaints(s: Session, subject: EvidenceSubject, t: ClassifierThresho
 
 
 def crm_contact_history(s: Session, subject: EvidenceSubject, t: ClassifierThresholds) -> Fetched:
+    window = {"window_days": t.crm_lookback_days}
     if subject.payer_customer_id is None:
-        return Fetched(CrmObs(()), {"events": []})
+        return Fetched(CrmObs(()), {"event": None, "days_ago": None, **window})
     c = bank.crm_events.c
     since = subject.as_of - timedelta(days=t.crm_lookback_days)
     rows = s.execute(
@@ -239,15 +256,14 @@ def crm_contact_history(s: Session, subject: EvidenceSubject, t: ClassifierThres
         .where(c.customer_id == subject.payer_customer_id, c.at >= since, c.at <= subject.as_of)
         .order_by(c.at)
     ).all()
-    return Fetched(
-        CrmObs(tuple(r.type for r in rows)),
-        {
-            "events": [{"type": r.type, "at": r.at.isoformat()} for r in rows],
-            "reports": sum(r.type in CRM_REPORTS for r in rows),
-            "lookback_days": t.crm_lookback_days,
-        },
-        [str(r.id) for r in rows],
-    )
+    reports = [r for r in rows if r.type in CRM_REPORTS]
+    latest = reports[-1] if reports else None
+    facts = {
+        "event": latest.type if latest else None,
+        "days_ago": (subject.as_of - latest.at).days if latest else None,
+        **window,
+    }
+    return Fetched(CrmObs(tuple(r.type for r in rows)), facts, [str(r.id) for r in reports])
 
 
 def _km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -261,8 +277,10 @@ def login_geo_velocity(s: Session, subject: EvidenceSubject, t: ClassifierThresh
     """The fastest implied travel between consecutive logins in the last 24 h, and whether the
     last login's city was never seen in the customer's earlier logins (a first login is not a
     new city, docs/13 §3)."""
+    window_h = _hours(GEO_VELOCITY_WINDOW)
+    nothing = {"last_city": None, "speed_kmh": None, "new_city": False, "window_h": window_h}
     if subject.payer_customer_id is None:
-        return Fetched(GeoVelocityObs(None, False), {"logins": 0})
+        return Fetched(GeoVelocityObs(None, False), nothing)
     le = bank.login_events.c
     logins = s.execute(
         select(le.id, le.city, le.lat, le.lon, le.at)
@@ -270,30 +288,30 @@ def login_geo_velocity(s: Session, subject: EvidenceSubject, t: ClassifierThresh
         .order_by(le.at, le.id)
     ).all()
     if not logins:
-        return Fetched(GeoVelocityObs(None, False), {"logins": 0})
+        return Fetched(GeoVelocityObs(None, False), nothing)
     recent = [r for r in logins if r.at >= subject.as_of - GEO_VELOCITY_WINDOW]
     speed: float | None = None
     for a, b in pairwise(recent):
-        hours = (b.at - a.at).total_seconds() / _SECONDS_PER_HOUR
-        km = _km(a.lat, a.lon, b.lat, b.lon)
-        implied = math.inf if hours <= 0 and km > 0 else (0.0 if hours <= 0 else km / hours)
+        hours = max((b.at - a.at).total_seconds(), 1.0) / _SECONDS_PER_HOUR  # at least 1 s
+        implied = _km(a.lat, a.lon, b.lat, b.lon) / hours
         speed = implied if speed is None else max(speed, implied)
     last = logins[-1]
     new_city = len(logins) > 1 and last.city not in {r.city for r in logins[:-1]}
-    facts = {
-        "logins_24h": len(recent),
-        "max_speed_kmh": None
-        if speed is None
-        else (round(speed, 1) if math.isfinite(speed) else "inf"),
+    impossible = speed is not None and speed > t.impossible_travel_kmh
+    facts = {  # docs/15 §7: speed_kmh only when it is impossible travel
         "last_city": last.city,
-        "last_city_new": new_city,
+        "speed_kmh": round(speed, 1) if impossible and speed is not None else None,
+        "new_city": new_city,
+        "window_h": window_h,
     }
     return Fetched(GeoVelocityObs(speed, new_city), facts, [str(r.id) for r in recent])
 
 
 def payee_relationship(s: Session, subject: EvidenceSubject, t: ClassifierThresholds) -> Fetched:
     if subject.payer_account_id is None or subject.counterparty_account_id is None:
-        return Fetched(PayeeRelationshipObs(()), {"prior_payments": 0})
+        return Fetched(
+            PayeeRelationshipObs(()), {"prior_payments": 0, "max_prior_amount_paise": None}
+        )
     p = bank.payments.c
     rows = s.execute(
         select(p.id, p.amount_paise)
@@ -308,7 +326,10 @@ def payee_relationship(s: Session, subject: EvidenceSubject, t: ClassifierThresh
     amounts = tuple(int(r.amount_paise) for r in rows)
     return Fetched(
         PayeeRelationshipObs(amounts),
-        {"prior_payments": len(amounts), "largest_paise": max(amounts) if amounts else None},
+        {
+            "prior_payments": len(amounts),
+            "max_prior_amount_paise": max(amounts) if amounts else None,
+        },
         [str(r.id) for r in rows],
     )
 

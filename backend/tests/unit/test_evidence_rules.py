@@ -82,11 +82,11 @@ def test_inbound_fan_in(m: int, outcome: str) -> None:
         ([5, 10, 2000], "UNDER_30_MIN"),  # the median, not the mean
         ([5, 50], "UNDER_30_MIN"),  # even count: the middle two averaged, 27.5
         ([20, 50], "BETWEEN_30_MIN_24_H"),  # 35
-        ([10, None, None], "OVER_24_H"),  # still in the account counts as longest
-        ([10, 20, None], "UNDER_30_MIN"),
+        ([10, 3000, 4000], "OVER_24_H"),  # two credits still in the account days later
+        ([10, 20, 4000], "UNDER_30_MIN"),
     ],
 )
-def test_pass_through_dwell(minutes: list[float | None], outcome: str) -> None:
+def test_pass_through_dwell(minutes: list[float], outcome: str) -> None:
     assert pass_through_dwell(DwellObs(minutes), T) == outcome
 
 
