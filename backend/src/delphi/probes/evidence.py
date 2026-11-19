@@ -11,10 +11,10 @@ outcome is the investigator's recorded result, or a response-model sample in sim
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Literal
 
 from delphi.kb.model import ClassifierThresholds
 from delphi.probes.classifiers import Classifier
@@ -48,17 +48,23 @@ class FanInObs:
 
 @dataclass(frozen=True, slots=True)
 class DwellObs:
-    """Minutes until 80% of each credit in the last 7 days had left the account (FIFO). A credit
-    not yet 80% gone by ``as_of`` counts at the minutes it has dwelt so far (a lower bound), so
-    the rule and the narrative (docs/15 §7 `median_dwell_minutes`) use the same number."""
+    """The credits of the last 7 days (FIFO): for each one that is already 80% gone, the minutes
+    that took (``measured_minutes``); and how many are not yet 80% gone by ``as_of``
+    (``still_dwelling``). A still-dwelling credit's dwell is unknown but at least its age, so the
+    rule counts it as longer than any measured one, never as a measured value."""
 
-    minutes_to_out: Sequence[float]
+    measured_minutes: Sequence[float]
+    still_dwelling: int = 0
+
+    @property
+    def credits(self) -> int:
+        return len(self.measured_minutes) + self.still_dwelling
 
 
 @dataclass(frozen=True, slots=True)
 class AccountProfileObs:
     age_days: float
-    kyc_level: Literal["FULL", "MINIMAL"] | str
+    kyc_level: str  # bank.accounts.kyc_level: "FULL" or "MINIMAL" (docs/17)
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,20 +122,30 @@ def _median(values: Sequence[float]) -> float:
     return ordered[mid] if len(ordered) % 2 else (ordered[mid - 1] + ordered[mid]) / 2
 
 
+def _dwell_median(obs: DwellObs) -> float | None:
+    """The median over every credit, a still-dwelling one counting as +∞; ``None`` with none."""
+    if obs.credits == 0:
+        return None
+    return _median([*obs.measured_minutes, *([math.inf] * obs.still_dwelling)])
+
+
 def median_dwell(obs: DwellObs) -> float | None:
-    """The median dwell in minutes, ``None`` with no credits."""
-    return _median(obs.minutes_to_out) if obs.minutes_to_out else None
+    """The median dwell in minutes for the narrative (docs/15 §7 ``median_dwell_minutes``):
+    ``None`` with no credits, or when the median falls on a credit still dwelling (its dwell is
+    not known yet)."""
+    median = _dwell_median(obs)
+    return None if median is None or math.isinf(median) else median
 
 
 def pass_through_dwell(obs: DwellObs, t: ClassifierThresholds) -> str:
-    median = median_dwell(obs)
+    median = _dwell_median(obs)
     if median is None:
         return "OVER_24_H"  # docs/09 §4: "also OVER_24_H if there are no credits"
     if median < t.dwell_fast_min:
         return "UNDER_30_MIN"
     if median <= t.dwell_slow_h * _MINUTES_PER_HOUR:
         return "BETWEEN_30_MIN_24_H"
-    return "OVER_24_H"
+    return "OVER_24_H"  # also when the median is a credit still dwelling (+∞)
 
 
 def account_profile(obs: AccountProfileObs, t: ClassifierThresholds) -> str:
