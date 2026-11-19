@@ -13,7 +13,6 @@ The HTML rendering is a plain, printable page with no scripts; every value is es
 
 from __future__ import annotations
 
-import hashlib
 import html
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -25,12 +24,14 @@ from sqlalchemy.orm import Session
 
 from delphi.guardian.views import SessionRow, get_session_row, probe_run_rows
 from delphi.kb.store import get_version
+from delphi.llm.minimise import pseudonym
 from delphi.platform.audit import verify_entity
 from delphi.platform.errors import NotFoundError
 from delphi.platform.tables import audit_log
 from delphi.sim import api as bank
 
 FAST_PATH = "FAST_PATH"
+CUSTOMER_PREFIX = "CUST"
 DECIDED_ACTION = "guardian.session.decided"
 STOPPED = "STOPPED"
 NO_AUDIT_ENTRIES = "No audit entries for this session."
@@ -90,10 +91,9 @@ class DdPack:
 
 
 def _pseudonym(customer_id: UUID | None) -> str | None:
-    """A stable pseudonym, so the pack names no customer (docs/19 privacy)."""
-    if customer_id is None:
-        return None
-    return "C-" + hashlib.sha256(str(customer_id).encode()).hexdigest()[:8].upper()
+    """A stable pseudonym, so the pack names no customer (docs/19 privacy): the same
+    ``CUST-…`` label the LLM payloads use (docs/15 §6)."""
+    return None if customer_id is None else pseudonym(CUSTOMER_PREFIX, customer_id)
 
 
 def _vulnerable(session: Session, customer_id: UUID | None) -> bool:
