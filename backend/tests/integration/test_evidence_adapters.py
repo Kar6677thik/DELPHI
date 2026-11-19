@@ -16,14 +16,11 @@ from sqlalchemy import Engine, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from delphi.kb.loader import load_and_validate
-<<<<<<< HEAD
 from delphi.kb.model import KnowledgeBase
-=======
 from delphi.llm.port import Purpose
 from delphi.llm.schemas import EvidenceNarrative
 from delphi.llm.template import render_narrative
 from delphi.llm.validators import validate
->>>>>>> m5/102-evidence-adapters
 from delphi.navigator.evidence_adapters import ADAPTERS, EvidenceSubject
 from delphi.platform.db import make_session_factory
 from delphi.probes.evidence import EVIDENCE_CLASSIFIERS
@@ -324,7 +321,6 @@ def test_payee_relationship_counts_earlier_executed_payments(bank: Bank) -> None
     assert outcome == "ESTABLISHED_PAYEE" and fetched.facts["prior_payments"] == 2
 
 
-<<<<<<< HEAD
 @pytest.mark.skipif(
     os.environ.get("DELPHI_RUN_SLOW") != "1", reason="slow: set DELPHI_RUN_SLOW=1 to run"
 )
@@ -372,7 +368,8 @@ def test_nfr_04_evidence_fetch_on_the_demo_dataset(
         f"max {max(timings) * 1000:.1f} ms"
     )
     assert p95 <= NFR_04_SECONDS
-=======
+
+
 # docs/15 §7: the narrative payload's facts, per source, exactly.
 FACTS_CONTRACT = {
     "BENEFICIARY_DEVICE_SHARING": {"shared_accounts", "window_days"},
@@ -417,4 +414,3 @@ def test_every_adapter_returns_the_narrative_facts_contract(bank: Bank) -> None:
             Purpose.EVIDENCE_NARRATIVE, EvidenceNarrative(finding=text, citations=["EV-1"]), payload
         )
         assert verdict.passed, (key, text, verdict.failures)
->>>>>>> m5/102-evidence-adapters
