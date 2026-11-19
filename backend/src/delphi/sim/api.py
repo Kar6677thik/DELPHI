@@ -43,6 +43,7 @@ from delphi.sim.bank import (
     sim_phone_risk,
     sim_registry_listings,
 )
+from delphi.sim.baselines import Baseline, baseline_decisions
 from delphi.sim.catalog import datasets
 from delphi.sim.generator_config import history_end, load_generator_config
 from delphi.sim.payments import (
@@ -60,6 +61,7 @@ __all__ = [
     "DATASET_REQUEST_LOCK_KEY",
     "PROFILES",
     "STATUS_FOR_DECISION",
+    "Baseline",
     "DatasetInfo",
     "DatasetProfile",
     "HistoryWindow",
@@ -69,6 +71,7 @@ __all__ = [
     "accounts",
     "apply_case_disposition",
     "apply_guardian_decision",
+    "baseline_decisions",
     "cancel_payment",
     "complaints",
     "crm_events",
