@@ -451,6 +451,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/guardian/sessions/{session_id}/dd-pack": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Dd Pack
+         * @description The session's due-diligence pack (docs/09 §7): JSON, or a printable HTML page.
+         */
+        get: operations["read_dd_pack_api_v1_guardian_sessions__session_id__dd_pack_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -699,6 +719,11 @@ export interface components {
              */
             seed?: number | null;
         };
+        /**
+         * DdPackFormat
+         * @enum {string}
+         */
+        DdPackFormat: "json" | "html";
         /**
          * DiffOp
          * @enum {string}
@@ -2059,6 +2084,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GuardianSessionView"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    read_dd_pack_api_v1_guardian_sessions__session_id__dd_pack_get: {
+        parameters: {
+            query?: {
+                format?: components["schemas"]["DdPackFormat"];
+            };
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                    "text/html": unknown;
                 };
             };
             /** @description An RFC 9457 problem (docs/16 §1) */

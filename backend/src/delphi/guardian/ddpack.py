@@ -1,10 +1,12 @@
-"""The due-diligence pack of a Guardian session (docs/09 §7, FR-GDN-12).
+"""The due-diligence pack of a Guardian session (docs/09 §7, FR-GDN-15).
 
 Built from what is stored: the session, its probe runs, the payment, the pinned KB version and
-the audit entries about the session. Sections 6 (narratives) and 7 (liens and tickets) are "not
-applicable" to a session; sections 3 and 4 are too when the session took the fast path. The pack
-is complete when every required section is non-empty (docs/09 §7 table), and an undecided
-session never is: section 5 needs the engine's decision.
+the audit entries about the session. The last planning step (the one that stopped) has no probe
+run; its candidates table is in the `guardian.session.decided` audit entry
+(``final_candidates``), and sections 3 and 4 read it from there. Sections 6 (narratives) and 7
+(liens and tickets) are "not applicable" to a session; sections 3 and 4 are too when the session
+took the fast path. The pack is complete when every required section is non-empty (docs/09 §7
+table), and an undecided session never is: section 5 needs the engine's decision.
 
 The HTML rendering is a plain, printable page with no scripts; every value is escaped.
 """
@@ -25,9 +27,13 @@ from delphi.guardian.views import SessionRow, get_session_row, probe_run_rows
 from delphi.kb.store import get_version
 from delphi.platform.audit import verify_entity
 from delphi.platform.errors import NotFoundError
+from delphi.platform.tables import audit_log
 from delphi.sim import api as bank
 
 FAST_PATH = "FAST_PATH"
+DECIDED_ACTION = "guardian.session.decided"
+STOPPED = "STOPPED"
+NO_AUDIT_ENTRIES = "No audit entries for this session."
 NOT_APPLICABLE = "Not applicable"
 TOP_HYPOTHESES = 3  # docs/09 §7 section 2
 TOP_FEATURES = 5
@@ -105,8 +111,55 @@ def _top(probs: Mapping[str, float] | None, n: int) -> list[dict[str, Any]]:
     return [{"hypothesis": h, "probability": round(p, 6)} for h, p in ranked]
 
 
-def _timeline(runs: Sequence[Any]) -> list[dict[str, Any]]:
-    return [
+def _alternative(c: Mapping[str, Any]) -> dict[str, Any]:
+    return {k: c.get(k) for k in ("source_key", "net_value_paise", "eligible", "ineligible_reason")}
+
+
+def _decided_payload(session: Session, session_id: UUID) -> Mapping[str, Any]:
+    """The payload of the session's decided audit entry, empty before the decision."""
+    log = audit_log.c
+    payload = session.execute(
+        select(log.payload)
+        .where(
+            log.entity_type == "guardian_session",
+            log.entity_id == str(session_id),
+            log.action == DECIDED_ACTION,
+        )
+        .order_by(log.id.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    return payload if isinstance(payload, Mapping) else {}
+
+
+def _final_candidates(decided: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    final = decided.get("final_candidates")
+    return [c for c in final if isinstance(c, Mapping)] if isinstance(final, list) else []
+
+
+def _stop_step(row: SessionRow, final: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """The planning step that stopped: no probe ran, every candidate was an alternative."""
+    return {
+        "seq": None,
+        "source": None,
+        "mode": None,
+        "status": STOPPED,
+        "selected_by": None,
+        "propensity": None,
+        "net_value_paise": None,
+        "alternatives": [_alternative(c) for c in final],
+        "raw_facts": None,
+        "outcome": row.terminal_reason,
+        "posterior_before": row.posterior,
+        "posterior_after": row.posterior,
+        "started_at": row.decided_at.isoformat() if row.decided_at else None,
+        "completed_at": row.decided_at.isoformat() if row.decided_at else None,
+    }
+
+
+def _timeline(
+    runs: Sequence[Any], row: SessionRow, final: Sequence[Mapping[str, Any]]
+) -> list[dict[str, Any]]:
+    steps = [
         {
             "seq": r.seq,
             "source": r.probe_key,
@@ -116,9 +169,7 @@ def _timeline(runs: Sequence[Any]) -> list[dict[str, Any]]:
             "propensity": r.propensity,
             "net_value_paise": r.net_value_paise,
             "alternatives": [
-                {k: c.get(k) for k in ("source_key", "net_value_paise", "eligible")}
-                for c in (r.candidates or [])
-                if c.get("source_key") != r.probe_key
+                _alternative(c) for c in (r.candidates or []) if c.get("source_key") != r.probe_key
             ],
             "raw_facts": r.raw_response,
             "outcome": r.outcome,
@@ -130,13 +181,20 @@ def _timeline(runs: Sequence[Any]) -> list[dict[str, Any]]:
         for r in runs
         if r.status not in ("PENDING",)
     ]
+    if final:
+        steps.append(_stop_step(row, final))
+    return steps
 
 
-def _guardrails(runs: Sequence[Any]) -> list[dict[str, Any]] | str:
-    """Every source a planning step found ineligible, with its reason (docs/09 §7 section 4)."""
+def _guardrails(
+    runs: Sequence[Any], final: Sequence[Mapping[str, Any]]
+) -> list[dict[str, Any]] | str:
+    """Every source a planning step found ineligible, with its reason (docs/09 §7 section 4),
+    including the step that stopped."""
     seen: dict[tuple[str, str], None] = {}
-    for r in runs:
-        for c in r.candidates or []:
+    tables = [list(r.candidates or []) for r in runs] + [list(final)]
+    for candidates in tables:
+        for c in candidates:
             if not c.get("eligible", True) and c.get("ineligible_reason"):
                 seen[str(c["source_key"]), str(c["ineligible_reason"])] = None
     if not seen:
@@ -153,6 +211,7 @@ def build(session: Session, session_id: UUID) -> DdPack:
 
 def _build(session: Session, row: SessionRow) -> DdPack:
     runs = probe_run_rows(session, row.id)
+    final = _final_candidates(_decided_payload(session, row.id))
     version = get_version(session, row.kb_version_id)
     fast = row.terminal_reason == FAST_PATH
     payment = row.payment
@@ -206,10 +265,10 @@ def _build(session: Session, row: SessionRow) -> DdPack:
             3,
             SECTION_TITLES[2],
             not fast,
-            None if fast else _timeline(runs),
+            None if fast else _timeline(runs, row, final),
             "Fast path: no observations." if fast else None,
         ),
-        Section(4, SECTION_TITLES[3], not fast, None if fast else _guardrails(runs)),
+        Section(4, SECTION_TITLES[3], not fast, None if fast else _guardrails(runs, final)),
         Section(5, SECTION_TITLES[4], True, decisions),
         Section(6, SECTION_TITLES[5], False, None, "No narratives for a Guardian session."),
         Section(7, SECTION_TITLES[6], False, None, "No chase for a Guardian session."),
@@ -220,11 +279,17 @@ def _build(session: Session, row: SessionRow) -> DdPack:
             {"ok": audit.ok, "entries_checked": audit.checked, "first_bad_id": audit.first_bad_id}
             if audit.ok and audit.checked
             else None,
-            None if audit.ok else f"The audit chain is broken at entry {audit.first_bad_id}.",
+            _audit_note(audit.ok, audit.checked, audit.first_bad_id),
         ),
         Section(9, SECTION_TITLES[8], True, method),
     )
     return DdPack(session_id=row.id, sections=sections)
+
+
+def _audit_note(ok: bool, checked: int, first_bad_id: int | None) -> str | None:
+    if not ok:
+        return f"The audit chain is broken at entry {first_bad_id}."
+    return None if checked else NO_AUDIT_ENTRIES
 
 
 def _html_value(value: Any) -> str:

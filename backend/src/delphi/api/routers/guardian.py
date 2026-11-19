@@ -2,8 +2,8 @@
 
 `GET /guardian/sessions` lists sessions newest first, keyset-paged, with the docs/16 filters;
 `GET /guardian/sessions/{id}` returns the full `GuardianSessionView` with its probe runs and the
-B1/B2 verdicts (FR-GDN-15), and `ETag: "<version>"`. `GET /guardian/sessions/{id}/dd-pack`
-returns the session's due-diligence pack as JSON or a printable page (docs/09 §7, FR-GDN-12).
+B1/B2 verdicts (FR-GDN-12), and `ETag: "<version>"`. `GET /guardian/sessions/{id}/dd-pack`
+returns the session's due-diligence pack as JSON or a printable page (docs/09 §7, FR-GDN-15).
 Live updates come over `/events/stream?topics=guardian` (docs/16 §3).
 """
 

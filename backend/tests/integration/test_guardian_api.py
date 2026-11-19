@@ -6,6 +6,7 @@ from __future__ import annotations
 import base64
 import json
 from collections.abc import Callable, Iterator
+from dataclasses import replace
 from datetime import timedelta
 from typing import Any
 from uuid import UUID, uuid4
@@ -16,7 +17,9 @@ from sqlalchemy import text
 
 from delphi.api.app import create_app
 from delphi.api.security import Permission, Principal, current_principal
-from delphi.guardian.service import Decided
+from delphi.engine import SessionFacts
+from delphi.guardian import ddpack
+from delphi.guardian.service import Decided, GuardianService
 from delphi.guardian.store import Runner, SessionMode
 from delphi.platform.db import migration_head
 from delphi.platform.settings import Settings
@@ -208,6 +211,43 @@ def test_an_undecided_session_or_a_broken_audit_chain_is_not_complete(
     assert broken["complete"] is False
     assert "broken" in _sections(broken)[8]["note"]
     assert client.get(f"{API}/{uuid4()}/dd-pack").status_code == 404
+
+
+def test_a_stop_with_no_eligible_source_lists_the_stop_steps_guardrails(
+    env: Env, client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The last planning step has no probe run: its ineligible sources come from the decided
+    audit entry's final candidates (docs/09 §7 sections 3 and 4)."""
+    facts = GuardianService._facts
+
+    def capped(self: GuardianService, s: Any, ctx: Any) -> SessionFacts:
+        return replace(facts(self, s, ctx), fairness_cap_reached=True)
+
+    monkeypatch.setattr(GuardianService, "_facts", capped)
+    session_id = _decide(env, DIGITAL_ARREST, SCAM, 480_000)
+    detail = client.get(f"{API}/{session_id}").json()
+    assert detail["terminal_reason"] == "BUDGET_EXHAUSTED"  # docs/06 §8: NO_ELIGIBLE_SOURCES
+    pack = client.get(f"{API}/{session_id}/dd-pack").json()
+    guardrails = _sections(pack)[4]["content"]
+    assert isinstance(guardrails, list)
+    assert {g["reason"] for g in guardrails} >= {"FAIRNESS_CAP"}
+    stop = _sections(pack)[3]["content"][-1]
+    assert stop["status"] == "STOPPED" and stop["outcome"] == "BUDGET_EXHAUSTED"
+    assert stop["alternatives"] and not any(a["eligible"] for a in stop["alternatives"])
+    assert pack["complete"] is True
+
+
+def test_a_failing_pack_build_never_blocks_the_decision(
+    env: Env, client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken(*_: Any) -> Any:
+        raise RuntimeError("the pack could not be built")
+
+    monkeypatch.setattr(ddpack, "build", broken)
+    session_id = _decide(env, DIGITAL_ARREST, SCAM, 480_000)
+    detail = client.get(f"{API}/{session_id}").json()
+    assert detail["status"] == "DECIDED" and detail["decision"] == "PROTECTIVE_HOLD"
+    assert detail["dd_pack_complete"] is False
 
 
 def _cursor(raw: object) -> str:
