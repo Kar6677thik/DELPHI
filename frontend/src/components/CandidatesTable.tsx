@@ -1,4 +1,5 @@
 import { MoneyText } from './MoneyText';
+import { humanise } from '../lib/format';
 
 /**
  * One planning step's candidates (docs/18 §3, docs/08 §6): source, eligible or why not, cost,
@@ -16,10 +17,6 @@ export interface Candidate {
   selected?: boolean;
 }
 
-function humanise(key: string): string {
-  return key.replaceAll('_', ' ').toLowerCase();
-}
-
 function Money({ paise }: { paise: number | null | undefined }) {
   return paise === null || paise === undefined ? <span>—</span> : <MoneyText paise={paise} />;
 }
@@ -29,8 +26,11 @@ export function CandidatesTable({
   selectedBy,
   propensity,
   caption,
+  sourceNames = {},
 }: {
   candidates: readonly Candidate[];
+  /** The KB's display name of each source (docs/07), from the session's pinned KB version. */
+  sourceNames?: Readonly<Record<string, string>>;
   selectedBy?: string | null;
   propensity?: number | null;
   caption: string;
@@ -75,7 +75,7 @@ export function CandidatesTable({
             key={c.source_key}
             className={`border-b border-slate-100 ${c.selected ? 'bg-sky-50 font-medium' : ''}`}
           >
-            <td className="py-1 pr-3">{humanise(c.source_key)}</td>
+            <td className="py-1 pr-3">{sourceNames[c.source_key] ?? humanise(c.source_key)}</td>
             <td className="py-1 pr-3">
               {c.eligible ? 'Yes' : `No: ${humanise(c.ineligible_reason ?? 'not eligible')}`}
             </td>

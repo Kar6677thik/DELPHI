@@ -1247,7 +1247,7 @@
             "schema": {
               "anyOf": [
                 {
-                  "$ref": "#/components/schemas/SessionStatusFilter"
+                  "$ref": "#/components/schemas/SessionStatus"
                 },
                 {
                   "type": "null"
@@ -1263,14 +1263,16 @@
             "schema": {
               "anyOf": [
                 {
-                  "$ref": "#/components/schemas/DecisionFilter"
+                  "type": "string"
                 },
                 {
                   "type": "null"
                 }
               ],
+              "description": "A decision of the ACTIVE KB's profile",
               "title": "Decision"
-            }
+            },
+            "description": "A decision of the ACTIVE KB's profile"
           },
           {
             "name": "unexplained",
@@ -1286,6 +1288,22 @@
                 }
               ],
               "title": "Unexplained"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/SessionMode"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Mode"
             }
           },
           {
@@ -2173,16 +2191,6 @@
           "html"
         ],
         "title": "DdPackFormat"
-      },
-      "DecisionFilter": {
-        "type": "string",
-        "enum": [
-          "RELEASE",
-          "HOLD_FOR_REVIEW",
-          "PROTECTIVE_HOLD",
-          "DECLINE"
-        ],
-        "title": "DecisionFilter"
       },
       "DiffOp": {
         "type": "string",
@@ -3664,7 +3672,16 @@
         ],
         "title": "Role"
       },
-      "SessionStatusFilter": {
+      "SessionMode": {
+        "type": "string",
+        "enum": [
+          "LIVE",
+          "AUTOPLAY",
+          "EVAL"
+        ],
+        "title": "SessionMode"
+      },
+      "SessionStatus": {
         "type": "string",
         "enum": [
           "CREATED",
@@ -3674,7 +3691,7 @@
           "DECIDED",
           "CANCELLED_BY_CUSTOMER"
         ],
-        "title": "SessionStatusFilter"
+        "title": "SessionStatus"
       },
       "StatusView": {
         "properties": {

@@ -1,14 +1,11 @@
 import { MoneyText } from './MoneyText';
+import { humanise } from '../lib/format';
 
 /**
  * The decision's risk table (docs/18 §3, docs/08 §6): each decision's expected loss in ₹, the
  * recommended (lowest-risk, or the one taken) decision highlighted, and marked in text too
  * (docs/18 §5: never colour alone).
  */
-function humanise(key: string): string {
-  const text = key.replaceAll('_', ' ').toLowerCase();
-  return text.charAt(0).toUpperCase() + text.slice(1);
-}
 
 export function RiskTable({
   risks,

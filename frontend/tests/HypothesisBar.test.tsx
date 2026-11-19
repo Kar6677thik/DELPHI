@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -29,7 +29,7 @@ describe('HypothesisBar (docs/18 §3)', () => {
     expect(other?.members?.map((m) => m.name)).toEqual(['Mule', 'UNEXPLAINED']);
   });
 
-  it('shows labels and percentages as text, with the small ones in a tooltip', () => {
+  it('shows every label and percentage as text in a legend, with the small ones grouped', () => {
     render(
       <HypothesisBar
         label="Posterior"
@@ -37,11 +37,38 @@ describe('HypothesisBar (docs/18 §3)', () => {
         probs={{ GENUINE: 0.2, APP_DIGITAL_ARREST: 0.77, MULE: 0.03 }}
       />,
     );
-    const bar = screen.getByRole('img', { name: /Posterior/ });
-    expect(bar).toHaveAccessibleName('Posterior: Digital arrest 77%, Genuine 20%, Other 3.0%');
-    expect(screen.getByText('Digital arrest 77%')).toBeInTheDocument();
-    expect(screen.getByTestId('segment-OTHER')).toHaveAttribute('title', 'Mule: 3.0%');
+    const legend = screen.getByRole('list', { name: 'Posterior' });
+    expect(
+      within(legend)
+        .getAllByRole('listitem')
+        .map((li) => li.textContent),
+    ).toEqual(['Digital arrest 77%', 'Genuine 20%', 'Other 3.0%: Mule: 3.0%']);
+    expect(screen.getByTestId('legend-OTHER')).toHaveAttribute('title', 'Mule: 3.0%');
     expect(screen.getByTestId('segment-APP_DIGITAL_ARREST')).toHaveStyle({ width: '77%' });
+    expect(screen.getByTestId('segment-APP_DIGITAL_ARREST')).toHaveTextContent('77%');
+  });
+
+  it('never cuts a long KB name: the legend holds the full text, outside the bar', () => {
+    const long = 'Coerced payment under a fake law-enforcement call (digital arrest)';
+    render(
+      <HypothesisBar
+        label="Step 2"
+        styles={{ ...STYLES, APP_DIGITAL_ARREST: { name: long, color: '#C2410C' } }}
+        probs={{ GENUINE: 0.88, APP_DIGITAL_ARREST: 0.12 }}
+      />,
+    );
+    const item = screen.getByTestId('legend-APP_DIGITAL_ARREST');
+    expect(item).toHaveTextContent(`${long} 12%`);
+    expect(item).not.toHaveAttribute('aria-hidden');
+    expect(item.className).not.toMatch(/truncate/);
+  });
+
+  it('keeps "Other" and an unstyled hypothesis visually distinct', () => {
+    const parts = segments({ GENUINE: 0.9, UNEXPLAINED: 0.07, ATO: 0.03 }, STYLES);
+    const unexplained = parts.find((p) => p.key === 'UNEXPLAINED');
+    const other = parts.find((p) => p.key === 'OTHER');
+    expect(unexplained?.color).not.toBe(other?.color);
+    expect(textColor(unexplained?.color ?? '')).not.toBe(textColor(other?.color ?? ''));
   });
 
   it('normalises, and styles a hypothesis the KB has no colour for', () => {
@@ -67,9 +94,13 @@ describe('HypothesisBar (docs/18 §3)', () => {
         ]}
       />,
     );
-    expect(screen.getAllByRole('img').map((e) => e.getAttribute('aria-label'))).toEqual([
-      'Prior: Genuine 90%, Digital arrest 10%',
-      '1. Call status: Digital arrest 60%, Genuine 40%',
+    expect(screen.getAllByRole('list').map((e) => e.getAttribute('aria-label'))).toEqual([
+      'Posterior by step',
+      'Prior',
+      '1. Call status',
     ]);
+    expect(screen.getByRole('list', { name: '1. Call status' })).toHaveTextContent(
+      'Digital arrest 60%Genuine 40%',
+    );
   });
 });

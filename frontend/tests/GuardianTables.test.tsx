@@ -9,6 +9,7 @@ describe('CandidatesTable (docs/18 §3)', () => {
     render(
       <CandidatesTable
         caption="Step 1 candidates"
+        sourceNames={{ SPELL_BREAKER_POLICE: 'Spell-breaker: police check' }}
         selectedBy="EXPLORE"
         propensity={0.15}
         candidates={[
@@ -30,12 +31,12 @@ describe('CandidatesTable (docs/18 §3)', () => {
       'row',
     );
     expect(rows.slice(1).map((r) => (r as HTMLTableRowElement).cells[0]?.textContent)).toEqual([
-      'spell breaker police',
-      'purpose question',
-      'otp step up',
+      'Spell-breaker: police check', // the KB's display name
+      'Purpose question', // no name given: the key, humanised
+      'Otp step up',
     ]);
     expect(screen.getByText('₹1,23,456.00')).toBeInTheDocument();
-    expect(screen.getByText('No: coercion defeats')).toBeInTheDocument();
+    expect(screen.getByText('No: Coercion defeats')).toBeInTheDocument();
     expect(screen.getByText('EXPLORE · p=0.15')).toBeInTheDocument();
     expect(screen.getByText('62%')).toBeInTheDocument();
   });

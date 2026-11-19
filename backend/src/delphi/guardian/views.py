@@ -30,6 +30,7 @@ class SessionFilter:
     status: str | None = None
     decision: str | None = None
     unexplained: bool | None = None
+    mode: str | None = None
     started_from: datetime | None = None  # inclusive
     started_to: datetime | None = None  # exclusive
 
@@ -87,15 +88,6 @@ def _row(row: Any, payment: bank.PaymentView) -> SessionRow:
     )
 
 
-def _payments(conn: Connection | Session, ids: Sequence[UUID]) -> dict[UUID, bank.PaymentView]:
-    out: dict[UUID, bank.PaymentView] = {}
-    for payment_id in ids:
-        payment = bank.get_payment(conn, payment_id)
-        if payment is not None:
-            out[payment_id] = payment
-    return out
-
-
 def list_sessions(
     conn: Connection | Session,
     *,
@@ -110,6 +102,8 @@ def list_sessions(
         query = query.where(gs.status == where.status)
     if where.decision is not None:
         query = query.where(gs.decision == where.decision)
+    if where.mode is not None:
+        query = query.where(gs.mode == where.mode)
     if where.unexplained is not None:
         query = query.where(gs.unexplained.is_(where.unexplained))
     if where.started_from is not None:
@@ -124,7 +118,7 @@ def list_sessions(
             )
         )
     rows = conn.execute(query.order_by(gs.started_at.desc(), gs.id.desc()).limit(limit)).all()
-    payments = _payments(conn, [r.payment_id for r in rows])
+    payments = bank.get_payments(conn, [r.payment_id for r in rows])
     return [_row(r, payments[r.payment_id]) for r in rows if r.payment_id in payments]
 
 

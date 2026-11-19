@@ -1,9 +1,11 @@
 /**
  * The hypothesis bar (docs/18 §3, docs/08 §6): a horizontal bar stacked to 100%, one segment per
- * hypothesis in its fixed KB colour (docs/07 §4). Every segment of at least 4% carries its label
- * and percentage, so no information is carried by colour alone (docs/18 §5); smaller segments are
- * grouped into one "Other" segment whose tooltip lists them. `HypothesisTimeline` stacks one bar
- * per step.
+ * hypothesis in its fixed KB colour (docs/07 §4). Every segment of at least 4% shows its label
+ * and percentage as text, so no information is carried by colour alone (docs/18 §5): the segment
+ * carries its percentage, and a legend under the bar, in the same order, carries the label and
+ * percentage in full (it wraps, so long KB names are never cut). Smaller segments are grouped into
+ * one "Other" segment whose members are listed in its tooltip and for screen readers.
+ * `HypothesisTimeline` stacks one bar per step.
  */
 
 /** A hypothesis's display name and colour, from the session's pinned KB version. */
@@ -16,8 +18,8 @@ export type HypothesisStyles = Readonly<Record<string, HypothesisStyle>>;
 
 /** docs/18 §3: segments under this share are grouped into "Other". */
 export const LABEL_MIN_SHARE = 0.04;
-const OTHER_COLOR = '#475569'; // slate-600
-const FALLBACK_COLOR = '#64748B'; // slate-500, for a key the KB doesn't style (e.g. UNEXPLAINED)
+const OTHER_COLOR = '#1E293B'; // slate-800: dark, so it never reads as the light fallback grey
+const FALLBACK_COLOR = '#94A3B8'; // slate-400, for a key the KB doesn't style (e.g. UNEXPLAINED)
 
 export interface Segment {
   key: string;
@@ -90,30 +92,49 @@ export function HypothesisBar({
   label: string;
 }) {
   const parts = segments(probs, styles);
-  const summary = parts.map((s) => `${s.name} ${percent(s.share)}`).join(', ');
   return (
-    <div
-      role="img"
-      aria-label={`${label}: ${summary}`}
-      className="flex h-8 w-full overflow-hidden rounded"
-    >
-      {parts.map((s) => (
-        <div
-          key={s.key}
-          title={tooltip(s)}
-          data-testid={`segment-${s.key}`}
-          className="flex min-w-0 items-center justify-center overflow-hidden whitespace-nowrap px-1 text-xs font-medium"
-          style={{
-            width: `${String(s.share * 100)}%`,
-            backgroundColor: s.color,
-            color: textColor(s.color),
-          }}
-        >
-          <span aria-hidden="true" className="truncate">
-            {s.name} {percent(s.share)}
-          </span>
-        </div>
-      ))}
+    <div className="w-full min-w-0">
+      {/* The bar repeats the legend's percentages; the legend is what assistive tech reads. */}
+      <div aria-hidden="true" className="flex h-6 w-full overflow-hidden rounded">
+        {parts.map((s) => (
+          <div
+            key={s.key}
+            title={tooltip(s)}
+            data-testid={`segment-${s.key}`}
+            className="flex min-w-0 items-center justify-center overflow-hidden whitespace-nowrap px-1 text-xs font-medium"
+            style={{
+              width: `${String(s.share * 100)}%`,
+              backgroundColor: s.color,
+              color: textColor(s.color),
+            }}
+          >
+            <span className="truncate">{percent(s.share)}</span>
+          </div>
+        ))}
+      </div>
+      <ul
+        aria-label={label}
+        className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-slate-700"
+      >
+        {parts.map((s) => (
+          <li
+            key={s.key}
+            title={tooltip(s)}
+            data-testid={`legend-${s.key}`}
+            className="flex items-center gap-1"
+          >
+            <span
+              aria-hidden="true"
+              className="inline-block h-2.5 w-2.5 shrink-0 rounded-sm"
+              style={{ backgroundColor: s.color }}
+            />
+            <span>
+              {s.name} {percent(s.share)}
+              {s.members && <span className="sr-only">: {tooltip(s).replaceAll('\n', ', ')}</span>}
+            </span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -127,13 +148,13 @@ export function HypothesisTimeline({
   styles: HypothesisStyles;
 }) {
   return (
-    <ol className="space-y-2">
+    <ol aria-label="Posterior by step" className="space-y-2">
       {steps.map((step, i) => (
         <li
           key={`${String(i)}-${step.label}`}
-          className="grid grid-cols-[10rem_1fr] items-center gap-3"
+          className="grid grid-cols-[10rem_1fr] items-start gap-3"
         >
-          <span className="truncate text-sm text-slate-700">{step.label}</span>
+          <span className="break-words text-sm text-slate-700">{step.label}</span>
           <HypothesisBar probs={step.probs} styles={styles} label={step.label} />
         </li>
       ))}
