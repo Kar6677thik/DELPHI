@@ -37,11 +37,14 @@ from delphi.navigator.api import (
     CaseType,
     ConsoleView,
     Disposition,
+    EvidenceRecord,
     case_profile,
     console,
+    current_records,
     dispose,
     get_case,
     list_cases,
+    request_evidence,
     vulnerable_payer,
 )
 from delphi.platform.errors import DelphiError, NotFoundError, ProblemCode
@@ -221,6 +224,49 @@ class FlipView(BaseModel):
     risk_change_paise: int
 
 
+class EvidenceRecordView(BaseModel):
+    """docs/09 §2 item 5: one fetched evidence record (an evidence card)."""
+
+    id: UUID
+    source_key: str
+    outcome: str
+    facts: dict[str, Any]
+    record_refs: list[str]
+    posterior_before: dict[str, float]
+    posterior_after: dict[str, float]
+    info_yield_bits: float
+    rank_at_request: int | None
+    net_value_at_request_paise: int | None
+    fetch_ms: int
+    requested_by: UUID | None
+    requested_at: datetime
+    narrative: str | None
+    narrative_source: str | None
+
+    @staticmethod
+    def of(r: EvidenceRecord) -> EvidenceRecordView:
+        def probs(values: Mapping[str, float]) -> dict[str, float]:
+            return {k: round(v, PROBABILITY_DECIMALS) for k, v in values.items()}
+
+        return EvidenceRecordView(
+            id=r.id,
+            source_key=r.source_key,
+            outcome=r.outcome,
+            facts=dict(r.raw),
+            record_refs=list(r.record_refs),
+            posterior_before=probs(r.posterior_before),
+            posterior_after=probs(r.posterior_after),
+            info_yield_bits=round(r.info_yield_bits, PROBABILITY_DECIMALS),
+            rank_at_request=r.rank_at_request,
+            net_value_at_request_paise=r.net_value_at_request_paise,
+            fetch_ms=r.fetch_ms,
+            requested_by=r.requested_by,
+            requested_at=r.requested_at,
+            narrative=r.narrative,
+            narrative_source=r.narrative_source,
+        )
+
+
 class CaseDetail(CaseView):
     """One case with the console's decision support (docs/09 §2, docs/16)."""
 
@@ -229,6 +275,7 @@ class CaseDetail(CaseView):
     next_best_evidence: list[EvidenceRowView]
     evidence_sufficient: bool
     what_would_change_my_mind: FlipView | None
+    evidence_records: list[EvidenceRecordView]
 
 
 def _paise(value: float | None) -> int | None:
@@ -241,6 +288,7 @@ def _detail(session: Session, record: CaseRecord, now: datetime) -> CaseDetail:
     version = get_version(session, record.kb_version_id)
     if version is None:
         raise NotFoundError(f"No KB version {record.kb_version_id}.")
+    records = current_records(session, record.id)
     view: ConsoleView = console(
         version.kb,
         case_profile(version.kb, record.type.value),
@@ -248,7 +296,7 @@ def _detail(session: Session, record: CaseRecord, now: datetime) -> CaseDetail:
         amount_paise=record.amount_at_stake_paise,
         vulnerable=vulnerable_payer(session, record),
         protocol=record.protocol.value,
-        observed=frozenset(),  # evidence records arrive with #102 (docs/09 §3)
+        observed=frozenset(r.source_key for r in records),
     )
     # A DISPOSED case is immutable (docs/05 §4): it shows the recommendation and risks stored
     # at disposition, and offers no more evidence.
@@ -295,6 +343,7 @@ def _detail(session: Session, record: CaseRecord, now: datetime) -> CaseDetail:
             if flip is not None
             else None
         ),
+        evidence_records=[EvidenceRecordView.of(r) for r in records],
     )
 
 
@@ -376,5 +425,51 @@ def dispose_case(
 
     reply = run_idempotent(request, raw, principal, key, run)
     if reply.status_code == HTTPStatus.OK:  # docs/16 §1: a mutable aggregate carries its ETag
+        reply.headers["ETag"] = f'"{json.loads(bytes(reply.body))["version"]}"'
+    return reply
+
+
+class EvidenceRequest(BaseModel):
+    """docs/16: `{source_key, refresh?}`; `CUSTOMER_OUTREACH_CALL` also takes the investigator's
+    recorded `outcome` and a `note` (docs/09 §3)."""
+
+    source_key: str
+    refresh: bool = False
+    outcome: str | None = None
+    note: str | None = Field(default=None, max_length=2000)
+
+
+@router.post("/cases/{case_id}/evidence-requests", response_model=CaseDetail)
+def request_case_evidence(
+    case_id: UUID,
+    *,
+    principal: Annotated[Principal, Depends(require(Permission.CASE_WRITE))],
+    body: EvidenceRequest,
+    raw: RawBody,
+    key: IdempotencyKey,
+    request: Request,
+) -> JSONResponse:
+    """Fetch one evidence item (docs/09 §3): the adapter's facts, the outcome, and the case
+    posterior updated. Idempotent per (case, source) unless `refresh`; 409 once disposed; 422
+    for a source outside the case's profile or an outreach call without its recorded outcome."""
+    platform = _platform(request)
+
+    def run(session: Session) -> tuple[int, Any]:
+        request_evidence(
+            session,
+            platform.clock,
+            case_id,
+            body.source_key,
+            requested_by=principal.user_id,
+            refresh=body.refresh,
+            recorded_outcome=body.outcome,
+            note=body.note,
+        )
+        record = get_case(session, case_id)
+        assert record is not None
+        return HTTPStatus.OK, _detail(session, record, platform.clock.now()).model_dump(mode="json")
+
+    reply = run_idempotent(request, raw, principal, key, run)
+    if reply.status_code == HTTPStatus.OK:
         reply.headers["ETag"] = f'"{json.loads(bytes(reply.body))["version"]}"'
     return reply

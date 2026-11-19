@@ -13,6 +13,12 @@ from delphi.navigator.console import (
     console,
 )
 from delphi.navigator.disposition import Disposition, dispose, vulnerable_payer
+from delphi.navigator.evidence import (
+    EvidenceRecord,
+    current_records,
+    observed_sources,
+    request_evidence,
+)
 from delphi.navigator.store import (
     HOLD_DECISIONS,
     CaseCursor,
@@ -39,13 +45,17 @@ __all__ = [
     "CaseType",
     "ConsoleView",
     "Disposition",
+    "EvidenceRecord",
     "EvidenceRow",
     "case_profile",
     "console",
+    "current_records",
     "dispose",
     "get_case",
     "list_cases",
+    "observed_sources",
     "open_case",
     "open_case_for_payment",
+    "request_evidence",
     "vulnerable_payer",
 ]

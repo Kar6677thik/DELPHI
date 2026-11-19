@@ -413,6 +413,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/cases/{case_id}/evidence-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Request Case Evidence
+         * @description Fetch one evidence item (docs/09 §3): the adapter's facts, the outcome, and the case
+         *     posterior updated. Idempotent per (case, source) unless `refresh`; 409 once disposed; 422
+         *     for a source outside the case's profile or an outreach call without its recorded outcome.
+         */
+        post: operations["request_case_evidence_api_v1_cases__case_id__evidence_requests_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -513,6 +535,8 @@ export interface components {
             /** Evidence Sufficient */
             evidence_sufficient: boolean;
             what_would_change_my_mind: components["schemas"]["FlipView"] | null;
+            /** Evidence Records */
+            evidence_records: components["schemas"]["EvidenceRecordView"][];
         };
         /** CasePage */
         CasePage: {
@@ -670,6 +694,72 @@ export interface components {
             note?: string | null;
             /** Override Rationale */
             override_rationale?: string | null;
+        };
+        /**
+         * EvidenceRecordView
+         * @description docs/09 §2 item 5: one fetched evidence record (an evidence card).
+         */
+        EvidenceRecordView: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Source Key */
+            source_key: string;
+            /** Outcome */
+            outcome: string;
+            /** Facts */
+            facts: {
+                [key: string]: unknown;
+            };
+            /** Record Refs */
+            record_refs: string[];
+            /** Posterior Before */
+            posterior_before: {
+                [key: string]: number;
+            };
+            /** Posterior After */
+            posterior_after: {
+                [key: string]: number;
+            };
+            /** Info Yield Bits */
+            info_yield_bits: number;
+            /** Rank At Request */
+            rank_at_request: number | null;
+            /** Net Value At Request Paise */
+            net_value_at_request_paise: number | null;
+            /** Fetch Ms */
+            fetch_ms: number;
+            /** Requested By */
+            requested_by: string | null;
+            /**
+             * Requested At
+             * Format: date-time
+             */
+            requested_at: string;
+            /** Narrative */
+            narrative: string | null;
+            /** Narrative Source */
+            narrative_source: string | null;
+        };
+        /**
+         * EvidenceRequest
+         * @description docs/16: `{source_key, refresh?}`; `CUSTOMER_OUTREACH_CALL` also takes the investigator's
+         *     recorded `outcome` and a `note` (docs/09 §3).
+         */
+        EvidenceRequest: {
+            /** Source Key */
+            source_key: string;
+            /**
+             * Refresh
+             * @default false
+             */
+            refresh: boolean;
+            /** Outcome */
+            outcome?: string | null;
+            /** Note */
+            note?: string | null;
         };
         /**
          * EvidenceRowView
@@ -1723,6 +1813,43 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["DispositionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseDetail"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    request_case_evidence_api_v1_cases__case_id__evidence_requests_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EvidenceRequest"];
             };
         };
         responses: {
