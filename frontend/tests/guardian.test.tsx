@@ -123,11 +123,30 @@ const KB: KbVersionView = {
       GENUINE: { display_name: 'Genuine', color: '#15803D' },
       ATO: { display_name: 'Account takeover', color: '#7C3AED' },
     },
+    decision_profiles: {
+      GUARDIAN_PAYMENT: { decisions: ['RELEASE', 'HOLD_FOR_REVIEW', 'PROTECTIVE_HOLD', 'DECLINE'] },
+    },
   },
-} as unknown as KbVersionView;
+};
+
+/** KB version 2 renames a hypothesis: rows pinned to it must use its name, not version 1's. */
+const KB2: KbVersionView = {
+  ...KB,
+  id: 2,
+  status: 'RETIRED',
+  content: {
+    hypotheses: { APP_DIGITAL_ARREST: { display_name: 'Digital arrest (v2)', color: '#C2410C' } },
+  },
+};
 
 function serveKb() {
-  server.use(http.get('/api/v1/kb/versions/1', () => HttpResponse.json(KB)));
+  server.use(
+    http.get('/api/v1/kb/versions/1', () => HttpResponse.json(KB)),
+    http.get('/api/v1/kb/versions/2', () => HttpResponse.json(KB2)),
+    http.get('/api/v1/kb/versions', () =>
+      HttpResponse.json({ items: [{ ...KB, content: undefined }], next_cursor: null }),
+    ),
+  );
 }
 
 describe('Guardian monitor (docs/18 §2 /guardian)', () => {
@@ -163,7 +182,7 @@ describe('Guardian monitor (docs/18 §2 /guardian)', () => {
     ).toBeInTheDocument();
     expect(rows[0]).toHaveTextContent('₹4,80,000.00');
     expect(rows[0]).toHaveTextContent('Protective hold');
-    expect(rows[0]).toHaveTextContent('Hold for review / Otp step up');
+    expect(rows[0]).toHaveTextContent('Hold for review / OTP step-up');
     expect(within(rows[0] as HTMLElement).getByRole('link')).toHaveAttribute(
       'href',
       `/guardian/${SESSION_ID}`,
@@ -172,8 +191,9 @@ describe('Guardian monitor (docs/18 §2 /guardian)', () => {
     expect(rows[1]).toHaveTextContent('₹2,000.00');
   });
 
-  it('sends the filters to the api', async () => {
+  it('sends the filters to the api, with the decisions of the active KB', async () => {
     setMockSession('viewer');
+    serveKb();
     const seen: string[] = [];
     server.use(
       http.get('/api/v1/guardian/sessions', ({ request }) => {
@@ -183,10 +203,13 @@ describe('Guardian monitor (docs/18 §2 /guardian)', () => {
     );
     const { user } = renderApp('/guardian');
     expect(await screen.findByText('No Guardian sessions match.')).toBeInTheDocument();
-    await user.selectOptions(screen.getByLabelText('Decision'), 'PROTECTIVE_HOLD');
+    const decision = screen.getByLabelText('Decision');
+    await within(decision).findByRole('option', { name: 'Decline' });
+    await user.selectOptions(decision, 'PROTECTIVE_HOLD');
+    await user.selectOptions(screen.getByLabelText('Mode'), 'LIVE');
     await user.click(screen.getByLabelText('Unexplained only'));
     await screen.findByText('No Guardian sessions match.');
-    expect(seen.at(-1)).toBe('?limit=50&decision=PROTECTIVE_HOLD&unexplained=true');
+    expect(seen.at(-1)).toBe('?limit=50&decision=PROTECTIVE_HOLD&mode=LIVE&unexplained=true');
   });
 
   it('re-fetches when a session is decided (SSE, docs/18 §1)', async () => {
@@ -207,8 +230,36 @@ describe('Guardian monitor (docs/18 §2 /guardian)', () => {
     act(() => {
       FakeEventSource.latest().emit('guardian.session.decided', '9');
     });
-    expect(await screen.findByText('Protective hold')).toBeInTheDocument();
+    expect(await screen.findByRole('table')).toHaveTextContent('Protective hold');
     expect(calls).toBe(2);
+  });
+
+  it('names each row from its own KB version and offers more sessions when there are', async () => {
+    setMockSession('viewer');
+    serveKb();
+    const cursors: (string | null)[] = [];
+    server.use(
+      http.get('/api/v1/guardian/sessions', ({ request }) => {
+        const cursor = new URL(request.url).searchParams.get('cursor');
+        cursors.push(cursor);
+        return HttpResponse.json(
+          cursor
+            ? {
+                items: [summary({ id: '01930000-0000-7000-8000-0000000000b9' })],
+                next_cursor: null,
+              }
+            : { items: [summary({ kb_version_id: 2 })], next_cursor: 'next-page' },
+        );
+      }),
+    );
+    const { user } = renderApp('/guardian');
+    expect(await screen.findByText('Digital arrest (v2)')).toBeInTheDocument();
+    expect(screen.getByText(/more sessions match/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Load more sessions' }));
+    expect(await screen.findByText('Coerced victim — digital arrest')).toBeInTheDocument();
+    expect(within(screen.getByRole('table')).getAllByRole('row')).toHaveLength(3);
+    expect(cursors).toEqual([null, 'next-page']);
+    expect(screen.queryByRole('button', { name: 'Load more sessions' })).not.toBeInTheDocument();
   });
 
   it('shows the problem when the list cannot load', async () => {
@@ -233,15 +284,22 @@ describe('Guardian session detail (docs/18 §2 /guardian/:id)', () => {
     );
     renderApp(`/guardian/${SESSION_ID}`);
     expect(await screen.findByRole('heading', { name: 'Guardian session' })).toBeInTheDocument();
-    const bars = await screen.findAllByRole('img');
-    expect(bars.map((b) => b.getAttribute('aria-label')?.split(':')[0])).toEqual([
+    const timeline = await screen.findByRole('list', { name: 'Posterior by step' });
+    expect(
+      within(timeline)
+        .getAllByRole('list')
+        .map((b) => b.getAttribute('aria-label')),
+    ).toEqual([
       'Prior',
-      '1. Call status',
-      '2. Spell breaker police',
+      '1. Call status: On call unknown number',
+      '2. Spell breaker police: Hesitation or app switch',
     ]);
     expect(await screen.findByText('Coerced victim — digital arrest 71%')).toBeInTheDocument();
     const risk = screen.getByRole('table', { name: 'Expected loss by decision' });
-    expect(within(risk).getAllByRole('row')[1]).toHaveTextContent('Protective hold(recommended)');
+    expect(within(risk).getAllByRole('row')[1]).toHaveTextContent(
+      'Protective hold(decision taken)',
+    );
+    expect(screen.getByText('Protective hold (Stop)')).toBeInTheDocument();
     expect(screen.getByText('OTP step-up (released if the OTP passes)')).toBeInTheDocument();
     expect(screen.getByRole('table', { name: 'Step 2 candidates' })).toHaveTextContent(
       'EXPLORE · p=0.15',
@@ -251,6 +309,103 @@ describe('Guardian session detail (docs/18 §2 /guardian/:id)', () => {
       `/api/v1/guardian/sessions/${SESSION_ID}/dd-pack?format=html`,
     );
     expect(screen.getByText(/\(complete\)/)).toBeInTheDocument();
+  });
+
+  it('marks the lowest-risk decision as recommended while the session is undecided', async () => {
+    setMockSession('viewer');
+    serveKb();
+    server.use(
+      http.get(`/api/v1/guardian/sessions/${SESSION_ID}`, () =>
+        HttpResponse.json(
+          view({
+            status: 'AWAITING_CUSTOMER',
+            decision: null,
+            terminal_reason: null,
+            decided_at: null,
+            baselines: null,
+            probe_runs: [],
+            prior: { ...view().prior, probs: null },
+          }),
+        ),
+      ),
+    );
+    renderApp(`/guardian/${SESSION_ID}`);
+    expect(await screen.findByText('Not decided yet')).toBeInTheDocument();
+    expect(screen.getByText('No observations yet.')).toBeInTheDocument();
+    const risk = screen.getByRole('table', { name: 'Expected loss by decision' });
+    expect(within(risk).getAllByRole('row')[1]).toHaveTextContent('Protective hold(recommended)');
+    expect(screen.queryByText('(decision taken)')).not.toBeInTheDocument();
+  });
+
+  it('shows a customer cancel by its terminal reason alone', async () => {
+    setMockSession('viewer');
+    serveKb();
+    server.use(
+      http.get(`/api/v1/guardian/sessions/${SESSION_ID}`, () =>
+        HttpResponse.json(
+          view({
+            status: 'CANCELLED_BY_CUSTOMER',
+            decision: null,
+            terminal_reason: 'CUSTOMER_CANCELLED',
+          }),
+        ),
+      ),
+    );
+    renderApp(`/guardian/${SESSION_ID}`);
+    expect(await screen.findByText('Customer cancelled')).toBeInTheDocument();
+    expect(screen.queryByText(/Not decided yet/)).not.toBeInTheDocument();
+  });
+
+  it('marks a fail-safe hold as the decision taken, not as recommended', async () => {
+    setMockSession('viewer');
+    serveKb();
+    server.use(
+      http.get(`/api/v1/guardian/sessions/${SESSION_ID}`, () =>
+        HttpResponse.json(
+          view({
+            decision: 'HOLD_FOR_REVIEW',
+            terminal_reason: 'ENGINE_ERROR',
+            // The stored risks still rank RELEASE lowest (docs/05 §2).
+            risk_by_decision: {
+              RELEASE: 10_000,
+              HOLD_FOR_REVIEW: 632_300,
+              PROTECTIVE_HOLD: 900_000,
+            },
+          }),
+        ),
+      ),
+    );
+    renderApp(`/guardian/${SESSION_ID}`);
+    expect(await screen.findByText('Hold for review (Engine error)')).toBeInTheDocument();
+    const rows = within(screen.getByRole('table', { name: 'Expected loss by decision' }))
+      .getAllByRole('row')
+      .slice(1);
+    expect(rows[0]).toHaveTextContent(/^Release₹/);
+    expect(rows[1]).toHaveTextContent('Hold for review(decision taken)');
+    expect(screen.queryByText('(recommended)')).not.toBeInTheDocument();
+  });
+
+  it('re-fetches the open session when it is updated (SSE, docs/18 §1)', async () => {
+    setMockSession('viewer');
+    serveKb();
+    let calls = 0;
+    server.use(
+      http.get(`/api/v1/guardian/sessions/${SESSION_ID}`, () => {
+        calls += 1;
+        return HttpResponse.json(
+          calls === 1
+            ? view({ status: 'AWAITING_CUSTOMER', decision: null, terminal_reason: null })
+            : view(),
+        );
+      }),
+    );
+    renderApp(`/guardian/${SESSION_ID}`);
+    expect(await screen.findByText('Not decided yet')).toBeInTheDocument();
+    act(() => {
+      FakeEventSource.latest().emit('guardian.session.decided', '10');
+    });
+    expect(await screen.findByText('Protective hold (Stop)')).toBeInTheDocument();
+    expect(calls).toBe(2);
   });
 
   it('shows the problem for an unknown session', async () => {

@@ -1,14 +1,14 @@
 import { useParams } from 'react-router';
 
 import { API_BASE } from '../api/client';
-import { useGuardianSession, useHypothesisStyles } from '../api/guardian';
+import { useGuardianSession, useKbDisplay } from '../api/guardian';
 import type { GuardianSessionView } from '../api/types';
-import { type Candidate, CandidatesTable } from '../components/CandidatesTable';
-import { HypothesisTimeline } from '../components/HypothesisBar';
+import { CandidatesTable, parseCandidates } from '../components/CandidatesTable';
+import { type HypothesisStyles, HypothesisTimeline } from '../components/HypothesisBar';
 import { MoneyText } from '../components/MoneyText';
 import { ProblemAlert } from '../components/ProblemAlert';
 import { RiskTable } from '../components/RiskTable';
-import { humanise } from './GuardianPage';
+import { decisionText, humanise } from '../lib/format';
 
 /** The prior, then the posterior after each completed observation (docs/08 §6). */
 function steps(session: GuardianSessionView) {
@@ -26,6 +26,20 @@ function steps(session: GuardianSessionView) {
   return out;
 }
 
+/**
+ * The decision with its terminal reason, or the terminal reason alone when the session ended
+ * without one (a customer cancel), or "Not decided yet".
+ */
+function outcomeText(session: GuardianSessionView): string {
+  const reason = session.terminal_reason ? humanise(session.terminal_reason) : null;
+  if (session.decision) {
+    return reason
+      ? `${decisionText(session.decision)} (${reason})`
+      : decisionText(session.decision);
+  }
+  return reason ?? 'Not decided yet';
+}
+
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
@@ -39,7 +53,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 export function GuardianSessionPage() {
   const { id = '' } = useParams();
   const session = useGuardianSession(id);
-  const styles = useHypothesisStyles(session.data?.kb_version_id);
+  const kb = useKbDisplay(session.data?.kb_version_id);
   return (
     <section aria-labelledby="session-title">
       <h1 id="session-title" className="text-2xl font-semibold">
@@ -51,7 +65,7 @@ export function GuardianSessionPage() {
           <ProblemAlert error={session.error} title="Could not load the session" />
         </div>
       )}
-      {session.isSuccess && <SessionDetail session={session.data} styles={styles.data ?? {}} />}
+      {session.isSuccess && <SessionDetail session={session.data} styles={kb.data?.styles ?? {}} />}
     </section>
   );
 }
@@ -61,9 +75,10 @@ function SessionDetail({
   styles,
 }: {
   session: GuardianSessionView;
-  styles: Record<string, { name: string; color: string }>;
+  styles: HypothesisStyles;
 }) {
   const planned = session.probe_runs.filter((r) => r.candidates.length > 0);
+  const timeline = steps(session);
   return (
     <div className="mt-4 space-y-8">
       <dl className="grid grid-cols-2 gap-4 text-sm md:grid-cols-4">
@@ -73,10 +88,7 @@ function SessionDetail({
         <Field label="Channel">{humanise(session.payment.channel)}</Field>
         <Field label="Status">{humanise(session.status)}</Field>
         <Field label="Decision">
-          <span aria-live="polite">
-            {session.decision ? humanise(session.decision) : 'Not decided yet'}
-            {session.terminal_reason && ` (${humanise(session.terminal_reason)})`}
-          </span>
+          <span aria-live="polite">{outcomeText(session)}</span>
           {session.unexplained && (
             <span className="ml-2 rounded bg-violet-100 px-2 py-0.5 text-violet-900">
               Unexplained
@@ -90,7 +102,11 @@ function SessionDetail({
           Hypotheses over time
         </h2>
         <div className="mt-2">
-          <HypothesisTimeline steps={steps(session)} styles={styles} />
+          {timeline.length > 0 ? (
+            <HypothesisTimeline steps={timeline} styles={styles} />
+          ) : (
+            <p className="text-slate-600">No observations yet.</p>
+          )}
         </div>
       </section>
 
@@ -100,7 +116,7 @@ function SessionDetail({
             Decision and risk
           </h2>
           <div className="mt-2">
-            <RiskTable risks={session.risk_by_decision} recommended={session.decision} />
+            <RiskTable risks={session.risk_by_decision} taken={session.decision} />
           </div>
         </section>
       )}
@@ -124,12 +140,14 @@ function SessionDetail({
           <tbody>
             <tr className="border-b border-slate-100 font-semibold">
               <td className="py-1 pr-6">DELPHI</td>
-              <td className="py-1 pr-6">{session.decision ? humanise(session.decision) : '—'}</td>
+              <td className="py-1 pr-6">
+                {session.decision ? decisionText(session.decision) : '—'}
+              </td>
             </tr>
             <tr className="border-b border-slate-100">
               <td className="py-1 pr-6">B1 (static rules)</td>
               <td className="py-1 pr-6">
-                {session.baselines ? humanise(session.baselines.B1) : '—'}
+                {session.baselines ? decisionText(session.baselines.B1) : '—'}
               </td>
             </tr>
             <tr className="border-b border-slate-100">
@@ -137,8 +155,8 @@ function SessionDetail({
               <td className="py-1 pr-6">
                 {session.baselines
                   ? session.baselines.B2 === 'OTP_STEP_UP'
-                    ? 'OTP step-up (released if the OTP passes)'
-                    : humanise(session.baselines.B2)
+                    ? `${decisionText('OTP_STEP_UP')} (released if the OTP passes)`
+                    : decisionText(session.baselines.B2)
                   : '—'}
               </td>
             </tr>
@@ -158,7 +176,7 @@ function SessionDetail({
               </h3>
               <CandidatesTable
                 caption={`Step ${String(run.seq)} candidates`}
-                candidates={run.candidates as unknown as Candidate[]}
+                candidates={parseCandidates(run.candidates)}
                 selectedBy={run.selected_by}
                 propensity={run.propensity}
               />

@@ -1,23 +1,39 @@
 import { useState } from 'react';
 import { Link } from 'react-router';
 
-import { type SessionFilters, useGuardianSessions, useHypothesisStyles } from '../api/guardian';
+import {
+  type SessionFilters,
+  useActiveKbDisplay,
+  useGuardianSessions,
+  useKbDisplays,
+} from '../api/guardian';
+import type { SessionMode, SessionStatus } from '../api/types';
 import { MoneyText } from '../components/MoneyText';
 import { ProblemAlert } from '../components/ProblemAlert';
+import { decisionText, humanise } from '../lib/format';
 
-const STATUSES = [
-  'CREATED',
-  'PASSIVE_PROBING',
-  'PLANNING',
-  'AWAITING_CUSTOMER',
-  'DECIDED',
-  'CANCELLED_BY_CUSTOMER',
-] as const;
-const DECISIONS = ['RELEASE', 'HOLD_FOR_REVIEW', 'PROTECTIVE_HOLD', 'DECLINE'] as const;
+/** Every session status in the schema: a status added to the api fails to compile here. */
+const STATUSES: Readonly<Record<SessionStatus, string>> = {
+  CREATED: 'Created',
+  PASSIVE_PROBING: 'Passive probing',
+  PLANNING: 'Planning',
+  AWAITING_CUSTOMER: 'Awaiting customer',
+  DECIDED: 'Decided',
+  CANCELLED_BY_CUSTOMER: 'Cancelled by customer',
+};
 
-export function humanise(key: string): string {
-  const text = key.replaceAll('_', ' ').toLowerCase();
-  return text.charAt(0).toUpperCase() + text.slice(1);
+const MODES: Readonly<Record<SessionMode, string>> = {
+  LIVE: 'Live',
+  AUTOPLAY: 'Autoplay',
+  EVAL: 'Evaluation',
+};
+
+function isStatus(value: string): value is SessionStatus {
+  return value in STATUSES;
+}
+
+function isMode(value: string): value is SessionMode {
+  return value in MODES;
 }
 
 const TIME = new Intl.DateTimeFormat('en-IN', {
@@ -30,10 +46,11 @@ const TIME = new Intl.DateTimeFormat('en-IN', {
 export function GuardianPage() {
   const [filters, setFilters] = useState<SessionFilters>({});
   const sessions = useGuardianSessions(filters);
-  const styles = useHypothesisStyles(
-    sessions.isSuccess ? sessions.data.items[0]?.kb_version_id : undefined,
-  );
-  const names = styles.data ?? {};
+  const items = sessions.data?.pages.flatMap((p) => p.items) ?? [];
+  // Each row is named by its own pinned KB version (docs/07 §4).
+  const kbs = useKbDisplays([...new Set(items.map((s) => s.kb_version_id))]);
+  // The decisions the api accepts are the ACTIVE KB's GUARDIAN_PAYMENT ones (docs/16).
+  const active = useActiveKbDisplay();
   return (
     <section aria-labelledby="guardian-title">
       <h1 id="guardian-title" className="text-2xl font-semibold">
@@ -52,13 +69,14 @@ export function GuardianPage() {
             className="rounded border border-slate-300 px-2 py-1"
             value={filters.status ?? ''}
             onChange={(e) => {
-              setFilters({ ...filters, status: e.target.value || undefined });
+              const v = e.target.value;
+              setFilters({ ...filters, status: isStatus(v) ? v : undefined });
             }}
           >
             <option value="">Any</option>
-            {STATUSES.map((s) => (
-              <option key={s} value={s}>
-                {humanise(s)}
+            {Object.entries(STATUSES).map(([value, text]) => (
+              <option key={value} value={value}>
+                {text}
               </option>
             ))}
           </select>
@@ -73,9 +91,27 @@ export function GuardianPage() {
             }}
           >
             <option value="">Any</option>
-            {DECISIONS.map((d) => (
+            {(active.data?.decisions ?? []).map((d) => (
               <option key={d} value={d}>
-                {humanise(d)}
+                {decisionText(d)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex flex-col gap-1">
+          Mode
+          <select
+            className="rounded border border-slate-300 px-2 py-1"
+            value={filters.mode ?? ''}
+            onChange={(e) => {
+              const v = e.target.value;
+              setFilters({ ...filters, mode: isMode(v) ? v : undefined });
+            }}
+          >
+            <option value="">Any</option>
+            {Object.entries(MODES).map(([value, text]) => (
+              <option key={value} value={value}>
+                {text}
               </option>
             ))}
           </select>
@@ -96,66 +132,86 @@ export function GuardianPage() {
         {sessions.isError && (
           <ProblemAlert error={sessions.error} title="Could not load the sessions" />
         )}
-        {sessions.isSuccess && sessions.data.items.length === 0 && (
+        {sessions.isSuccess && items.length === 0 && (
           <p className="text-slate-600">No Guardian sessions match.</p>
         )}
-        {sessions.isSuccess && sessions.data.items.length > 0 && (
-          <table className="w-full text-left text-sm">
-            <caption className="sr-only">Guardian sessions, newest first</caption>
-            <thead className="border-b border-slate-300 text-slate-600">
-              <tr>
-                <th scope="col" className="py-2 pr-4">
-                  Started
-                </th>
-                <th scope="col" className="py-2 pr-4 text-right">
-                  Amount
-                </th>
-                <th scope="col" className="py-2 pr-4">
-                  Leading hypothesis
-                </th>
-                <th scope="col" className="py-2 pr-4">
-                  Status
-                </th>
-                <th scope="col" className="py-2 pr-4">
-                  Decision
-                </th>
-                <th scope="col" className="py-2 pr-4">
-                  B1 / B2
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {sessions.data.items.map((s) => (
-                <tr key={s.id} className="border-b border-slate-100">
-                  <td className="py-2 pr-4">
-                    <Link to={`/guardian/${s.id}`} className="underline">
-                      {TIME.format(new Date(s.started_at))}
-                    </Link>
-                  </td>
-                  <td className="py-2 pr-4 text-right">
-                    <MoneyText paise={s.payment.amount_paise} />
-                  </td>
-                  <td className="py-2 pr-4">
-                    {s.leading_hypothesis
-                      ? (names[s.leading_hypothesis]?.name ?? humanise(s.leading_hypothesis))
-                      : '—'}
-                    {s.unexplained && (
-                      <span className="ml-2 rounded bg-violet-100 px-2 py-0.5 text-violet-900">
-                        Unexplained
-                      </span>
-                    )}
-                  </td>
-                  <td className="py-2 pr-4">{humanise(s.status)}</td>
-                  <td className="py-2 pr-4">{s.decision ? humanise(s.decision) : '—'}</td>
-                  <td className="py-2 pr-4">
-                    {s.baselines
-                      ? `${humanise(s.baselines.B1)} / ${humanise(s.baselines.B2)}`
-                      : '—'}
-                  </td>
+        {sessions.isSuccess && items.length > 0 && (
+          <>
+            <table className="w-full text-left text-sm">
+              <caption className="sr-only">Guardian sessions, newest first</caption>
+              <thead className="border-b border-slate-300 text-slate-600">
+                <tr>
+                  <th scope="col" className="py-2 pr-4">
+                    Started
+                  </th>
+                  <th scope="col" className="py-2 pr-4 text-right">
+                    Amount
+                  </th>
+                  <th scope="col" className="py-2 pr-4">
+                    Leading hypothesis
+                  </th>
+                  <th scope="col" className="py-2 pr-4">
+                    Status
+                  </th>
+                  <th scope="col" className="py-2 pr-4">
+                    Decision
+                  </th>
+                  <th scope="col" className="py-2 pr-4">
+                    B1 / B2
+                  </th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {items.map((s) => (
+                  <tr key={s.id} className="border-b border-slate-100">
+                    <td className="py-2 pr-4">
+                      <Link to={`/guardian/${s.id}`} className="underline">
+                        {TIME.format(new Date(s.started_at))}
+                      </Link>
+                    </td>
+                    <td className="py-2 pr-4 text-right">
+                      <MoneyText paise={s.payment.amount_paise} />
+                    </td>
+                    <td className="py-2 pr-4">
+                      {s.leading_hypothesis
+                        ? (kbs.get(s.kb_version_id)?.styles[s.leading_hypothesis]?.name ??
+                          humanise(s.leading_hypothesis))
+                        : '—'}
+                      {s.unexplained && (
+                        <span className="ml-2 rounded bg-violet-100 px-2 py-0.5 text-violet-900">
+                          Unexplained
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-2 pr-4">
+                      {isStatus(s.status) ? STATUSES[s.status] : humanise(s.status)}
+                    </td>
+                    <td className="py-2 pr-4">{s.decision ? decisionText(s.decision) : '—'}</td>
+                    <td className="py-2 pr-4">
+                      {s.baselines
+                        ? `${decisionText(s.baselines.B1)} / ${decisionText(s.baselines.B2)}`
+                        : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {sessions.hasNextPage && (
+              <p className="mt-3 flex items-center gap-3 text-sm text-slate-600">
+                Showing the newest {items.length}; more sessions match.
+                <button
+                  type="button"
+                  className="rounded border border-slate-300 px-3 py-1 text-slate-900"
+                  disabled={sessions.isFetchingNextPage}
+                  onClick={() => {
+                    void sessions.fetchNextPage();
+                  }}
+                >
+                  {sessions.isFetchingNextPage ? 'Loading…' : 'Load more sessions'}
+                </button>
+              </p>
+            )}
+          </>
         )}
       </div>
     </section>

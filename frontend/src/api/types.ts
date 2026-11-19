@@ -25,3 +25,9 @@ export type GuardianSessionView = Schemas['GuardianSessionView'];
 export type ProbeRunView = Schemas['ProbeRunView'];
 /** `GET /kb/versions/{id}`, with the version's content. */
 export type KbVersionView = Schemas['KbVersionView'];
+/** A Guardian session's lifecycle state (the `status` filter of `GET /guardian/sessions`). */
+export type SessionStatus = Schemas['SessionStatus'];
+/** How a Guardian session was started (the `mode` filter of `GET /guardian/sessions`). */
+export type SessionMode = Schemas['SessionMode'];
+/** `GET /kb/versions`: newest first, without the content. */
+export type KbVersionPage = Schemas['KbVersionPage'];
