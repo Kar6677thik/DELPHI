@@ -129,7 +129,10 @@ def test_the_loaded_splits_train_a_reported_model(
 def test_the_eval_profile_passes_the_gate(
     create_database: Callable[[], str], kb: KnowledgeBase
 ) -> None:
-    """docs/13 §6, docs/25 M3: mule AUC ≥ 0.90 on eval's test split, or a documented deviation."""
+    """docs/13 §6, docs/25 M3: mule AUC ≥ 0.90 on eval's test split, or a documented deviation.
+
+    Run with ``DELPHI_RUN_SLOW=1 uv run pytest -s`` to see the printed training report.
+    """
     data, _ = _load(create_database, kb, "eval")
     model, gate = train_mule(
         data.train,

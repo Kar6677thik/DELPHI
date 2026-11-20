@@ -186,6 +186,11 @@ def train_mule(
         "validation": _split_report(model, validation),
         "test": test_report,
         "calibrated": calibration is not None,
+        # Total gain per feature: shows when one feature carries the model (#180 review)
+        "feature_importance_gain": {
+            name: float(gain)
+            for name, gain in zip(feature_list, booster.feature_importance("gain"), strict=True)
+        },
         "gate": {
             "enforced": result.enforced,
             "passed": result.passed,

@@ -8,6 +8,7 @@ import pytest
 from delphi.sensing.config import MuleConfig, MuleGate, load_sensing_config
 from delphi.sensing.features import ACCOUNT_FEATURES
 from delphi.sensing.mule import (
+    MuleGateResult,
     MuleInputError,
     MuleModel,
     MuleSplit,
@@ -45,7 +46,7 @@ def config() -> MuleConfig:
 
 
 @pytest.fixture(scope="module")
-def trained(config: MuleConfig) -> tuple[MuleModel, object]:
+def trained(config: MuleConfig) -> tuple[MuleModel, MuleGateResult]:
     return train_mule(
         _split(N, 1), _split(200, 2), _split(200, 3), FEATURES, config, profile="eval"
     )
@@ -60,15 +61,19 @@ def test_config_matches_the_spec(config: MuleConfig) -> None:
     assert config.label_hypothesis == "MULE"
 
 
-def test_a_separable_problem_passes_the_enforced_gate(trained: tuple[MuleModel, object]) -> None:
+def test_a_separable_problem_passes_the_enforced_gate(
+    trained: tuple[MuleModel, MuleGateResult],
+) -> None:
     model, gate = trained
     report = model.report
     assert report["test"]["auc"] > 0.95
     assert report["calibrated"] is True
-    assert gate.enforced and gate.passed and not gate.reasons  # type: ignore[attr-defined]
+    assert gate.enforced and gate.passed and not gate.reasons
 
 
-def test_scores_are_probabilities_and_rank_mules_higher(trained: tuple[MuleModel, object]) -> None:
+def test_scores_are_probabilities_and_rank_mules_higher(
+    trained: tuple[MuleModel, MuleGateResult],
+) -> None:
     model, _ = trained
     split = _split(300, 4)
     scores = model.scores(split.features)
@@ -77,7 +82,9 @@ def test_scores_are_probabilities_and_rank_mules_higher(trained: tuple[MuleModel
     assert scores[split.labels == 1].mean() > scores[split.labels == 0].mean()
 
 
-def test_p_mule_for_one_account_matches_the_matrix(trained: tuple[MuleModel, object]) -> None:
+def test_p_mule_for_one_account_matches_the_matrix(
+    trained: tuple[MuleModel, MuleGateResult],
+) -> None:
     model, _ = trained
     split = _split(5, 5)
     row = dict(zip(FEATURES, split.features[0], strict=True))
@@ -152,7 +159,7 @@ def test_bad_splits_are_refused(features: np.ndarray, labels: np.ndarray, messag
 
 
 def test_bad_feature_lists_and_matrices_are_refused(
-    config: MuleConfig, trained: tuple[MuleModel, object]
+    config: MuleConfig, trained: tuple[MuleModel, MuleGateResult]
 ) -> None:
     split = _split(N, 1)
     with pytest.raises(MuleInputError, match="empty or has duplicates"):
@@ -164,3 +171,10 @@ def test_bad_feature_lists_and_matrices_are_refused(
         model.scores(np.zeros((2, 3)))
     with pytest.raises(MuleInputError, match="finite"):
         model.scores(np.full((1, len(FEATURES)), np.inf))
+
+
+def test_the_report_carries_feature_importance(trained: tuple[MuleModel, MuleGateResult]) -> None:
+    model, _ = trained
+    gains = model.report["feature_importance_gain"]
+    assert set(gains) == set(FEATURES)
+    assert all(g >= 0 for g in gains.values()) and sum(gains.values()) > 0

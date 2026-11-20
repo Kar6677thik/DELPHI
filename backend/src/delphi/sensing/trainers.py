@@ -26,6 +26,7 @@ from delphi.sensing.artifacts import ArtifactKind, TrainedModel
 from delphi.sensing.config import SensingConfig, load_sensing_config
 from delphi.sensing.features import (
     ACCOUNT_FEATURES,
+    AccountHistory,
     build_account_features,
     prior_feature_names,
     to_us,
@@ -239,7 +240,8 @@ def load_mule_data(
     frames = load_bank_frames(conn)
     offline = OfflineAccountHistories(frames, settings.accounts)
 
-    candidates: list[tuple[str, int, int, int]] = []  # account, as_of, label, first activity
+    # account, as_of, label, first activity, and the snapshot (built once per account)
+    candidates: list[tuple[str, int, int, int, AccountHistory]] = []
     for row in frames.accounts.itertuples(index=False):
         account = str(row.id)
         history = offline.snapshot(account)
@@ -253,7 +255,7 @@ def load_mule_data(
         flows = flows[flows < as_of]
         if flows.size == 0:
             continue
-        candidates.append((account, as_of, label, int(flows.min())))
+        candidates.append((account, as_of, label, int(flows.min()), history))
     candidates.sort(key=lambda c: (c[3], c[0]))
     split = matured_split(
         np.array([c[3] for c in candidates], dtype=np.int64),
@@ -268,15 +270,15 @@ def load_mule_data(
         matrix = np.array(
             [
                 [
-                    build_account_features(offline.snapshot(a), as_of, settings.accounts)[f]
+                    build_account_features(history, as_of, settings.accounts)[f]
                     for f in ACCOUNT_FEATURES
                 ]
-                for a, as_of, _, _ in chosen
+                for _, as_of, _, _, history in chosen
             ],
             dtype=np.float64,
         ).reshape(len(chosen), len(ACCOUNT_FEATURES))
         labels = np.array([c[2] for c in chosen], dtype=np.int64)
-        return MuleSplit(matrix, labels), tuple((a, as_of) for a, as_of, _, _ in chosen)
+        return MuleSplit(matrix, labels), tuple((a, as_of) for a, as_of, *_ in chosen)
 
     (train, r1), (validation, r2), (test, r3) = part(TRAIN), part(VALIDATION), part(TEST)
     return MuleData(train, validation, test, ACCOUNT_FEATURES, window, cutoff, (r1, r2, r3))
