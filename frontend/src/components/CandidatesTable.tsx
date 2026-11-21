@@ -17,6 +17,38 @@ export interface Candidate {
   selected?: boolean;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function num(value: unknown): number | null {
+  return typeof value === 'number' ? value : null;
+}
+
+/**
+ * The stored candidates as table rows. The api types them as open objects for now
+ * (`list[dict[str, Any]]`), so each field is checked rather than cast; #198 adds a typed
+ * candidate model to the api, after which this goes.
+ */
+export function parseCandidates(rows: readonly unknown[]): Candidate[] {
+  return rows.flatMap((r) =>
+    isRecord(r) && typeof r.source_key === 'string'
+      ? [
+          {
+            source_key: r.source_key,
+            eligible: r.eligible !== false,
+            ineligible_reason: typeof r.ineligible_reason === 'string' ? r.ineligible_reason : null,
+            cost_paise: num(r.cost_paise),
+            voi_myopic_paise: num(r.voi_myopic_paise),
+            net_value_paise: num(r.net_value_paise),
+            settle_pct: num(r.settle_pct),
+            selected: r.selected === true,
+          },
+        ]
+      : [],
+  );
+}
+
 function Money({ paise }: { paise: number | null | undefined }) {
   return paise === null || paise === undefined ? <span>—</span> : <MoneyText paise={paise} />;
 }
