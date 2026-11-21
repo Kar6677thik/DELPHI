@@ -22,6 +22,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from delphi.kb.store import get_version
+from delphi.navigator.police_alert import draft_alert
 from delphi.navigator.tables import cases
 from delphi.platform.audit import ActorType, record
 from delphi.platform.clock import Clock
@@ -236,6 +237,8 @@ def open_case(
         entity_id=str(case_id),
         payload=payload,
     )
+    if protocol is CaseProtocol.COERCION:  # docs/09 §6 item 2: drafted, never sent by itself
+        draft_alert(session, clock, case_id=case_id, payment_id=payment_id)
     publish(session, EventType.CASE_OPENED, str(case_id), payload)
     opened = get_case(session, case_id)
     assert opened is not None

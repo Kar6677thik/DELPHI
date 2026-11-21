@@ -29,6 +29,8 @@ from delphi.api.security import Permission, Principal, require
 from delphi.kb.model import UNEXPLAINED
 from delphi.kb.store import get_version
 from delphi.navigator.api import (
+    AlertAction,
+    AlertStatus,
     CaseCursor,
     CaseProtocol,
     CaseRecord,
@@ -38,10 +40,12 @@ from delphi.navigator.api import (
     ConsoleView,
     Disposition,
     EvidenceRecord,
+    act_on_alert,
     case_profile,
     console,
     current_records,
     dispose,
+    get_alert,
     get_case,
     list_cases,
     request_evidence,
@@ -267,6 +271,16 @@ class EvidenceRecordView(BaseModel):
         )
 
 
+class PoliceAlertView(BaseModel):
+    """docs/09 §6: the coercion case's police alert draft and what a human did with it."""
+
+    id: UUID
+    status: AlertStatus
+    payload: dict[str, Any]
+    acted_by: UUID | None
+    acted_at: datetime | None
+
+
 class CaseDetail(CaseView):
     """One case with the console's decision support (docs/09 §2, docs/16)."""
 
@@ -276,6 +290,7 @@ class CaseDetail(CaseView):
     evidence_sufficient: bool
     what_would_change_my_mind: FlipView | None
     evidence_records: list[EvidenceRecordView]
+    police_alert: PoliceAlertView | None
 
 
 def _paise(value: float | None) -> int | None:
@@ -344,6 +359,17 @@ def _detail(session: Session, record: CaseRecord, now: datetime) -> CaseDetail:
             else None
         ),
         evidence_records=[EvidenceRecordView.of(r) for r in records],
+        police_alert=(
+            PoliceAlertView(
+                id=alert.id,
+                status=alert.status,
+                payload=dict(alert.payload),
+                acted_by=alert.acted_by,
+                acted_at=alert.acted_at,
+            )
+            if (alert := get_alert(session, record.id)) is not None
+            else None
+        ),
     )
 
 
@@ -473,3 +499,36 @@ def request_case_evidence(
     if reply.status_code == HTTPStatus.OK:
         reply.headers["ETag"] = f'"{json.loads(bytes(reply.body))["version"]}"'
     return reply
+
+
+@router.post("/cases/{case_id}/police-alert/{action}", response_model=CaseDetail)
+def act_on_police_alert(
+    case_id: UUID,
+    action: AlertAction,
+    *,
+    principal: Annotated[Principal, Depends(require(Permission.CASE_WRITE))],
+    request: Request,
+) -> CaseDetail:
+    """Send (recorded as SENT_SIMULATED, with the case's evidence list) or discard the coercion
+    case's police alert draft (docs/09 §6). Only a human call does this: nothing sends an alert
+    automatically (FR-NAV-10). 404 for a case without one, 409 once it was acted on."""
+    platform = _platform(request)
+    with platform.sessions.begin() as session:
+        record = get_case(session, case_id)
+        if record is None:
+            raise NotFoundError("No case with this id.")
+        evidence = [
+            {"source_key": r.source_key, "outcome": r.outcome, "at": r.requested_at.isoformat()}
+            for r in current_records(session, case_id)
+        ]
+        act_on_alert(
+            session,
+            platform.clock,
+            case_id,
+            action,
+            user_id=principal.user_id,
+            evidence=evidence,
+        )
+        acted = get_case(session, case_id)  # the new version
+        assert acted is not None
+        return _detail(session, acted, platform.clock.now())
