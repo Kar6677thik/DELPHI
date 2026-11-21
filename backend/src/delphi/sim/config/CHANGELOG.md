@@ -8,6 +8,54 @@ upgrade changes them, `test_committed_freeze_matches_kb_v1_and_config` fails eve
 input changed. Then either keep the previous numpy, or regenerate with
 `uv run delphi sim freeze-response-models`, bump `generator_version` and record the upgrade here.
 
+## 16
+
+Makes the simulator realistically hard for the payment prior (#166, decided on #148). The #148
+analysis found two unrealistic tells: every fraud scenario paid hours away from the victim's
+habitual hour, and fraud payees' accounts were ~300 days old against genuine ones' ~2,000.
+
+**Fraud:**
+- **Timing.** APP payments (digital arrest, investment, collect-refund) fall at the victim's
+  habitual hour ± N(0, 1.5 h) with probability 0.70, else as before. ATO keeps an off-hour
+  skew (0.40 habitual). From each instance's own stream, so other draws don't move.
+- **Aged and rented mules.** 50% of mule accounts were opened 1–7 years before the history
+  (the rest 5–400 days, as before).
+- **Payees saved earlier.** A digital-arrest victim saves the first mule 1–10 days ahead with
+  probability 0.40, and returns to an account already paid with probability 0.50. 35% of
+  takeovers are staged: the mule is saved 4–48 h before the drain, past the new-payee
+  cooling-off.
+
+**Genuine customers:**
+- **Young accounts.** 20% of genuine non-merchant accounts (was 10%) and 35% of merchants are
+  opened 30–365 days before the history.
+- **New payees.** New person payees every 45 days (was 365; median ₹10,000, UPI/IMPS/NEFT
+  0.40/0.40/0.20), and first visits to everyday shops every 10 days (median ₹500, scan and
+  pay, 1–10 min after saving). 30% of new people and 10% of new shops are saved 0.2–10 days
+  before the first payment.
+- **Routine.** Once saved, a payee joins the routine: while a customer has payees saved in
+  the last 45 days, 25% of its routine payments go to one of them. So new payees take a share
+  of the docs/14 rate instead of adding to it (0.62 customer payments a day on `test`).
+- **Travel.** Customers travel (a 2–7 day trip every 90 days on average) and log in from where
+  they are, so a new login city is no ATO tell.
+- **Salary.** The median salary is ₹40,000 (was ₹30,000, a gap value) to fund the extra
+  first payments: spending per customer-month is +14% on `test`.
+
+**Separability on `eval`** (the prior trained as in `test_sensing_prior.py`; reproduce with
+`uv run python -m scripts.prior_separability --profile eval`, about 30 min):
+
+| | #148 baseline (v15) | v16 |
+|---|---|---|
+| Macro AUC | 0.992 | 0.984 |
+| GENUINE / ATO / DA / INV AUC | — | 0.975 / 0.998 / 0.989 / 0.975 |
+| Highest single-feature AUC | 0.98 (`payee_account_age_days`) | 0.871 (`payee_age_days`) |
+
+No single feature separates any fraud class above 0.90 any more, which is #166's target as the
+owner amended it: no single feature above 0.90 on `eval`, with the macro AUC reported rather than
+gated (docs/14 §1; the original 0.85–0.93 macro band was dropped). The macro AUC stays at 0.984:
+with 870k training rows, LightGBM combines new payee × amount × channel (and, for ATO, login
+city × burst × off-hour) even when each alone overlaps genuine behaviour. `demo` reads 0.95–0.97 for the same configurations, but its test split has only
+17–70 fraud payments per class.
+
 ## 15
 
 Follow-ups to the #60–#63 review (#64):

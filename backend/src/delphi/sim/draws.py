@@ -4,9 +4,12 @@ another module's private names)."""
 from __future__ import annotations
 
 import bisect
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import numpy as np
+
+# India Standard Time: habits and app chrome are local (ADR-0014). No daylight saving.
+IST = timezone(timedelta(hours=5, minutes=30))
 
 _CDFS: dict[tuple[tuple[str, float], ...], tuple[tuple[str, ...], list[float]]] = {}
 
