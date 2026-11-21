@@ -56,6 +56,11 @@ class Settings(BaseSettings):
     # The worker's second pool, as `delphi_sim`, for the sim and evaluation code paths.
     # Only the worker needs it; the api never reads `sim_truth` (docs/04 §5.1).
     sim_database_url: str | None = None
+    # Whether this deployment runs the simulator's jobs (docs/09 §3: the simulated outreach
+    # call). Not a secret, so the api and the worker both get it: the api, which never holds the
+    # sim URL, refuses a simulated call (503) unless it is set, and a worker started with it
+    # must have `sim_database_url`.
+    simulation_enabled: bool = False
     # `delphi migrate` connects as the schema owner, which can create roles and tables.
     # Defaults to `database_url` (local development with a single superuser).
     migrate_database_url: str | None = None

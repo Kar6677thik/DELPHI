@@ -34,7 +34,8 @@ def duplicate_family_labels(dataset: Dataset) -> list[UUID]:
 
 def test_person_payees_saved_in_the_history_are_not_all_mules(demo: Dataset) -> None:
     """#56: genuine customers save new people too, so a person payee saved during the
-    history no longer marks a mule (before: 852 mule, 0 genuine on `demo`)."""
+    history no longer marks a mule (before: 852 mule, 0 genuine on `demo`). #166 makes it
+    every 45 days instead of once a year, so most are genuine."""
     pop, history = demo.population, demo.history
     mules = {a.id for a in demo.network.accounts}
     accounts = {a.id: a for a in (*pop.accounts, *demo.network.accounts)}
@@ -44,19 +45,19 @@ def test_person_payees_saved_in_the_history_are_not_all_mules(demo: Dataset) -> 
         if not accounts[p.account_id].is_merchant and p.added_at < pop.history_end
     ]
     genuine = sum(p.account_id not in mules for p in people)
-    assert genuine / len(people) == pytest.approx(0.5, abs=0.1)
+    assert genuine / len(people) > 0.8
     labels = {p.label.split(" ")[0] for p in people}
     assert labels == {"Family"}  # the same naming for both
 
 
 def test_young_accounts_are_a_signal_not_a_tell(demo: Dataset) -> None:
-    """#56: 10% of genuine accounts are opened 30–365 days before the history, so most young
-    accounts are genuine (before: only mules were under a year old)."""
+    """#56: a share of genuine accounts (20% since #166) are opened 30–365 days before the
+    history, so most young accounts are genuine (before: only mules were under a year old)."""
     pop, network = demo.population, demo.network
     start = pop.history_start
     genuine = [a for a in pop.accounts if not a.is_merchant]
     young = [a for a in genuine if start - a.opened_at < timedelta(days=365)]
-    assert len(young) / len(genuine) == pytest.approx(0.10, rel=0.1)
+    assert len(young) / len(genuine) == pytest.approx(0.20, rel=0.1)
     end = pop.history_end
     young_genuine = sum(end - a.opened_at < timedelta(days=365) for a in genuine)
     young_mules = sum(end - a.opened_at < timedelta(days=365) for a in network.accounts)

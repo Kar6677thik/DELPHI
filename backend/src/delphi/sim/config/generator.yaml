@@ -26,7 +26,8 @@ population:
   known_device_min_age_days: 30           # gap: a known device is ≥ 30 days old at the start
   # Owner decision (#56): 10% of genuine non-merchant accounts were opened 30–365 days before
   # the history (uniform), so a young payee account is a mule signal, not a tell (docs/14 §3).
-  young_account_share: 0.10
+  # #166 raises the share from 10% to 20%: new customers (genuine payees) open accounts too.
+  young_account_share: 0.20
   young_account_days: {min: 30, max: 365}
   # Owner decision (#49): 5% of genuine non-merchant accounts have MINIMAL KYC, so minimal KYC
   # is a strong mule signal but not a tell (docs/14 §3).
@@ -57,6 +58,9 @@ merchants:
   # The other categories (gap); docs/14 §4 names wedding vendors and property tokens.
   categories: {GROCERY: 0.25, UTILITY: 0.20, RETAIL: 0.20, FUEL: 0.10, TELECOM: 0.10,
                EDUCATION: 0.07, WEDDING_VENDOR: 0.04, PROPERTY: 0.04}
+  # #166: new small merchants, opened population.young_account_days before the history, so a
+  # young payee account is not a fraud tell.
+  young_share: 0.35
 
 # The history period's payments (docs/14 §4). Customer payments go through B1 below.
 genuine_routine:
@@ -78,7 +82,7 @@ genuine_routine:
   # Gap: a monthly salary credit (NEFT, on the 1st, 10:00–12:00 IST) from a payroll account
   # at one of the external banks keeps balances from draining. Payroll accounts start with a
   # balance large enough for every salary.
-  salary_inr: {median: 30000, sigma: 0.4}
+  salary_inr: {median: 40000, sigma: 0.4}   # #166: was 30,000; covers new-payee spending
   salary_hour: {min: 10, max: 12}
   payroll_opening_balance_inr: 10000000000
   payroll_account_age_days: 3650           # payroll accounts are ten years old
@@ -88,10 +92,39 @@ genuine_routine:
   # account (population.counterparty_home_bank_share); saved minutes before the first
   # payment (as a victim's mule payee is); 0–3 more payments over the next 60 days.
   new_person_payee:
-    mean_days: 365
+    mean_days: 45   # #166: was 365, so a new person payee is no tell
     lead_minutes: {min: 2, max: 30}
-    follow_up_payments: {min: 0, max: 3}
+    early_share: 0.3          # #166: saved hours to days (0.2–10) before the first payment
+    early_lead_days: {min: 0.2, max: 10}
+    follow_up_payments: {min: 0, max: 1}
     follow_up_days: 60
+    amount_inr: {median: 10000, sigma: 1.2}   # #166: rent, a contractor, a loan to a friend
+    channel: {UPI_PUSH: 0.40, IMPS: 0.40, NEFT: 0.20}
+  # #166: genuine customers also scan-and-pay shops they never paid before (saved minutes
+  # before, like a fraud payee), sometimes going back, so a new or young payee is no tell.
+  new_merchant_payee:
+    mean_days: 10
+    lead_minutes: {min: 1, max: 10}       # scan and pay: saved as the customer pays
+    early_share: 0.1                      # a biller registered before the bill falls due
+    early_lead_days: {min: 0.2, max: 10}
+    follow_up_payments: {min: 0, max: 1}
+    follow_up_days: 30
+    categories: [GROCERY, RETAIL, FUEL, TELECOM, UTILITY, EDUCATION]
+    amount_inr: {median: 500, sigma: 1.2}   # a first visit: a tea stall, a pharmacy, fuel
+    channel: {UPI_PUSH: 0.75, IMPS: 0.20, NEFT: 0.05}
+  # #166: once saved, a payee joins the routine: while the customer has payees saved in the
+  # last 45 days, 25% of its routine payments go to one of them (uniformly), with the routine
+  # amount and channel for its type. So customers pay new shops and people instead of, not on
+  # top of, the routine rate, and payments to payees days or weeks old are everyday.
+  new_payee_adoption:
+    share: 0.25
+    window_days: 45
+  # #166: customers travel (work, family, holidays) and log in from the city they are in,
+  # so a login from a new city is no ATO tell. Gaps: a trip every 90 days on average
+  # (exponential gaps), 2–7 days long, to a uniformly chosen other city. Personas stay home.
+  travel:
+    mean_days: 90
+    days: {min: 2, max: 7}
 
 # How a session's §5.1 signals become session_telemetry values (gaps). The values are placed
 # on the right side of the KB's classifier thresholds (kb/engine.yaml `classifiers`), so the
@@ -161,6 +194,10 @@ mule_rings:
   age: {min: 19, max: 35}
   minimal_kyc_share: 0.5
   opened_days_before_history: {min: 5, max: 400}
+  # #166: real mule herding uses many aged or rented accounts. This share was opened 1–7 years
+  # before the history instead, so an old payee account is no proof of a genuine payee.
+  aged_share: 0.50
+  aged_opened_days_before_history: {min: 365, max: 2555}
   opening_balance_inr: {median: 2000, sigma: 0.8}
 
 # The fraud victims' scenarios (docs/14 §4). The history runs them at the window's rates, per
@@ -169,6 +206,13 @@ fraud:
   rate_per_10k: {ATO: 40, APP_DIGITAL_ARREST: 30, APP_INVESTMENT: 40}   # docs/14
   genuine_rate_per_10k: 9850               # docs/14: GENUINE_ROUTINE 9,700 + GENUINE_UNUSUAL 150
   payee_lead_minutes: {min: 2, max: 30}    # gap: a fraud payee is saved minutes before paying it
+  # #166: a coerced victim pays when the scammer says, often during their normal day: this
+  # share of each scenario's payments falls at the victim's habitual hour (+ N(0, hour_sd)),
+  # the rest at the scenario's own (uniform) time. ATO keeps an off-hour skew.
+  timing:
+    habitual_share: {ATO: 0.40, APP_DIGITAL_ARREST: 0.70, APP_INVESTMENT: 0.70,
+                     UPI_COLLECT_REFUND: 0.70}
+    hour_sd: 1.5
   ato:
     transfers: {min: 1, max: 3}            # docs/14
     drain_share: {min: 0.60, max: 0.95}    # docs/14, of the balance at the first transfer
@@ -179,6 +223,10 @@ fraud:
     sim_swap_lead_hours: {min: 1, max: 48}
     payee_lead_minutes: {min: 1, max: 5}
     channel: {IMPS: 0.6, UPI_PUSH: 0.4}
+    # #166: staged takeovers save the mule 4–48 h before the drain, past the new-payee
+    # cooling-off, so the payee is no longer minutes old when the money leaves.
+    staged_share: 0.35
+    staged_lead_hours: {min: 4, max: 48}
   digital_arrest:
     older_share: 0.6                       # docs/14: P(age ≥ 60) = 0.6
     older_age: 60
@@ -187,6 +235,11 @@ fraud:
     # Gaps: each transfer sends a share of the balance at the time, to a layer-1 mule.
     balance_share: {min: 0.3, max: 0.8}
     channel: {IMPS: 0.6, NEFT: 0.3, UPI_PUSH: 0.1}
+    # #166: 40% of victims save the "safe account" 1–10 days before the first transfer (the
+    # scammer's preparation); 50% of later transfers go back to an account already paid.
+    early_payee_share: 0.40
+    early_payee_days: {min: 1, max: 10}
+    reuse_payee_share: 0.50
   investment:
     payments: {min: 3, max: 8}             # docs/14
     span_days: {min: 14, max: 42}          # docs/14: 2–6 weeks
