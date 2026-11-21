@@ -1,4 +1,4 @@
-"""The baselines the Guardian monitor shows (docs/22 §2, docs/08 §6, FR-GDN-15)."""
+"""The baselines the Guardian monitor shows (docs/22 §2, docs/08 §6, FR-GDN-12)."""
 
 from __future__ import annotations
 
