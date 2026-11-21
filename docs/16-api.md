@@ -59,7 +59,7 @@ Permission names refer to doc 19 §3.
 | GET `/guardian/sessions/{id}` | `view` | `GuardianSessionView`, with `ETag: "<version>"` |
 | POST `/guardian/sessions/{id}/probe-responses` | `demo:drive` | doc 08 §4 body → 200 `GuardianSessionView` |
 | POST `/guardian/sessions/{id}/cancel` | `demo:drive` | customer cancels → 200 |
-| GET `/guardian/sessions/{id}/dd-pack` | `view` | `?format=json\|html` |
+| GET `/guardian/sessions/{id}/dd-pack` | `view` | `?format=json\|html`: `{session_id, complete, sections: [{number, title, required, content, note?}]}` (doc 09 §7), or a printable page |
 | GET `/phone/personas` | `demo:drive` | personas with accounts, payees, devices |
 | GET `/phone/stream?customer_id=` | `demo:drive` | SSE `probe.requested`, `otp.sms`, `probe.attempt_result`, `session.decided` |
 

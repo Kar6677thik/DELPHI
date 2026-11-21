@@ -2,8 +2,9 @@
 
 `GET /guardian/sessions` lists sessions newest first, keyset-paged, with the docs/16 filters;
 `GET /guardian/sessions/{id}` returns the full `GuardianSessionView` with its probe runs and the
-B1/B2 verdicts (FR-GDN-15), and `ETag: "<version>"`. Live updates come over
-`/events/stream?topics=guardian` (docs/16 §3).
+B1/B2 verdicts (FR-GDN-12), and `ETag: "<version>"`. `GET /guardian/sessions/{id}/dd-pack`
+returns the session's due-diligence pack as JSON or a printable page (docs/09 §7, FR-GDN-15).
+Live updates come over `/events/stream?topics=guardian` (docs/16 §3).
 """
 
 from __future__ import annotations
@@ -12,14 +13,17 @@ import base64
 import binascii
 import json
 from datetime import datetime
+from enum import StrEnum
 from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from delphi.api.routers import API_PREFIX
 from delphi.api.security import Permission, Principal, require
+from delphi.guardian import ddpack
 from delphi.guardian.api import (
     SessionCursor,
     SessionFilter,
@@ -42,6 +46,11 @@ PROBABILITY_DECIMALS = 6  # docs/16 §1
 
 
 GUARDIAN_PROFILE = "GUARDIAN_PAYMENT"  # docs/07: the decision profile Guardian sessions use
+
+
+class DdPackFormat(StrEnum):
+    JSON = "json"
+    HTML = "html"
 
 
 class PaymentSummary(BaseModel):
@@ -299,3 +308,21 @@ def read_session(
         ),
         probe_runs=[_probe_run(r) for r in runs],
     )
+
+
+@router.get(
+    "/guardian/sessions/{session_id}/dd-pack",
+    responses={200: {"content": {"text/html": {}}}},
+)
+def read_dd_pack(
+    session_id: UUID,
+    request: Request,
+    _principal: Annotated[Principal, Depends(require(Permission.VIEW))],
+    format: Annotated[DdPackFormat, Query()] = DdPackFormat.JSON,
+) -> Any:
+    """The session's due-diligence pack (docs/09 §7): JSON, or a printable HTML page."""
+    with _platform(request).sessions() as session:
+        pack = ddpack.build(session, session_id)
+    if format is DdPackFormat.HTML:
+        return HTMLResponse(ddpack.render_html(pack))
+    return pack.as_json()
