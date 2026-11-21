@@ -146,6 +146,8 @@ evidence_records(id, case_id, source_key, outcome, raw jsonb, record_refs jsonb,
                  posterior_before, posterior_after, info_yield_bits, rank_at_request,
                  net_value_at_request_paise, requested_by, requested_at, narrative null,
                  narrative_source null, narrative_citations jsonb null, superseded_by null)
+       -- migration 0013 (#102); unique (case_id, source_key) WHERE superseded_by IS NULL;
+       -- superseded_by is DEFERRABLE INITIALLY DEFERRED (a refresh points at its successor)
 trace_events(id bigint identity, case_id, user_id, type, payload jsonb, at)
 police_alert_drafts(id, case_id, status (DRAFT|SENT_SIMULATED|DISCARDED), payload jsonb,
                     acted_by null, acted_at null)

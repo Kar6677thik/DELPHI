@@ -3,6 +3,8 @@ facts over hand-built bank rows, relative to the case's ``as_of``, as the app ro
 
 from __future__ import annotations
 
+import os
+import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -10,10 +12,11 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import Engine, text
+from sqlalchemy import Engine, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from delphi.kb.loader import load_and_validate
+from delphi.kb.model import KnowledgeBase
 from delphi.llm.port import Purpose
 from delphi.llm.schemas import EvidenceNarrative
 from delphi.llm.template import render_narrative
@@ -22,11 +25,18 @@ from delphi.navigator.evidence_adapters import ADAPTERS, EvidenceSubject, Fetche
 from delphi.platform.db import make_session_factory
 from delphi.probes.api import EVIDENCE_CLASSIFIERS
 from delphi.probes.registry import CLASSIFIER_NAMES
+from delphi.sim import bank as bank_tables
+from delphi.sim import truth
+from delphi.sim.dataset import generate_dataset
+from delphi.sim.generator_config import load_generator_config
+from delphi.sim.writer import write_dataset
 from tests.conftest import KB_DIR
 
 from ._db import engine_as, upgrade
 
 AS_OF = datetime(2026, 11, 15, 12, 0, tzinfo=UTC)
+DEMO_CREATED_AT = datetime(2026, 11, 1, tzinfo=UTC)
+NFR_04_SECONDS = 2.0  # #102: evidence fetch p95 on the demo dataset
 T = load_and_validate(KB_DIR, CLASSIFIER_NAMES).config.classifiers
 INR = 100
 
@@ -436,6 +446,55 @@ def test_payee_relationship_counts_earlier_executed_payments(bank: Bank) -> None
     bank.pay(payer, payee, 5_000, AS_OF - timedelta(days=7))
     outcome, fetched = _run(bank, "PAYEE_RELATIONSHIP", **subject)
     assert outcome == "ESTABLISHED_PAYEE" and fetched.facts["prior_payments"] == 2
+
+
+@pytest.mark.skipif(
+    os.environ.get("DELPHI_RUN_SLOW") != "1", reason="slow: set DELPHI_RUN_SLOW=1 to run"
+)
+def test_nfr_04_evidence_fetch_on_the_demo_dataset(
+    create_database: Callable[[], str], kb: KnowledgeBase
+) -> None:
+    """NFR-04 / #102: an evidence fetch (adapter + rule) takes 2 s or less at p95 on `demo`,
+    over every source for the 25 largest fraud payments (their payees are mule accounts)."""
+    url = create_database()
+    upgrade(url)
+    sim = engine_as(url, "delphi_sim")
+    with sim.begin() as conn:
+        write_dataset(
+            conn,
+            generate_dataset(load_generator_config(), "demo", kb=kb, created_at=DEMO_CREATED_AT),
+        )
+    with sim.connect() as conn:  # the test picks frauds from the truth; adapters see the bank
+        p, pt = bank_tables.payments, truth.payment_truth
+        frauds = conn.execute(
+            select(p.c.payer_account_id, p.c.payee_account_id, p.c.initiated_at)
+            .join(pt, pt.c.payment_id == p.c.id)
+            .where(pt.c.is_fraud)
+            .order_by(p.c.amount_paise.desc(), p.c.id)
+            .limit(25)
+        ).all()
+        owners = {
+            r.id: r.customer_id
+            for r in conn.execute(
+                select(bank_tables.accounts.c.id, bank_tables.accounts.c.customer_id)
+            )
+        }
+    sim.dispose()
+    app = make_session_factory(engine_as(url, "delphi_app"))
+    timings: list[float] = []
+    with app() as s:
+        for payer, payee, at in frauds:
+            subject = EvidenceSubject(at, at, payee, payer, owners.get(payer))
+            for key, adapter in ADAPTERS.items():
+                started = time.perf_counter()
+                EVIDENCE_CLASSIFIERS[key].classify(adapter(s, subject, T).observation, T)
+                timings.append(time.perf_counter() - started)
+    p95 = sorted(timings)[int(0.95 * (len(timings) - 1))]
+    print(  # the timings are the PR's evidence
+        f"demo evidence fetch: {len(timings)} fetches, p95 {p95 * 1000:.1f} ms, "
+        f"max {max(timings) * 1000:.1f} ms"
+    )
+    assert p95 <= NFR_04_SECONDS
 
 
 NEUTRAL = {
