@@ -435,6 +435,64 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/guardian/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Sessions
+         * @description The monitor's list: newest first. ``from`` is inclusive and ``to`` exclusive, on the
+         *     session's start.
+         */
+        get: operations["read_sessions_api_v1_guardian_sessions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/guardian/sessions/{session_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Session */
+        get: operations["read_session_api_v1_guardian_sessions__session_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/guardian/sessions/{session_id}/dd-pack": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Dd Pack
+         * @description The session's due-diligence pack (docs/09 §7): JSON, or a printable HTML page.
+         */
+        get: operations["read_dd_pack_api_v1_guardian_sessions__session_id__dd_pack_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -453,6 +511,17 @@ export interface components {
             checked: number;
             /** First Bad Id */
             first_bad_id?: number | null;
+        };
+        /**
+         * Baselines
+         * @description What B1 and B2 (docs/22 §2) would have done with this payment (docs/08 §6). B2's
+         *     ``OTP_STEP_UP`` releases only if the OTP passes.
+         */
+        Baselines: {
+            /** B1 */
+            B1: string;
+            /** B2 */
+            B2: string;
         };
         /**
          * CaseDetail
@@ -675,6 +744,11 @@ export interface components {
             seed?: number | null;
         };
         /**
+         * DdPackFormat
+         * @enum {string}
+         */
+        DdPackFormat: "json" | "html";
+        /**
          * DiffOp
          * @enum {string}
          */
@@ -798,6 +872,104 @@ export interface components {
             new_decision: string;
             /** Risk Change Paise */
             risk_change_paise: number;
+        };
+        /** GuardianSessionPage */
+        GuardianSessionPage: {
+            /** Items */
+            items: components["schemas"]["GuardianSessionSummary"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
+        /**
+         * GuardianSessionSummary
+         * @description A row of the monitor's list (docs/08 §6).
+         */
+        GuardianSessionSummary: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            payment: components["schemas"]["PaymentSummary"];
+            /** Status */
+            status: string;
+            /** Decision */
+            decision: string | null;
+            /** Terminal Reason */
+            terminal_reason: string | null;
+            /** Kb Version Id */
+            kb_version_id: number;
+            /** Leading Hypothesis */
+            leading_hypothesis: string | null;
+            /** Posterior */
+            posterior: {
+                [key: string]: number;
+            } | null;
+            /** Unexplained */
+            unexplained: boolean;
+            baselines: components["schemas"]["Baselines"] | null;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /** Decided At */
+            decided_at: string | null;
+            /** Case Id */
+            case_id: string | null;
+            /** Dd Pack Complete */
+            dd_pack_complete: boolean;
+            /** Version */
+            version: number;
+        };
+        /**
+         * GuardianSessionView
+         * @description docs/16 `GuardianSessionView`.
+         */
+        GuardianSessionView: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            payment: components["schemas"]["PaymentSummary"];
+            /** Status */
+            status: string;
+            /** Decision */
+            decision: string | null;
+            /** Terminal Reason */
+            terminal_reason: string | null;
+            /** Kb Version Id */
+            kb_version_id: number;
+            /** Leading Hypothesis */
+            leading_hypothesis: string | null;
+            /** Posterior */
+            posterior: {
+                [key: string]: number;
+            } | null;
+            /** Unexplained */
+            unexplained: boolean;
+            baselines: components["schemas"]["Baselines"] | null;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /** Decided At */
+            decided_at: string | null;
+            /** Case Id */
+            case_id: string | null;
+            /** Dd Pack Complete */
+            dd_pack_complete: boolean;
+            /** Version */
+            version: number;
+            prior: components["schemas"]["PriorView"];
+            /** Risk By Decision */
+            risk_by_decision: {
+                [key: string]: number;
+            } | null;
+            /** Probe Runs */
+            probe_runs: components["schemas"]["ProbeRunView"][];
         };
         /** HealthView */
         HealthView: {
@@ -972,12 +1144,111 @@ export interface components {
             /** Gate Passed */
             gate_passed: boolean;
         };
+        /** PaymentSummary */
+        PaymentSummary: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Payer Account Id
+             * Format: uuid
+             */
+            payer_account_id: string;
+            /**
+             * Payee Account Id
+             * Format: uuid
+             */
+            payee_account_id: string;
+            /** Amount Paise */
+            amount_paise: number;
+            /** Channel */
+            channel: string;
+            /**
+             * Initiated At
+             * Format: date-time
+             */
+            initiated_at: string;
+            /** Device Id */
+            device_id: string | null;
+            /** Status */
+            status: string;
+        };
         /**
          * Permission
          * @description docs/19 §3.
          * @enum {string}
          */
         Permission: "view" | "demo:drive" | "case:write" | "chase:write" | "fde" | "admin";
+        /** PriorView */
+        PriorView: {
+            /** Probs */
+            probs: {
+                [key: string]: number;
+            } | null;
+            /** P Model */
+            p_model: {
+                [key: string]: number;
+            } | null;
+            /** Anomaly Percentile */
+            anomaly_percentile: number | null;
+            /** Open Mass */
+            open_mass: number | null;
+            /** Top Features */
+            top_features: {
+                [key: string]: unknown;
+            }[];
+        };
+        /** ProbeRunView */
+        ProbeRunView: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Seq */
+            seq: number;
+            /** Probe Key */
+            probe_key: string;
+            /** Mode */
+            mode: string;
+            /** Status */
+            status: string;
+            /** Selected By */
+            selected_by: string | null;
+            /** Propensity */
+            propensity: number | null;
+            /** Outcome */
+            outcome: string | null;
+            /** Posterior Before */
+            posterior_before: {
+                [key: string]: number;
+            } | null;
+            /** Posterior After */
+            posterior_after: {
+                [key: string]: number;
+            } | null;
+            /** Info Yield Bits */
+            info_yield_bits: number | null;
+            /** Voi Myopic Paise */
+            voi_myopic_paise: number | null;
+            /** Net Value Paise */
+            net_value_paise: number | null;
+            /** Cost Paise */
+            cost_paise: number | null;
+            /** Candidates */
+            candidates: {
+                [key: string]: unknown;
+            }[];
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /** Completed At */
+            completed_at: string | null;
+        };
         /**
          * Problem
          * @description The body of every error response: RFC 9457 plus the stable ``code`` (docs/16 §1).
@@ -1030,6 +1301,16 @@ export interface components {
          * @enum {string}
          */
         Role: "VIEWER" | "INVESTIGATOR" | "FDE_ENGINEER" | "ADMIN";
+        /**
+         * SessionMode
+         * @enum {string}
+         */
+        SessionMode: "LIVE" | "AUTOPLAY" | "EVAL";
+        /**
+         * SessionStatus
+         * @enum {string}
+         */
+        SessionStatus: "CREATED" | "PASSIVE_PROBING" | "PLANNING" | "AWAITING_CUSTOMER" | "DECIDED" | "CANCELLED_BY_CUSTOMER";
         /** StatusView */
         StatusView: {
             /** Dataset Ready */
@@ -1860,6 +2141,110 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CaseDetail"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    read_sessions_api_v1_guardian_sessions_get: {
+        parameters: {
+            query?: {
+                status?: components["schemas"]["SessionStatus"] | null;
+                /** @description A decision of the ACTIVE KB's profile */
+                decision?: string | null;
+                unexplained?: boolean | null;
+                mode?: components["schemas"]["SessionMode"] | null;
+                from?: string | null;
+                to?: string | null;
+                limit?: number;
+                cursor?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GuardianSessionPage"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    read_session_api_v1_guardian_sessions__session_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GuardianSessionView"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    read_dd_pack_api_v1_guardian_sessions__session_id__dd_pack_get: {
+        parameters: {
+            query?: {
+                format?: components["schemas"]["DdPackFormat"];
+            };
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                    "text/html": unknown;
                 };
             };
             /** @description An RFC 9457 problem (docs/16 §1) */
