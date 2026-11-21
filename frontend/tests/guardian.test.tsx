@@ -402,7 +402,7 @@ describe('Guardian session detail (docs/18 §2 /guardian/:id)', () => {
     renderApp(`/guardian/${SESSION_ID}`);
     expect(await screen.findByText('Not decided yet')).toBeInTheDocument();
     act(() => {
-      FakeEventSource.latest().emit('guardian.session.decided', '10');
+      FakeEventSource.latest().emit('guardian.session.updated', '10');
     });
     expect(await screen.findByText('Protective hold (Stop)')).toBeInTheDocument();
     expect(calls).toBe(2);

@@ -36,7 +36,7 @@ export function parseCandidates(rows: readonly unknown[]): Candidate[] {
       ? [
           {
             source_key: r.source_key,
-            eligible: r.eligible !== false,
+            eligible: r.eligible === true, // a missing or malformed flag is not eligible
             ineligible_reason: typeof r.ineligible_reason === 'string' ? r.ineligible_reason : null,
             cost_paise: num(r.cost_paise),
             voi_myopic_paise: num(r.voi_myopic_paise),
