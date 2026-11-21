@@ -40,9 +40,11 @@ from delphi.navigator.api import (
     CaseSort,
     CaseStatus,
     CaseType,
+    ClientTrace,
     ConsoleView,
     Disposition,
     EvidenceRecord,
+    TraceType,
     act_on_alert,
     case_profile,
     console,
@@ -51,6 +53,7 @@ from delphi.navigator.api import (
     get_alert,
     get_case,
     list_cases,
+    record_client_traces,
     request_evidence,
     request_simulated_outreach,
     vulnerable_payer,
@@ -558,3 +561,56 @@ def act_on_police_alert(
         assert acted is not None
         response.headers["ETag"] = f'"{acted.version}"'  # a mutable aggregate carries its ETag
         return _detail(session, acted, platform.clock.now())
+
+
+# A console sends at most one batch per 5 s (docs/09 §5); this bounds one batch.
+MAX_TRACE_BATCH = 100
+
+
+class TracePayload(BaseModel):
+    """What a view event may carry: the evidence record it is about, for EVIDENCE_VIEWED and
+    NARRATIVE_EXPANDED. Nothing else is stored from a browser."""
+
+    model_config = {"extra": "forbid"}
+
+    evidence_record_id: UUID | None = None
+
+
+class TraceEventIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    type: TraceType
+    payload: TracePayload = Field(default_factory=TracePayload)
+    at: datetime
+
+
+class TraceBatch(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    events: list[TraceEventIn] = Field(min_length=1, max_length=MAX_TRACE_BATCH)
+
+
+class TraceBatchResult(BaseModel):
+    recorded: int
+
+
+@router.post("/cases/{case_id}/trace-events", response_model=TraceBatchResult)
+def post_trace_events(
+    case_id: UUID,
+    body: TraceBatch,
+    *,
+    principal: Annotated[Principal, Depends(require(Permission.VIEW))],
+    request: Request,
+) -> TraceBatchResult:
+    """The console's view events, batched (docs/09 §5, FR-NAV-08): CASE_VIEWED,
+    EVIDENCE_VIEWED, NARRATIVE_EXPANDED and WCMM_VIEWED. The server records the actions itself,
+    so any other type is 422, as is an evidence-record event naming a record of another case;
+    the whole batch is then refused. 404 for an unknown case."""
+    platform = _platform(request)
+    events = [
+        ClientTrace(type=e.type, at=e.at, evidence_record_id=e.payload.evidence_record_id)
+        for e in body.events
+    ]
+    with platform.sessions.begin() as session:
+        recorded = record_client_traces(session, platform.clock, case_id, principal.user_id, events)
+    return TraceBatchResult(recorded=recorded)
