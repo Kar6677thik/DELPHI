@@ -14,6 +14,7 @@ from delphi.sensing.anomaly import (
     AnomalyModel,
     feature_matrix,
     train_anomaly,
+    train_anomaly_matrix,
 )
 from delphi.sensing.config import AnomalyConfig, load_sensing_config
 
@@ -164,3 +165,32 @@ def test_feature_matrix_shape() -> None:
     matrix = feature_matrix(_rows(7, seed=5), FEATURES)
     assert matrix.shape == (7, 3)
     assert matrix.dtype == np.float64
+
+
+# ---------------------------------------------------------------- the training job's path
+
+
+def test_matrix_training_equals_row_training(config: AnomalyConfig) -> None:
+    rows = _rows(N_TRAIN, seed=6)
+    from_rows = train_anomaly(rows, FEATURES, config)
+    from_matrix = train_anomaly_matrix(feature_matrix(rows, FEATURES), FEATURES, config)
+    np.testing.assert_array_equal(from_rows.quantiles, from_matrix.quantiles)
+    assert from_rows.to_bytes() == from_matrix.to_bytes()
+
+
+@pytest.mark.parametrize(
+    ("matrix", "features", "message"),
+    [
+        (np.zeros((0, 3)), FEATURES, "no training"),
+        (np.zeros((5, 2)), FEATURES, "one column per feature"),
+        (np.zeros(5), FEATURES, "one column per feature"),
+        (np.full((5, 3), np.inf), FEATURES, "finite"),
+        (np.zeros((5, 3)), (), "empty"),
+        (np.zeros((5, 2)), ("a", "a"), "duplicates"),
+    ],
+)
+def test_bad_training_matrices_are_refused(
+    config: AnomalyConfig, matrix: np.ndarray, features: tuple[str, ...], message: str
+) -> None:
+    with pytest.raises(AnomalyInputError, match=message):
+        train_anomaly_matrix(matrix, features, config)
