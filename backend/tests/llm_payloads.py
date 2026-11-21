@@ -25,7 +25,13 @@ NARRATIVES: dict[str, dict[str, Any]] = {
     "INBOUND_FAN_IN": payload("INBOUND_FAN_IN", {"unrelated_payers": 12, "window_h": 48}),
     "PASS_THROUGH_DWELL": payload(
         "PASS_THROUGH_DWELL",
-        {"median_dwell_minutes": 17.5, "credits": 9, "window_days": 7, "departure_share": 0.8},
+        {
+            "median_dwell_minutes": 17.5,
+            "credits": 9,
+            "still_dwelling": 0,
+            "window_days": 7,
+            "departure_share": 0.8,
+        },
     ),
     "ACCOUNT_PROFILE": payload("ACCOUNT_PROFILE", {"account_age_days": 3, "kyc_level": "MINIMAL"}),
     "LINKED_COMPLAINTS": payload("LINKED_COMPLAINTS", {"complaints": 2}),
