@@ -40,7 +40,9 @@ not depend on the number of workers (per-customer RNG streams).
 | DELPHI-no-active (ablation) | Passive probes only | Shows the value of active probes |
 
 Wherever this table says HOLD, the decision recorded is `HOLD_FOR_REVIEW`. B1's DECLINE is
-recorded as `DECLINE`.
+recorded as `DECLINE`. B1's thresholds are `legacy_policy` and B2's are `score_policy` in
+`sim/config/generator.yaml`; both rules live in `delphi.sim.legacy_policy`, which the Guardian
+monitor (doc 08 §6) and the harness use alike.
 
 ## 3. Simulated investigation queue (same capacity for every policy)
 

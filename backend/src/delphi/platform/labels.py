@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import Column, Connection, DateTime, MetaData, Table, Text, func
+from sqlalchemy import Column, Connection, DateTime, MetaData, Table, Text, delete, func
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.dialects.postgresql import insert
 
@@ -84,3 +84,25 @@ def record_labels(conn: Connection, rows: Iterable[LabelRow], *, now: datetime) 
         if len(batch) >= BATCH:
             created += flush()
     return created + flush()
+
+
+def replace_label(
+    conn: Connection,
+    *,
+    subject_type: str,
+    subject_id: UUID,
+    label_source: str,
+    row: LabelRow | None,
+    now: datetime,
+) -> None:
+    """Make ``row`` the (subject, source) label, or remove it when ``row`` is None: a refreshed
+    observation (an outreach call made again, docs/09 §3) corrects its earlier label."""
+    conn.execute(
+        delete(labels).where(
+            labels.c.subject_type == subject_type,
+            labels.c.subject_id == subject_id,
+            labels.c.label_source == label_source,
+        )
+    )
+    if row is not None:
+        record_labels(conn, [row], now=now)

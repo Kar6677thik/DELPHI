@@ -62,8 +62,8 @@ describe('app shell', () => {
 
   it('routes detail screens and unknown paths', async () => {
     setMockSession('viewer');
-    renderApp('/guardian/0192-abc');
-    expect(await screen.findByRole('heading', { name: 'Session detail' })).toBeInTheDocument();
+    renderApp('/campaigns/0192-abc');
+    expect(await screen.findByRole('heading', { name: 'Campaign' })).toBeInTheDocument();
   });
 
   it('signs out from the user menu', async () => {

@@ -281,6 +281,7 @@ to start, exit code 2, naming the variable, if one is missing or invalid.
 |---|---|---|---|
 | `DELPHI_DATABASE_URL` | required | api, worker, migrate | Secrets `delphi-app` / `delphi-worker` / `delphi-migrate` (role `delphi_app`) |
 | `DELPHI_SIM_DATABASE_URL` | unset | worker only | Secret `delphi-worker` (role `delphi_sim`). **Never mounted into the api pod**, so the api cannot read `sim_truth` even by mistake (doc 17 §2) |
+| `DELPHI_SIMULATION_ENABLED` | `false` | api and worker | Whether the deployment runs the simulator's jobs (doc 09 §3: the simulated outreach call). Not a secret: the api reads it to accept or refuse (503) a simulated call without ever holding the sim URL. A worker with it set must also have `DELPHI_SIM_DATABASE_URL`, or it refuses to start |
 | `DELPHI_MIGRATE_DATABASE_URL` | `DELPHI_DATABASE_URL` | migrate Job only | Secret `delphi-migrate` (the schema owner) |
 | `DELPHI_MIGRATIONS_DIR` | `backend/migrations` | migrate, api, worker | The image keeps the repo layout, so the default works there too |
 | `DELPHI_STATIC_DIR` | `frontend/dist` | api | The image keeps the repo layout, so the default works there too. Without an `index.html` there, the api serves no SPA and `/` is a 404 problem |

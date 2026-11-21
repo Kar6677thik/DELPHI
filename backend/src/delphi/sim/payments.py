@@ -12,13 +12,14 @@ docs/17 §2). It reads no ground truth.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import Connection, select, update
+from sqlalchemy import Connection, Select, select, update
 from sqlalchemy.orm import Session
 
 from delphi.platform.errors import DelphiError, NotFoundError, ProblemCode
@@ -58,25 +59,22 @@ class PaymentView:
     status: str
 
 
-def get_payment(conn: Connection | Session, payment_id: UUID) -> PaymentView | None:
+def _payment_query() -> Select[Any]:
     p, a = payments.c, accounts.c
-    row = conn.execute(
-        select(
-            p.id,
-            p.payer_account_id,
-            p.payee_account_id,
-            a.customer_id,
-            p.amount_paise,
-            p.channel,
-            p.initiated_at,
-            p.device_id,
-            p.status,
-        )
-        .join(accounts, accounts.c.id == p.payer_account_id)
-        .where(p.id == payment_id)
-    ).one_or_none()
-    if row is None:
-        return None
+    return select(
+        p.id,
+        p.payer_account_id,
+        p.payee_account_id,
+        a.customer_id,
+        p.amount_paise,
+        p.channel,
+        p.initiated_at,
+        p.device_id,
+        p.status,
+    ).join(accounts, a.id == p.payer_account_id)
+
+
+def _view(row: Any) -> PaymentView:
     return PaymentView(
         id=row.id,
         payer_account_id=row.payer_account_id,
@@ -88,6 +86,21 @@ def get_payment(conn: Connection | Session, payment_id: UUID) -> PaymentView | N
         device_id=row.device_id,
         status=row.status,
     )
+
+
+def get_payment(conn: Connection | Session, payment_id: UUID) -> PaymentView | None:
+    row = conn.execute(_payment_query().where(payments.c.id == payment_id)).one_or_none()
+    return None if row is None else _view(row)
+
+
+def get_payments(
+    conn: Connection | Session, payment_ids: Sequence[UUID]
+) -> dict[UUID, PaymentView]:
+    """Several payments in one query (a page of the Guardian monitor, #187)."""
+    if not payment_ids:
+        return {}
+    rows = conn.execute(_payment_query().where(payments.c.id.in_(list(payment_ids))))
+    return {row.id: _view(row) for row in rows}
 
 
 def _move(conn: Connection | Session, account_id: UUID, delta: int) -> int | None:

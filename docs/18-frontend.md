@@ -48,6 +48,21 @@ and error states. `case.opened` and `case.updated` invalidate the `['cases']` qu
 (`lib/liveQueries.ts`, the first SSE → query-key map). Sorting controls, expected loss and
 campaign arrive with the console and campaigns (#103, M5).
 
+**M4 Guardian screens (#100):** `/guardian` lists `GET /guardian/sessions` newest first, 50 at a
+time, with "Load more sessions" while `next_cursor` is set: start time (linking to
+`/guardian/:id`), amount (`MoneyText`), the leading hypothesis's display name (from each row's own
+pinned KB version) with an "Unexplained" badge, status, decision and the B1 / B2 verdicts (B2's
+middle band reads "OTP step-up"). Filters: status and mode (from the schema's enums), decision
+(the ACTIVE KB's `GUARDIAN_PAYMENT` decisions) and "unexplained only". `/guardian/:id` shows the
+decision with its terminal reason (a customer cancel shows the reason alone), the
+`HypothesisTimeline` (the prior, then the posterior after each completed probe; "No observations
+yet." when there are none), the `RiskTable`, the baseline comparison (B2's `OTP_STEP_UP` reads
+"released if the OTP passes"), one `CandidatesTable` per planning step and the DD pack link.
+Hypothesis names and colours come from the session's pinned KB version (`GET /kb/versions/{id}`,
+fetched once per version); the KB content and the candidates are read with field checks, not
+casts, until the api types them (#198). `guardian.session.updated` and `guardian.session.decided` invalidate
+the `['guardian']` queries.
+
 ## 3. Shared components (single implementation each)
 
 - `HypothesisBar`: horizontal stacked bar. Fixed colour per hypothesis (doc 07 §4). Every
@@ -55,7 +70,9 @@ campaign arrive with the console and campaigns (#103, M5).
   tooltip. A `timeline` variant stacks one bar per step.
 - `CandidatesTable`: source, eligible/reason, cost ₹, VoI ₹, net value ₹, settle %, selected
   badge (GREEDY/EXPLORE + propensity).
-- `RiskTable`: decision → expected loss ₹, with the recommended decision highlighted.
+- `RiskTable`: decision → expected loss ₹, lowest first, with one row highlighted and marked in
+  text: "(decision taken)" once the session or case has a decision (a fail-safe decision need
+  not be the lowest-risk one), else the lowest-risk row as "(recommended)".
 - `EvidenceCard`, `NarrativeWithCitations`: citations render as chips that scroll to and
   highlight the fact row.
 - `MoneyText`: formats paise as ₹ in the Indian grouping (₹4,80,000.00); `sim` durations show
