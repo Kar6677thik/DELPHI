@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router';
 
 import { useCases } from '../api/cases';
-import type { CaseView } from '../api/types';
+import type { CaseSort, CaseView } from '../api/types';
 import { MoneyText } from '../components/MoneyText';
 import { ProblemAlert } from '../components/ProblemAlert';
 import { humanise } from '../lib/format';
@@ -39,15 +39,45 @@ function useNow(intervalMs: number): number {
   return now;
 }
 
-/** The case queue (docs/18 §2 `/cases`): the M4 stub lists the open and recent cases. */
+/** The recommendation's expected loss, if the queue row carries it (paise). */
+export function expectedLoss(item: CaseView): number | null {
+  const risk = item.recommended_decision
+    ? item.risk_by_decision?.[item.recommended_decision]
+    : null;
+  return typeof risk === 'number' && Number.isFinite(risk) ? Math.round(risk) : null;
+}
+
+const SORTS: readonly { value: CaseSort; label: string }[] = [
+  { value: 'sla_due_at', label: 'Soonest SLA' },
+  { value: 'opened_at', label: 'Newest' },
+];
+
+/** The case queue (docs/18 §2 `/cases`): soonest SLA first, or newest first. */
 export function CasesPage() {
-  const cases = useCases();
+  const [sort, setSort] = useState<CaseSort>('sla_due_at');
+  const cases = useCases(sort);
   const now = useNow(TICK_MS);
   return (
     <section aria-labelledby="cases-title">
       <h1 id="cases-title" className="text-2xl font-semibold">
         Case queue
       </h1>
+      <label className="mt-2 inline-flex items-center gap-2 text-sm">
+        Order
+        <select
+          value={sort}
+          onChange={(event) => {
+            setSort(event.target.value as CaseSort);
+          }}
+          className="rounded-md border border-slate-300 px-2 py-1"
+        >
+          {SORTS.map((s) => (
+            <option key={s.value} value={s.value}>
+              {s.label}
+            </option>
+          ))}
+        </select>
+      </label>
       <div className="mt-4">
         {cases.isPending && <p className="text-slate-600">Loading cases…</p>}
         {cases.isError && <ProblemAlert error={cases.error} title="Could not load the cases" />}
@@ -56,7 +86,9 @@ export function CasesPage() {
         )}
         {cases.isSuccess && cases.data.items.length > 0 && (
           <table className="w-full text-left text-sm">
-            <caption className="sr-only">Cases, soonest SLA first</caption>
+            <caption className="sr-only">
+              {sort === 'sla_due_at' ? 'Cases, soonest SLA first' : 'Cases, newest first'}
+            </caption>
             <thead className="border-b border-slate-300 text-slate-600">
               <tr>
                 <th scope="col" className="py-2 pr-4">
@@ -73,6 +105,9 @@ export function CasesPage() {
                 </th>
                 <th scope="col" className="py-2 pr-4 text-right">
                   At stake
+                </th>
+                <th scope="col" className="py-2 pr-4 text-right">
+                  Expected loss
                 </th>
                 <th scope="col" className="py-2 pr-4">
                   Status
@@ -104,6 +139,13 @@ export function CasesPage() {
                   </td>
                   <td className="py-2 pr-4 text-right">
                     <MoneyText paise={item.amount_at_stake_paise} />
+                  </td>
+                  <td className="py-2 pr-4 text-right">
+                    {expectedLoss(item) === null ? (
+                      '—'
+                    ) : (
+                      <MoneyText paise={expectedLoss(item) ?? 0} />
+                    )}
                   </td>
                   <td className="py-2 pr-4">{humanise(item.status)}</td>
                 </tr>

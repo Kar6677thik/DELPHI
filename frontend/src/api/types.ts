@@ -31,3 +31,13 @@ export type SessionStatus = Schemas['SessionStatus'];
 export type SessionMode = Schemas['SessionMode'];
 /** `GET /kb/versions`: newest first, without the content. */
 export type KbVersionPage = Schemas['KbVersionPage'];
+/** `GET /cases/{id}`: the case with its console (docs/09 §2, #103) and evidence (#102). */
+export type CaseDetail = Schemas['CaseDetail'];
+/** A row of the console's "next best evidence" (docs/09 §2 item 2). */
+export type EvidenceRow = Schemas['EvidenceRowView'];
+/** A fetched evidence record: the evidence card's content (docs/09 §2 item 5). */
+export type EvidenceRecord = Schemas['EvidenceRecordView'];
+/** "What would change my mind" (docs/06 §12). */
+export type Flip = Schemas['FlipView'];
+/** The case queue's orders. */
+export type CaseSort = Schemas['CaseSort'];

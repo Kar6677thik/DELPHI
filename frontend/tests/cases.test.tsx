@@ -2,7 +2,7 @@ import { act, screen, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { describe, expect, it } from 'vitest';
 
-import { slaLabel } from '../src/routes/CasesPage';
+import { expectedLoss, slaLabel } from '../src/routes/CasesPage';
 import { FakeEventSource } from './fakeEventSource';
 import { mockCase, problem, setMockSession } from './mocks/handlers';
 import { server } from './mocks/node';
@@ -74,6 +74,43 @@ describe('case queue', () => {
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent('Could not load the cases');
     expect(alert).toHaveTextContent('VALIDATION_FAILED');
+  });
+});
+
+describe('queue order and expected loss (docs/18 §2)', () => {
+  it("shows the recommendation's expected loss and re-sorts on request", async () => {
+    setMockSession('viewer');
+    const sorts: (string | null)[] = [];
+    server.use(
+      http.get('/api/v1/cases', ({ request }) => {
+        sorts.push(new URL(request.url).searchParams.get('sort'));
+        return HttpResponse.json({
+          items: [
+            mockCase({
+              recommended_decision: 'CONFIRM_FRAUD',
+              risk_by_decision: { CONFIRM_FRAUD: 1_200_000.4, RELEASE: 30_000_000 },
+            }),
+          ],
+          next_cursor: null,
+        });
+      }),
+    );
+    const { user } = renderApp('/cases');
+    const rows = within(await screen.findByRole('table')).getAllByRole('row');
+    expect(rows[0]).toHaveTextContent('Expected loss');
+    expect(rows[1]).toHaveTextContent('₹12,000.00');
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Order' }), 'Newest');
+    expect(await screen.findByRole('table', { name: 'Cases, newest first' })).toBeInTheDocument();
+    expect(sorts).toEqual(['sla_due_at', 'opened_at']);
+  });
+
+  it('shows a dash when the row has no recommendation yet', () => {
+    expect(expectedLoss(mockCase())).toBeNull();
+    expect(
+      expectedLoss(
+        mockCase({ recommended_decision: 'RELEASE', risk_by_decision: { RELEASE: 'x' } }),
+      ),
+    ).toBeNull();
   });
 });
 

@@ -48,6 +48,23 @@ and error states. `case.opened` and `case.updated` invalidate the `['cases']` qu
 (`lib/liveQueries.ts`, the first SSE → query-key map). Sorting controls, expected loss and
 campaign arrive with the console and campaigns (#103, M5).
 
+**M5 case queue and Navigator console (#105):** `/cases` gains an order control (soonest SLA or
+newest, `GET /cases?sort=`) and the recommendation's expected loss (`risk_by_decision` of
+`recommended_decision`, "—" until the case has one); the campaign column arrives with campaigns
+(#107). `/cases/:id` follows doc 09 §2 from `GET /cases/{id}`:
+- the posterior `HypothesisBar` and the `RiskTable`;
+- the "Evidence sufficient — recommend {decision} (expected loss ₹X)" banner while
+  `evidence_sufficient` and not disposed;
+- the next-best-evidence rows in the server's order, with the "Protocol" badge, minutes, "X% of
+  remaining uncertainty" and net value;
+- "What would change my mind";
+- one `EvidenceCard` per record, whose narrative is labelled "AI-written summary" (`LLM`) or
+  "Template summary". Its `[record_id]` citations render as chips that scroll to, focus and
+  highlight that record's fact table.
+
+`evidence.narrative_ready` invalidates the `['cases']` queries, like `case.*`. The console's write
+controls (fetch, the outreach call, the disposition and its 412 handling) follow in part 2.
+
 **M4 Guardian screens (#100):** `/guardian` lists `GET /guardian/sessions` newest first, 50 at a
 time, with "Load more sessions" while `next_cursor` is set: start time (linking to
 `/guardian/:id`), amount (`MoneyText`), the leading hypothesis's display name (from each row's own
