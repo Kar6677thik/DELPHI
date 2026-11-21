@@ -69,7 +69,13 @@ through the `bank` tables `delphi.sim.api` re-exports, up to `now − visibility
   Its taint is counted as `in_flight` (still recoverable), not as leakage, and the flow is
   marked `in_flight`. The next trace, with the credit visible, carries it on to the payee.
 - **Sources:** only EXECUTED source payments carry money. A source whose credit falls outside the
-  visible ledger still taints its payee with the full amount (depth 1).
+  visible ledger still taints its payee with the full amount (depth 1), **at the source's own
+  time** (its visible debit; before every visible move if the debit isn't visible either). The
+  payee's later debits then carry their share on, so its taint never exceeds its balance
+  (FR-CHS-05, #174).
+- **T ≤ B always:** a credit adds x ≥ τ to B and τ to T, and a debit leaves
+  T − round(x·T/B) ≤ B − x whenever T ≤ B (both are whole paise; the exact value is T·(B−x)/B).
+  The property test asserts it for every account.
 
 ## 4. Candidate scoring
 

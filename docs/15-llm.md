@@ -140,8 +140,8 @@ RFC 3339 time, and `facts` holds, per source, exactly these fields (from the doc
 |---|---|
 | `BENEFICIARY_DEVICE_SHARING` | `shared_accounts` int, `window_days` int (30) |
 | `INBOUND_FAN_IN` | `unrelated_payers` int, `window_h` int (48) |
-| `PASS_THROUGH_DWELL` | `median_dwell_minutes` number or null (no credits), `credits` int, `window_days` int (7), `departure_share` number (0.8) |
-| `ACCOUNT_PROFILE` | `account_age_days` int, `kyc_level` str |
+| `PASS_THROUGH_DWELL` | `median_dwell_minutes` number or null (no credits, or the median falls on a credit still dwelling), `credits` int, `still_dwelling` int (credits not yet 80% gone by `as_of`), `window_days` int (7), `departure_share` number (0.8) |
+| `ACCOUNT_PROFILE` | `account_age_days` int or null, `kyc_level` str or null (null: not an account at this bank) |
 | `LINKED_COMPLAINTS` | `complaints` int |
 | `CRM_CONTACT_HISTORY` | `event` (`SIM_SWAP_REPORTED`, `DEVICE_LOST_REPORTED` or null), `days_ago` int or null, `window_days` int (14) |
 | `LOGIN_GEO_VELOCITY` | `last_city` str or null, `speed_kmh` number or null (null: no impossible travel), `new_city` bool, `window_h` int (24) |

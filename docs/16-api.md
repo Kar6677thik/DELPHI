@@ -55,11 +55,11 @@ Permission names refer to doc 19 §3.
 | Method & path | Perm | Request → Response |
 |---|---|---|
 | POST `/guardian/sessions` | `demo:drive` | `{payment: {payer_account_id, payee_account_id \| new_payee: {...}, amount_paise, channel, device_id, telemetry: {...}}}` → 201 `GuardianSessionView` |
-| GET `/guardian/sessions` | `view` | filters: `status, decision, unexplained, from, to` |
-| GET `/guardian/sessions/{id}` | `view` | `GuardianSessionView` |
+| GET `/guardian/sessions` | `view` | filters: `status, decision, unexplained, mode, from, to`. `decision` must be one of the ACTIVE KB's `GUARDIAN_PAYMENT` decisions (422 otherwise); `mode` is `LIVE`, `AUTOPLAY` or `EVAL` (all modes when omitted; the evaluation harness runs in memory, #123, so EVAL rows are rare). `from`/`to` are on `started_at` ( `from` inclusive, `to` exclusive, RFC 3339 with a zone). Newest first, keyset-paged; items are `GuardianSessionSummary`: the view below without `prior`, `risk_by_decision` and `probe_runs`, plus `leading_hypothesis` |
+| GET `/guardian/sessions/{id}` | `view` | `GuardianSessionView`, with `ETag: "<version>"` |
 | POST `/guardian/sessions/{id}/probe-responses` | `demo:drive` | doc 08 §4 body → 200 `GuardianSessionView` |
 | POST `/guardian/sessions/{id}/cancel` | `demo:drive` | customer cancels → 200 |
-| GET `/guardian/sessions/{id}/dd-pack` | `view` | `?format=json\|html` |
+| GET `/guardian/sessions/{id}/dd-pack` | `view` | `?format=json\|html`: `{session_id, complete, sections: [{number, title, required, content, note?}]}` (doc 09 §7), or a printable page |
 | GET `/phone/personas` | `demo:drive` | personas with accounts, payees, devices |
 | GET `/phone/stream?customer_id=` | `demo:drive` | SSE `probe.requested`, `otp.sms`, `probe.attempt_result`, `session.decided` |
 
@@ -72,8 +72,14 @@ Permission names refer to doc 19 §3.
   probe_runs: [ { id, seq, probe_key, mode, status, selected_by, propensity, outcome,
                   posterior_before, posterior_after, info_yield_bits, voi_myopic_paise,
                   net_value_paise, cost_paise, candidates: [...], started_at, completed_at } ],
-  baselines: { B1: decision, B2: decision }, case_id }
+  baselines: { B1: decision, B2: decision }, case_id, dd_pack_complete, version }
 ```
+
+`baselines` (doc 08 §6, doc 22 §2) are computed when the prior is built, from what the bank knew
+at initiation, and stored in `guardian_sessions.baseline_decisions`. B1 is `RELEASE`,
+`HOLD_FOR_REVIEW` or `DECLINE`. B2 is `RELEASE`, `HOLD_FOR_REVIEW`, or `OTP_STEP_UP` in its
+middle band: B2 releases only if the OTP passes, which the bank cannot know without asking (the
+monitor's "OTP would pass" line). Risks are whole paise; probabilities have 6 decimals.
 
 ### Navigator
 
@@ -82,7 +88,7 @@ Permission names refer to doc 19 §3.
 | GET `/cases` | `view` | filters `status, type, protocol, campaign_id, sla_breached`; sort `sla_due_at\|expected_loss\|opened_at` |
 | POST `/cases` | `case:write` | manual `ACCOUNT_REVIEW` creation `{account_id, reason}` |
 | GET `/cases/{id}` | `view` | `CaseView` (posterior, recommendation, risk_by_decision, next_best_evidence[], wcmm, evidence_records[], timeline[], dd_pack_complete, version) |
-| POST `/cases/{id}/evidence-requests` | `case:write` | `{source_key, refresh?: bool}` → `CaseView` |
+| POST `/cases/{id}/evidence-requests` | `case:write` | `{source_key, refresh?: bool, outcome?, note?}` → `CaseView` with `ETag`. `outcome` and `note` are the investigator's recorded result of `CUSTOMER_OUTREACH_CALL` (required for it, doc 09 §3). The same source again returns the current record unchanged unless `refresh` (doc 09 §3); 409 `INVALID_STATE_TRANSITION` once disposed; 422 for a source outside the case's profile or disabled in the case's KB version, and for `outcome`/`note` sent with any source other than `CUSTOMER_OUTREACH_CALL`. A refresh replaces the earlier observation in the posterior (doc 09 §3). Each `evidence_records[]` item: `{id, source_key, outcome, facts, record_refs, posterior_before, posterior_after, info_yield_bits, rank_at_request, net_value_at_request_paise, fetch_ms, requested_by, requested_at, narrative, narrative_source}` |
 | POST `/cases/{id}/outreach-result` | `case:write` | `{outcome, note}`: records CUSTOMER_OUTREACH_CALL |
 | POST `/cases/{id}/disposition` | `case:write` | `If-Match`, `Idempotency-Key`; `{decision, typology?, confidence (1–5), note?, override_rationale?}` → `CaseDetail`. 412 stale version, 409 already disposed, 422 a decision outside the profile, CONFIRM_FRAUD without a fraud typology, or an override without a 20+ character rationale (#103) |
 | POST `/cases/{id}/trace-events` | `view` | `{events: [{type, payload, at}]}` (batched) |

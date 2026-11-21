@@ -176,6 +176,20 @@ class LegacyPolicyConfig(_Frozen):
     payee_baseline_days: int = Field(gt=0)
 
 
+class ScorePolicyConfig(_Frozen):
+    """Baseline B2 (docs/22 §2): r = 1 − p0(GENUINE); release below the first threshold, step up
+    with an OTP up to the second, hold from it."""
+
+    release_below: Probability
+    hold_at_or_above: Probability
+
+    @model_validator(mode="after")
+    def _ordered(self) -> ScorePolicyConfig:
+        if self.release_below > self.hold_at_or_above:
+            raise ValueError("score_policy: release_below must not exceed hold_at_or_above")
+        return self
+
+
 class MuleRingConfig(_Frozen):
     """Mule networks (docs/14 §4)."""
 
@@ -351,6 +365,7 @@ class GeneratorConfig(_Frozen):
     genuine_routine: GenuineRoutineConfig
     telemetry: TelemetryShape
     legacy_policy: LegacyPolicyConfig
+    score_policy: ScorePolicyConfig
     genuine_unusual: GenuineUnusualConfig
     mule_rings: MuleRingConfig
     fraud: FraudConfig

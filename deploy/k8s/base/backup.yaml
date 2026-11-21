@@ -1,4 +1,4 @@
-# Nightly logical backup (docs/23 §8): pg_dump -Fc at 03:00 IST, the 7 most recent kept.
+# Nightly logical backup (docs/23 §8): pg_dump -Fc at 21:30 IST, the 7 most recent kept.
 # The PVC is on the same disk as the database: this protects against mistakes, not against
 # losing the disk. An off-host copy is the owner's decision.
 apiVersion: v1
@@ -16,9 +16,15 @@ kind: CronJob
 metadata:
   name: delphi-pg-backup
   namespace: delphi
-  labels: { app.kubernetes.io/name: delphi, app.kubernetes.io/component: backup }
+  labels:
+    app.kubernetes.io/name: delphi
+    app.kubernetes.io/component: backup
+    orbit.backup/scope: local # a copy on this host; Orbit tells it from off-host ones (#181)
 spec:
-  schedule: "30 21 * * *" # UTC = 03:00 IST
+  # Explicit zone: without it k3s reads the schedule in the node's zone (IST), which is how
+  # "30 21" ran at 16:00 UTC. The off-site copy (16:30 UTC) is timed after this run.
+  timeZone: Etc/UTC
+  schedule: "0 16 * * *" # = 21:30 IST
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
@@ -52,7 +58,13 @@ spec:
                 - |
                   set -eu
                   export PGPASSWORD="$POSTGRES_PASSWORD"
+                  rm -f /backups/*.part # a failed run's partial dump (concurrencyPolicy: Forbid, #183)
                   out="/backups/delphi-$(date -u +%Y%m%dT%H%M%SZ).dump"
+                  # k3s (kube-router) programs a new pod's NetworkPolicy rules a few seconds after
+                  # it starts; until then its connections are refused. Wait up to ~60 s (#181).
+                  db="-h delphi-postgres -p 5432 -U ${POSTGRES_USER:-postgres} -d delphi"
+                  for i in $(seq 1 30); do pg_isready $db -t 2 && break; sleep 2; done
+                  pg_isready $db -t 2 || { echo "postgres unreachable after 60s"; exit 1; }
                   pg_dump -h delphi-postgres -U "${POSTGRES_USER:-postgres}" -d delphi -Fc -f "$out.part"
                   mv "$out.part" "$out"
                   ls -1t /backups/delphi-*.dump | tail -n +8 | xargs -r rm --
