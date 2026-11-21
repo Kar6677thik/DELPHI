@@ -1,5 +1,6 @@
-"""SQLAlchemy Core description of ``delphi.cases`` (migration 0012, docs/17). The migration is the
-source of truth for constraints; a test compares these columns with the migrated schema."""
+"""SQLAlchemy Core descriptions of ``delphi.cases`` (migration 0012) and
+``delphi.evidence_records`` (0013, docs/17). The migrations are the source of truth for
+constraints; a test compares these columns with the migrated schema."""
 
 from __future__ import annotations
 
@@ -10,6 +11,7 @@ from sqlalchemy import (
     Boolean,
     Column,
     DateTime,
+    Float,
     Integer,
     MetaData,
     SmallInteger,
@@ -55,5 +57,41 @@ cases = Table(
     Column("dd_pack_complete", Boolean, nullable=False),
     Column("unexplained", Boolean, nullable=False),
     Column("version", Integer, nullable=False),
+    _ts("created_at"),
+)
+
+evidence_records = Table(
+    "evidence_records",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("case_id", UUID(as_uuid=True), nullable=False),
+    Column("source_key", Text, nullable=False),
+    Column("outcome", Text, nullable=False),
+    Column("raw", JSONB, nullable=False),
+    Column("record_refs", JSONB, nullable=False),
+    Column("fetch_ms", Integer, nullable=False),
+    Column("posterior_before", JSONB, nullable=False),
+    Column("posterior_after", JSONB, nullable=False),
+    Column("info_yield_bits", Float, nullable=False),
+    Column("rank_at_request", Integer),
+    Column("net_value_at_request_paise", BigInteger),
+    Column("requested_by", UUID(as_uuid=True)),
+    _ts("requested_at"),
+    Column("narrative", Text),
+    Column("narrative_source", Text),
+    Column("narrative_citations", JSONB),
+    Column("superseded_by", UUID(as_uuid=True)),
+    _ts("created_at"),
+)
+
+police_alert_drafts = Table(
+    "police_alert_drafts",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("case_id", UUID(as_uuid=True), nullable=False, unique=True),
+    Column("status", Text, nullable=False),
+    Column("payload", JSONB, nullable=False),
+    Column("acted_by", UUID(as_uuid=True)),
+    _ts("acted_at", nullable=True),
     _ts("created_at"),
 )

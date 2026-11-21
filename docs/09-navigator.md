@@ -80,6 +80,14 @@ POST /cases/{id}/evidence-requests {source_key}
   → return the updated case view
 ```
 
+**Implementation** (#102): `delphi.navigator.evidence.request_evidence` locks the case and
+refuses a disposed one, returns the current record for a source already fetched (unless
+`refresh`, which supersedes it), ranks the source as the console would at that moment, runs the
+adapter (`delphi.navigator.evidence_adapters`, as the app role) and the rule, updates the case
+posterior with the KB likelihoods (the case moves to IN_PROGRESS), stores the record, and writes
+the audit entry `evidence.recorded` and the event `case.updated`. The console plans with the
+case's observed sources. The narrative job and `SIM_OUTREACH_CALL` follow.
+
 `CUSTOMER_OUTREACH_CALL` is special. In the demo UI it opens a call script dialog. The
 investigator records the result by choosing one outcome (`CONFIRMS_COERCION`, …), and its
 `raw` holds the note. In simulation/autoplay, the api enqueues a `SIM_OUTREACH_CALL` job. The
@@ -87,6 +95,13 @@ worker, which may read scenario truth, samples the outcome from the response mod
 it through the same service. The UI receives it over SSE. `CONFIRMS_COERCION` and `DENIES_INITIATING` create a label with source
 `OUTREACH_CONFIRMED` (the hypothesis is the case's leading fraud hypothesis consistent with the
 outcome: coercion → leading APP_* hypothesis; denies → ATO).
+
+A `refresh` replaces the source's observation; it does not add a second one. The superseded
+record's likelihood is divided out of the case posterior before the new outcome's is applied, so
+the same outcome again leaves the posterior unchanged, and the new record's `posterior_before`
+is the case without the old observation. A refreshed outreach call replaces its
+`OUTREACH_CONFIRMED` label (or removes it when the new outcome gives none). A source disabled in
+the case's KB version cannot be fetched.
 
 ## 4. Evidence outcome rules (deterministic)
 
@@ -155,6 +170,15 @@ When protocol = `COERCION`:
    list) is created with status `DRAFT`. An INVESTIGATOR can `SEND` it, which in the sim is
    recorded as `SENT_SIMULATED`, or `DISCARD` it. Nothing is sent automatically (FR-NAV-10).
 3. The SLA is 30 minutes (configurable).
+
+**Implementation** (#106): `open_case` drafts the alert (`delphi.navigator.police_alert`,
+`police_alert_drafts`) in the case's own transaction: the victim's pseudonym, the amount and
+channel, the beneficiary account and the time. `POST /cases/{id}/police-alert/send|discard`
+(`case:write`) is the only way to act on it. SEND records SENT_SIMULATED with the case's
+evidence list at that moment; either action names the investigator and the time, is audited
+(`police_alert.sent` / `.discarded`) and is final (409 afterwards). `GET /cases/{id}` shows the
+alert. The outreach outcomes' `OUTREACH_CONFIRMED` labels are recorded by the evidence fetch
+(§3).
 
 ## 7. Due-diligence pack
 
