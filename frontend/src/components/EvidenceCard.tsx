@@ -19,12 +19,13 @@ export function posteriorShift(
     .map(([key, after]) => ({ key, before: record.posterior_before[key] ?? 0, after }));
 }
 
-/** A fact's value as text: `*_paise` facts as ₹, missing ones as "—". */
+/** A fact's value as text: `*_paise` facts as ₹, `*_share` fractions as %, missing ones "—". */
 export function factText(key: string, value: unknown): string {
   if (value === null || value === undefined) return '—';
   if (key.endsWith('_paise') && typeof value === 'number' && Number.isSafeInteger(value)) {
     return formatPaise(value);
   }
+  if (key.endsWith('_share') && typeof value === 'number') return percent(value);
   if (typeof value === 'boolean') return value ? 'Yes' : 'No';
   if (typeof value === 'number' || typeof value === 'string') return String(value);
   return JSON.stringify(value);
@@ -41,7 +42,7 @@ export function EvidenceCard({
 }: {
   record: EvidenceRecord;
   styles: HypothesisStyles;
-  citationLabel: (recordId: string) => string;
+  citationLabel: (recordId: string) => string | undefined;
 }) {
   const titleId = `evidence-${record.id}`;
   return (
