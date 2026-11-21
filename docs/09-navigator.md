@@ -220,6 +220,14 @@ The flag is stored on `guardian_sessions.dd_pack_complete` and `cases.dd_pack_co
 recomputed on every change, and it feeds the "due-diligence completeness" metric. An open case
 is never complete: section 5 needs a disposition.
 
+For a Guardian session, "every change" ends at the decision: the flag is computed once, when the
+session is decided, and is not recomputed afterwards. If the audit chain is later found broken,
+the stored flag stays true while `GET /guardian/sessions/{id}/dd-pack` (computed on read)
+reports `complete: false`; the endpoint is authoritative. A failure while computing the flag
+leaves it false and never blocks the decision. The last planning step (the one that stopped)
+has no probe run: its candidates are kept in the `guardian.session.decided` audit entry and
+appear in sections 3 and 4.
+
 ## 8. Campaigns
 
 Rules are in doc 05 §5. The campaign list is sorted by `rank_score` and shows the

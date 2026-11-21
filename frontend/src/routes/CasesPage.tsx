@@ -5,6 +5,7 @@ import { useCases } from '../api/cases';
 import type { CaseView } from '../api/types';
 import { MoneyText } from '../components/MoneyText';
 import { ProblemAlert } from '../components/ProblemAlert';
+import { humanise } from '../lib/format';
 
 const MINUTE_MS = 60_000;
 /** How often the countdown re-renders. */
@@ -36,10 +37,6 @@ function useNow(intervalMs: number): number {
     };
   }, [intervalMs]);
   return now;
-}
-
-function humanise(key: string): string {
-  return key.replaceAll('_', ' ').toLowerCase();
 }
 
 /** The case queue (docs/18 §2 `/cases`): the M4 stub lists the open and recent cases. */

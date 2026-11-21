@@ -54,6 +54,7 @@ from delphi.sim.payments import (
     apply_guardian_decision,
     cancel_payment,
     get_payment,
+    get_payments,
 )
 
 # The read-only `bank` tables re-exported for feature modules, and this facade's own API.
@@ -80,6 +81,7 @@ __all__ = [
     "dataset_exists",
     "devices",
     "get_payment",
+    "get_payments",
     "history_window",
     "labels",
     "ledger_entries",
