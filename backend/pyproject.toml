@@ -147,6 +147,7 @@ source_modules = [
   "delphi.navigator",
   "delphi.probes",
   "delphi.platform",
+  "delphi.scout",
   "delphi.sensing",
   "delphi.sim",
 ]
@@ -164,6 +165,7 @@ forbidden_modules = [
   "delphi.llm",
   "delphi.navigator",
   "delphi.probes",
+  "delphi.scout",
   "delphi.sensing",
   "delphi.sim",
 ]

@@ -534,7 +534,7 @@ def test_when_the_fail_safe_itself_fails_the_session_still_ends(
 
 
 def test_the_b1_and_b2_verdicts_are_stored_with_the_prior(env: Env) -> None:
-    """docs/08 §6, FR-GDN-15: what B1 and B2 (docs/22 §2) would have done, for the monitor.
+    """docs/08 §6, FR-GDN-12: what B1 and B2 (docs/22 §2) would have done, for the monitor.
     ₹4,80,000 to a payee never saved, from no known device: B1 holds. B2's r = 1 − P(GENUINE)
     from this same prior: low for a confident genuine prior, high for a digital-arrest one."""
     svc = env.service(FixedPrior(GENUINE_SURE, p_mule=None), CLEAN)
