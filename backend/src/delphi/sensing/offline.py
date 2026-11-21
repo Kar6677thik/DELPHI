@@ -10,7 +10,7 @@ The parity test checks that these snapshots give the online path's features.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
 
@@ -97,6 +97,10 @@ class BankFrames:
     logins: pd.DataFrame
     crm_events: pd.DataFrame
     complaints: pd.DataFrame
+    # bank.account_scores (the mule scorer's cache, docs/13 §6): one row per account
+    account_scores: pd.DataFrame = field(
+        default_factory=lambda: pd.DataFrame(columns=["account_id", "p_mule", "computed_at"])
+    )
 
 
 def load_bank_frames(conn: Connection) -> BankFrames:
@@ -151,6 +155,14 @@ def load_bank_frames(conn: Connection) -> BankFrames:
             conn,
             select(bank.complaints.c.reported_at, bank.complaints.c.counterparty_account_ids),
         ),
+        account_scores=_frame(
+            conn,
+            select(
+                bank.account_scores.c.account_id,
+                bank.account_scores.c.p_mule,
+                bank.account_scores.c.computed_at,
+            ),
+        ),
     )
 
 
@@ -166,6 +178,16 @@ class OfflineHistories:
         self._opened_us: dict[str, int] = dict(
             zip(accounts["id"], _us(accounts["opened_at"]).tolist(), strict=True)
         )
+        scores = frames.account_scores
+        self._mule_scores: dict[str, tuple[int, float]] = {
+            str(a): (t, float(p))
+            for a, t, p in zip(
+                scores["account_id"],
+                _us(scores["computed_at"]).tolist() if len(scores) else [],
+                scores["p_mule"],
+                strict=True,
+            )
+        }
         payments = frames.payments.assign(
             at_us=_us(frames.payments["initiated_at"]),
             customer_id=frames.payments["payer_account_id"].map(self._customer_of),
@@ -245,11 +267,19 @@ class OfflineHistories:
             initiated_at_us=row.at_us,
             device_id=device,
             payee_account_opened_at_us=self._opened_us[row.payee_account_id],
-            payee_p_mule=self.config.mule_score_fallback,  # until the mule scorer (#91)
+            payee_p_mule=self._payee_p_mule(row.payee_account_id, row.at_us),
             session_duration_s=row.session_duration_s,
             remote_access_active=row.remote_access_active,
         )
         return payment, history
+
+    def _payee_p_mule(self, payee: str, at_us: int) -> float:
+        """The payee's cached mule score if it was computed before the payment, else the
+        fallback (docs/13 §3, §6): a score the bank did not have yet must not leak in."""
+        cached = self._mule_scores.get(payee)
+        if cached is not None and cached[0] < at_us:
+            return cached[1]
+        return self.config.mule_score_fallback
 
     def features(self, payment_ids: Iterable[str]) -> pd.DataFrame:
         """One row of payment features per payment, columns in ``payment_feature_names``."""
