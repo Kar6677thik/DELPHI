@@ -55,8 +55,9 @@ export function NarrativeWithCitations({
 }: {
   narrative: string;
   source: string | null;
-  /** The chip's text for a cited record (e.g. its source's name). */
-  citationLabel: (recordId: string) => string;
+  /** The chip's text for a cited record (e.g. its source's name); undefined when the record
+   * is not on the page, which renders the citation as plain text instead of a dead button. */
+  citationLabel: (recordId: string) => string | undefined;
 }) {
   return (
     <figure className="text-sm">
@@ -64,10 +65,17 @@ export function NarrativeWithCitations({
         {narrativeLabel(source)}
       </figcaption>
       <p className="mt-1">
-        {parseNarrative(narrative).map((part, i) =>
-          'text' in part ? (
-            <span key={i}>{part.text} </span>
-          ) : (
+        {parseNarrative(narrative).map((part, i) => {
+          if ('text' in part) return <span key={i}>{part.text} </span>;
+          const label = citationLabel(part.citation);
+          if (label === undefined) {
+            return (
+              <span key={i} className="mx-0.5 text-xs text-slate-600">
+                (cited record not shown)
+              </span>
+            );
+          }
+          return (
             <button
               key={i}
               type="button"
@@ -75,12 +83,12 @@ export function NarrativeWithCitations({
                 showFacts(part.citation);
               }}
               className="mx-0.5 rounded-full border border-slate-300 bg-slate-100 px-2 py-0.5 text-xs text-slate-800 hover:bg-slate-200 focus-visible:outline-2 focus-visible:outline-slate-900"
-              aria-label={`Show the facts: ${citationLabel(part.citation)}`}
+              aria-label={`Show the facts: ${label}`}
             >
-              {citationLabel(part.citation)}
+              {label}
             </button>
-          ),
-        )}
+          );
+        })}
       </p>
     </figure>
   );

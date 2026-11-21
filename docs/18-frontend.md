@@ -49,9 +49,10 @@ and error states. `case.opened` and `case.updated` invalidate the `['cases']` qu
 campaign arrive with the console and campaigns (#103, M5).
 
 **M5 case queue and Navigator console (#105):** `/cases` gains an order control (soonest SLA or
-newest, `GET /cases?sort=`) and the recommendation's expected loss (`risk_by_decision` of
-`recommended_decision`, "—" until the case has one); the campaign column arrives with campaigns
-(#107). `/cases/:id` follows doc 09 §2 from `GET /cases/{id}`:
+newest, `GET /cases?sort=`). The expected-loss column waits for the backend to store an open
+case's recommendation and risks (today they are stored only at disposition, so an open case's
+row has neither); the campaign column arrives with campaigns (#107). The console does not show
+the police alert yet (its own issue). `/cases/:id` follows doc 09 §2 from `GET /cases/{id}`:
 - the posterior `HypothesisBar` and the `RiskTable`;
 - the "Evidence sufficient — recommend {decision} (expected loss ₹X)" banner while
   `evidence_sufficient` and not disposed;
@@ -60,7 +61,10 @@ newest, `GET /cases?sort=`) and the recommendation's expected loss (`risk_by_dec
 - "What would change my mind";
 - one `EvidenceCard` per record, whose narrative is labelled "AI-written summary" (`LLM`) or
   "Template summary". Its `[record_id]` citations render as chips that scroll to, focus and
-  highlight that record's fact table.
+  highlight that record's fact table (a citation to a record not on the page is plain text).
+  Facts named `*_paise` show as ₹ and `*_share` as a percentage;
+- loading and error states; a disposed case shows "(decision taken)" in the risk table and
+  neither the banner nor the next-best evidence.
 
 `evidence.narrative_ready` invalidates the `['cases']` queries, like `case.*`. The console's write
 controls (fetch, the outreach call, the disposition and its 412 handling) follow in part 2.

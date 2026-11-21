@@ -4,7 +4,13 @@ import { describe, expect, it } from 'vitest';
 
 import type { CaseDetail, KbVersionView } from '../src/api/types';
 import { FakeEventSource } from './fakeEventSource';
-import { MOCK_KB_CONTENT, mockCaseDetail, mockEvidence, setMockSession } from './mocks/handlers';
+import {
+  MOCK_KB_CONTENT,
+  mockCaseDetail,
+  mockEvidence,
+  problem,
+  setMockSession,
+} from './mocks/handlers';
 import { server } from './mocks/node';
 import { renderApp } from './renderApp';
 
@@ -45,6 +51,57 @@ async function openConsole(user = 'investigator') {
 }
 
 describe('Navigator console (docs/09 §2)', () => {
+  it('shows a loading state, then the case (docs/18 §4)', async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    server.use(
+      http.get('/api/v1/kb/versions/1', () => HttpResponse.json(KB)),
+      http.get(CASE_URL, async () => {
+        await gate;
+        return HttpResponse.json(mockCaseDetail(), { headers: { ETag: '"1"' } });
+      }),
+    );
+    setMockSession('viewer');
+    renderApp(`/cases/${CASE_ID}`);
+    expect(await screen.findByText('Loading the case…')).toBeInTheDocument();
+    release();
+    expect(
+      await screen.findByRole('heading', { name: 'Hypotheses and recommendation' }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Loading the case…')).not.toBeInTheDocument();
+  });
+
+  it('shows the problem when the case cannot load (docs/18 §4)', async () => {
+    server.use(
+      http.get(CASE_URL, ({ request }) =>
+        problem(404, 'Not Found', 'NOT_FOUND', 'No case with that id.', request.url),
+      ),
+    );
+    setMockSession('viewer');
+    renderApp(`/cases/${CASE_ID}`);
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Could not load the case');
+    expect(alert).toHaveTextContent('NOT_FOUND');
+  });
+
+  it('shows a disposed case as decided, with nothing left to fetch', async () => {
+    serve(
+      mockCaseDetail({
+        status: 'DISPOSED',
+        disposition: 'CONFIRM_FRAUD',
+        evidence_sufficient: true,
+        next_best_evidence: [],
+      }),
+    );
+    await openConsole();
+    const taken = await screen.findByRole('row', { current: true });
+    expect(taken).toHaveTextContent('Confirm fraud(decision taken)');
+    expect(screen.queryByText(/Evidence sufficient/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Next best evidence' })).not.toBeInTheDocument();
+  });
+
   it('shows the "evidence sufficient" banner when the planner says STOP (FR-NAV-03)', async () => {
     serve(mockCaseDetail({ evidence_sufficient: true }));
     await openConsole();

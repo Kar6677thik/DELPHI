@@ -39,14 +39,6 @@ function useNow(intervalMs: number): number {
   return now;
 }
 
-/** The recommendation's expected loss, if the queue row carries it (paise). */
-export function expectedLoss(item: CaseView): number | null {
-  const risk = item.recommended_decision
-    ? item.risk_by_decision?.[item.recommended_decision]
-    : null;
-  return typeof risk === 'number' && Number.isFinite(risk) ? Math.round(risk) : null;
-}
-
 const SORTS: readonly { value: CaseSort; label: string }[] = [
   { value: 'sla_due_at', label: 'Soonest SLA' },
   { value: 'opened_at', label: 'Newest' },
@@ -106,9 +98,6 @@ export function CasesPage() {
                 <th scope="col" className="py-2 pr-4 text-right">
                   At stake
                 </th>
-                <th scope="col" className="py-2 pr-4 text-right">
-                  Expected loss
-                </th>
                 <th scope="col" className="py-2 pr-4">
                   Status
                 </th>
@@ -139,13 +128,6 @@ export function CasesPage() {
                   </td>
                   <td className="py-2 pr-4 text-right">
                     <MoneyText paise={item.amount_at_stake_paise} />
-                  </td>
-                  <td className="py-2 pr-4 text-right">
-                    {expectedLoss(item) === null ? (
-                      '—'
-                    ) : (
-                      <MoneyText paise={expectedLoss(item) ?? 0} />
-                    )}
                   </td>
                   <td className="py-2 pr-4">{humanise(item.status)}</td>
                 </tr>

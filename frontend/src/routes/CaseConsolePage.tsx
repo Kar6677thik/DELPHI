@@ -55,7 +55,7 @@ function Console({ detail, styles }: { detail: CaseDetail; styles: HypothesisSty
   const names: Record<string, string> = Object.fromEntries(
     detail.evidence_records.map((r) => [r.id, humanise(r.source_key)]),
   );
-  const citationLabel = (recordId: string) => names[recordId] ?? 'Cited record';
+  const citationLabel = (recordId: string): string | undefined => names[recordId];
   return (
     <div className="mt-4 space-y-8">
       <dl className="grid grid-cols-2 gap-4 text-sm md:grid-cols-5">

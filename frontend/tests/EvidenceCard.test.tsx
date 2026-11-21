@@ -16,7 +16,7 @@ const STYLES = {
   MULE: { name: 'Mule account', color: '#7C3AED' },
 };
 const ID = '01930000-0000-7000-8000-0000000000e1';
-const label = (id: string) => (id === ID ? 'Inbound fan in' : 'Cited record');
+const label = (id: string) => (id === ID ? 'Inbound fan in' : undefined);
 
 afterEach(() => {
   vi.useRealTimers();
@@ -75,8 +75,7 @@ describe('NarrativeWithCitations', () => {
     expect(facts).not.toHaveClass('ring-2');
   });
 
-  it('does nothing when the cited record is not on the page', async () => {
-    const user = userEvent.setup();
+  it('renders a citation to a record not on the page as text, not a dead button', () => {
     render(
       <NarrativeWithCitations
         narrative={`Gone [01930000-0000-7000-8000-0000000000ff].`}
@@ -84,9 +83,8 @@ describe('NarrativeWithCitations', () => {
         citationLabel={label}
       />,
     );
-    const chip = screen.getByRole('button', { name: 'Show the facts: Cited record' });
-    await user.click(chip);
-    expect(chip).toHaveFocus(); // focus stays on the chip: there is nowhere to go
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    expect(screen.getByText('(cited record not shown)')).toBeInTheDocument();
   });
 });
 
@@ -130,7 +128,8 @@ describe('EvidenceCard (docs/09 §2 item 5)', () => {
     ]);
   });
 
-  it('formats facts: paise as ₹, booleans as words, nulls as a dash', () => {
+  it('formats facts: paise as ₹, shares as %, booleans as words, nulls as a dash', () => {
+    expect(factText('departure_share', 0.83)).toBe('83%');
     expect(factText('max_prior_amount_paise', 480_000)).toBe('₹4,800.00');
     expect(factText('new_city', true)).toBe('Yes');
     expect(factText('speed_kmh', null)).toBe('—');
