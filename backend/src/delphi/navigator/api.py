@@ -1,7 +1,8 @@
 """The Navigator's facade for the api and the other feature modules (docs/04 §4.1 rule 3).
 
 Guardian calls ``open_case`` when it holds a payment (#94); the api reads cases, builds the
-console view and records dispositions (docs/16, #103).
+console view and records dispositions (docs/16, #103), and stores the console's view events
+(docs/09 §5, #108).
 """
 
 from __future__ import annotations
@@ -42,8 +43,16 @@ from delphi.navigator.store import (
     open_case,
     open_case_for_payment,
 )
+from delphi.navigator.traces import (
+    CLIENT_TYPES,
+    ClientTrace,
+    TraceType,
+    list_traces,
+    record_client_traces,
+)
 
 __all__ = [
+    "CLIENT_TYPES",
     "HOLD_DECISIONS",
     "OUTREACH",
     "AlertAction",
@@ -55,11 +64,13 @@ __all__ = [
     "CaseSort",
     "CaseStatus",
     "CaseType",
+    "ClientTrace",
     "ConsoleView",
     "Disposition",
     "EvidenceRecord",
     "EvidenceRow",
     "PoliceAlert",
+    "TraceType",
     "act_on_alert",
     "case_profile",
     "console",
@@ -68,9 +79,11 @@ __all__ = [
     "get_alert",
     "get_case",
     "list_cases",
+    "list_traces",
     "observed_sources",
     "open_case",
     "open_case_for_payment",
+    "record_client_traces",
     "request_evidence",
     "request_simulated_outreach",
     "vulnerable_payer",
