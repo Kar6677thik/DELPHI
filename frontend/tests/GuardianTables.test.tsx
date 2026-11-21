@@ -43,11 +43,10 @@ describe('CandidatesTable (docs/18 §3)', () => {
 });
 
 describe('RiskTable (docs/18 §3)', () => {
-  it('lists expected losses lowest first and marks the recommended decision in text', () => {
+  it('lists expected losses lowest first and marks the lowest as recommended before a decision', () => {
     render(
       <RiskTable
         risks={{ RELEASE: 4_32_10_000, HOLD_FOR_REVIEW: 6_323_00, PROTECTIVE_HOLD: 1_761_00 }}
-        recommended="PROTECTIVE_HOLD"
       />,
     );
     const rows = screen.getAllByRole('row').slice(1);
@@ -58,5 +57,22 @@ describe('RiskTable (docs/18 §3)', () => {
     ]);
     expect(rows[0]).toHaveAttribute('aria-current', 'true');
     expect(screen.getByText('₹4,32,100.00')).toBeInTheDocument();
+  });
+
+  it('marks the decision taken, not the lowest-risk row, once decided (a fail-safe hold)', () => {
+    render(
+      <RiskTable
+        risks={{ RELEASE: 1_000_00, HOLD_FOR_REVIEW: 6_323_00, PROTECTIVE_HOLD: 9_761_00 }}
+        taken="HOLD_FOR_REVIEW"
+      />,
+    );
+    const rows = screen.getAllByRole('row').slice(1);
+    expect(rows.map((r) => (r as HTMLTableRowElement).cells[0]?.textContent)).toEqual([
+      'Release',
+      'Hold for review(decision taken)',
+      'Protective hold',
+    ]);
+    expect(rows[1]).toHaveAttribute('aria-current', 'true');
+    expect(screen.queryByText('(recommended)')).not.toBeInTheDocument();
   });
 });
