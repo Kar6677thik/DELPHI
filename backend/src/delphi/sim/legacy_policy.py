@@ -9,8 +9,9 @@ declined payment never gets a label (selective labels, docs/14 §7).
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from enum import StrEnum
 
-from delphi.sim.generator_config import LegacyPolicyConfig
+from delphi.sim.generator_config import LegacyPolicyConfig, ScorePolicyConfig
 from delphi.sim.labels import PaymentDecision
 
 COLLECT_APPROVAL = "UPI_COLLECT_APPROVAL"
@@ -51,3 +52,31 @@ def decide_b1(
     ):
         return PaymentDecision.HELD
     return PaymentDecision.RELEASED
+
+
+class Baseline(StrEnum):
+    """What a baseline policy decides for a payment, as the Guardian monitor shows it (docs/08
+    §6). B2's middle band is ``OTP_STEP_UP``: it releases only if the OTP passes (docs/22 §2),
+    which the bank cannot know before asking."""
+
+    RELEASE = "RELEASE"
+    OTP_STEP_UP = "OTP_STEP_UP"
+    HOLD_FOR_REVIEW = "HOLD_FOR_REVIEW"
+    DECLINE = "DECLINE"
+
+
+B1_DECISION: dict[PaymentDecision, Baseline] = {  # docs/22 §2: HOLD is recorded as HOLD_FOR_REVIEW
+    PaymentDecision.RELEASED: Baseline.RELEASE,
+    PaymentDecision.HELD: Baseline.HOLD_FOR_REVIEW,
+    PaymentDecision.DECLINED: Baseline.DECLINE,
+}
+
+
+def decide_b2(config: ScorePolicyConfig, *, p_genuine: float) -> Baseline:
+    """docs/22 §2, B2: r = 1 − p0(GENUINE) from the same prior the Guardian uses."""
+    r = round(1.0 - p_genuine, 12)  # so r = 0.20 exactly is in the OTP band, not below it
+    if r < config.release_below:
+        return Baseline.RELEASE
+    if r < config.hold_at_or_above:
+        return Baseline.OTP_STEP_UP
+    return Baseline.HOLD_FOR_REVIEW

@@ -13,6 +13,19 @@ from delphi.navigator.console import (
     console,
 )
 from delphi.navigator.disposition import Disposition, dispose, vulnerable_payer
+from delphi.navigator.evidence import (
+    EvidenceRecord,
+    current_records,
+    observed_sources,
+    request_evidence,
+)
+from delphi.navigator.police_alert import (
+    AlertAction,
+    AlertStatus,
+    PoliceAlert,
+    act_on_alert,
+    get_alert,
+)
 from delphi.navigator.store import (
     HOLD_DECISIONS,
     CaseCursor,
@@ -30,6 +43,8 @@ from delphi.navigator.store import (
 
 __all__ = [
     "HOLD_DECISIONS",
+    "AlertAction",
+    "AlertStatus",
     "CaseCursor",
     "CaseExistsError",
     "CaseProtocol",
@@ -39,13 +54,20 @@ __all__ = [
     "CaseType",
     "ConsoleView",
     "Disposition",
+    "EvidenceRecord",
     "EvidenceRow",
+    "PoliceAlert",
+    "act_on_alert",
     "case_profile",
     "console",
+    "current_records",
     "dispose",
+    "get_alert",
     "get_case",
     "list_cases",
+    "observed_sources",
     "open_case",
     "open_case_for_payment",
+    "request_evidence",
     "vulnerable_payer",
 ]

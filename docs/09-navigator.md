@@ -80,6 +80,14 @@ POST /cases/{id}/evidence-requests {source_key}
   → return the updated case view
 ```
 
+**Implementation** (#102): `delphi.navigator.evidence.request_evidence` locks the case and
+refuses a disposed one, returns the current record for a source already fetched (unless
+`refresh`, which supersedes it), ranks the source as the console would at that moment, runs the
+adapter (`delphi.navigator.evidence_adapters`, as the app role) and the rule, updates the case
+posterior with the KB likelihoods (the case moves to IN_PROGRESS), stores the record, and writes
+the audit entry `evidence.recorded` and the event `case.updated`. The console plans with the
+case's observed sources. The narrative job and `SIM_OUTREACH_CALL` follow.
+
 `CUSTOMER_OUTREACH_CALL` is special. In the demo UI it opens a call script dialog. The
 investigator records the result by choosing one outcome (`CONFIRMS_COERCION`, …), and its
 `raw` holds the note. In simulation/autoplay, the api enqueues a `SIM_OUTREACH_CALL` job. The
@@ -87,6 +95,13 @@ worker, which may read scenario truth, samples the outcome from the response mod
 it through the same service. The UI receives it over SSE. `CONFIRMS_COERCION` and `DENIES_INITIATING` create a label with source
 `OUTREACH_CONFIRMED` (the hypothesis is the case's leading fraud hypothesis consistent with the
 outcome: coercion → leading APP_* hypothesis; denies → ATO).
+
+A `refresh` replaces the source's observation; it does not add a second one. The superseded
+record's likelihood is divided out of the case posterior before the new outcome's is applied, so
+the same outcome again leaves the posterior unchanged, and the new record's `posterior_before`
+is the case without the old observation. A refreshed outreach call replaces its
+`OUTREACH_CONFIRMED` label (or removes it when the new outcome gives none). A source disabled in
+the case's KB version cannot be fetched.
 
 ## 4. Evidence outcome rules (deterministic)
 
@@ -107,6 +122,27 @@ opening for an account review).
 
 Every adapter returns the facts used (counts, timestamps, record ids). These are the only
 material the LLM narrative may cite.
+
+The rules are `delphi.probes.evidence` (pure; thresholds from `kb/engine.yaml` `classifiers:`,
+the look-back windows named in the module). In `PASS_THROUGH_DWELL`, a credit that is not yet
+80% gone by `as_of` is *still dwelling*: its dwell is unknown but at least its age, so the rule
+counts it as longer than any measured dwell (+∞). It pushes the median up and is never classified
+as if its age were a measured dwell; one fresh, unmoved credit gives `OVER_24_H`, not
+`UNDER_30_MIN`. The narrative's `median_dwell_minutes` (doc 15 §7) is the same median, or null
+when that median falls on a credit still dwelling; the facts also carry `still_dwelling`, the
+number of such credits, so the narrative can say so.
+
+The adapters (`delphi.navigator.evidence_adapters`) read the bank as of `as_of`:
+
+- Payments count only once `EXECUTED`, by `executed_at < as_of` (`INBOUND_FAN_IN` on both the
+  window and the "prior relation" side, `PAYEE_RELATIONSHIP`). A held, declined or pending
+  payment, including the case's own held payment, never credited the account.
+- `BENEFICIARY_DEVICE_SHARING` counts only accounts opened by `as_of`.
+- `ACCOUNT_PROFILE` for an account this bank does not hold is `ESTABLISHED` with null facts: an
+  unknown age is not evidence of a new account.
+- `LOGIN_GEO_VELOCITY`'s "last login" is the customer's last login at or before `as_of`, which
+  may be older than the 24 h window; its city is new if no earlier login (at any time) was from
+  it, and a first-ever login is not a new city. The speed uses only the logins in the window.
 
 ## 5. Investigator traces
 
@@ -134,6 +170,15 @@ When protocol = `COERCION`:
    list) is created with status `DRAFT`. An INVESTIGATOR can `SEND` it, which in the sim is
    recorded as `SENT_SIMULATED`, or `DISCARD` it. Nothing is sent automatically (FR-NAV-10).
 3. The SLA is 30 minutes (configurable).
+
+**Implementation** (#106): `open_case` drafts the alert (`delphi.navigator.police_alert`,
+`police_alert_drafts`) in the case's own transaction: the victim's pseudonym, the amount and
+channel, the beneficiary account and the time. `POST /cases/{id}/police-alert/send|discard`
+(`case:write`) is the only way to act on it. SEND records SENT_SIMULATED with the case's
+evidence list at that moment; either action names the investigator and the time, is audited
+(`police_alert.sent` / `.discarded`) and is final (409 afterwards). `GET /cases/{id}` shows the
+alert. The outreach outcomes' `OUTREACH_CONFIRMED` labels are recorded by the evidence fetch
+(§3).
 
 ## 7. Due-diligence pack
 
@@ -174,6 +219,14 @@ is non-empty. "n/a" sections are rendered as "Not applicable" and do not count.
 The flag is stored on `guardian_sessions.dd_pack_complete` and `cases.dd_pack_complete`. It is
 recomputed on every change, and it feeds the "due-diligence completeness" metric. An open case
 is never complete: section 5 needs a disposition.
+
+For a Guardian session, "every change" ends at the decision: the flag is computed once, when the
+session is decided, and is not recomputed afterwards. If the audit chain is later found broken,
+the stored flag stays true while `GET /guardian/sessions/{id}/dd-pack` (computed on read)
+reports `complete: false`; the endpoint is authoritative. A failure while computing the flag
+leaves it false and never blocks the decision. The last planning step (the one that stopped)
+has no probe run: its candidates are kept in the `guardian.session.decided` audit entry and
+appear in sections 3 and 4.
 
 ## 8. Campaigns
 

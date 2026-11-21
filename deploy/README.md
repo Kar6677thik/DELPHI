@@ -65,6 +65,11 @@ allows this as long as "Prevent self-review" stays off.
 gh workflow run deploy.yml --ref main -f action=deploy
 ```
 
+**A change under `deploy/k8s/base/` needs one more step.** The Deploy workflow only runs the
+migration and swaps the image digests. It never applies `deploy/k8s/base`, so merging a change
+there (a CronJob, a NetworkPolicy, resources) leaves the cluster as it was. After the merge, ask
+the server's operator to apply it from `main` (docs/23 §6), then check the live object.
+
 **Something is wrong after a release.**
 - Fastest: `action = rollback`, `digest` empty. It goes back to the most recent earlier release,
   with no build or migration. Migrations are expand/contract, so older code still works on the
