@@ -5,8 +5,8 @@ Generates a profile, writes it into a throwaway PostgreSQL database, trains the 
 matured window, docs/13 §4), then reports, on the test split:
 
 - the prior's macro AUC, per-class AUC and ECE (docs/13 §4's gate: macro AUC ≥ 0.85);
-- each feature's single-feature AUC, fraud class against GENUINE (max(AUC, 1 − AUC)): #166 wants
-  none above 0.90;
+- each feature's single-feature AUC, fraud class against GENUINE (max(AUC, 1 − AUC)): #166's
+  target (docs/14 §1) is none above 0.90 on `eval`; the macro AUC is reported, not gated;
 - LightGBM gain shares;
 - per-scenario medians of the timing and account-age features (ground truth joined here only,
   for analysis: this script is a development tool, not application code).

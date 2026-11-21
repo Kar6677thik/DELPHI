@@ -18,6 +18,13 @@ Research §12 ("Data"). Module `delphi.sim`. The simulator is a first-class deli
    evaluation is not circular.
 4. **Every number below lives in `backend/src/delphi/sim/config/*.yaml`**, versioned as
    `generator_version`.
+5. **Realistically hard for the prior** (#166, owner decision). No single payment feature
+   separates any fraud class from GENUINE above an AUC of 0.90 on `eval` (max(AUC, 1 − AUC),
+   per feature and class). The prior's overall macro AUC is reported, not gated: what separability
+   remains comes from combinations of signals that each overlap genuine behaviour, and lowering it
+   further would take unrealistic genuine spending or changes to the calibrated rates here.
+   `scripts/prior_separability.py --profile eval` measures both; v16 has a maximum single-feature
+   AUC of 0.871 and a macro AUC of 0.984 (CHANGELOG).
 
 ## 2. Dataset profiles
 

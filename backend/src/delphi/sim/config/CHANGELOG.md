@@ -49,10 +49,11 @@ habitual hour, and fraud payees' accounts were ~300 days old against genuine one
 | GENUINE / ATO / DA / INV AUC | — | 0.975 / 0.998 / 0.989 / 0.975 |
 | Highest single-feature AUC | 0.98 (`payee_account_age_days`) | 0.871 (`payee_age_days`) |
 
-No single feature separates any fraud class above 0.90 any more. The macro AUC stays above
-#166's 0.85–0.93 target: with 870k training rows, LightGBM combines new payee × amount ×
-channel (and, for ATO, login city × burst × off-hour) even when each alone overlaps genuine
-behaviour. `demo` reads 0.95–0.97 for the same configurations, but its test split has only
+No single feature separates any fraud class above 0.90 any more, which is #166's target as the
+owner amended it: no single feature above 0.90 on `eval`, with the macro AUC reported rather than
+gated (docs/14 §1; the original 0.85–0.93 macro band was dropped). The macro AUC stays at 0.984:
+with 870k training rows, LightGBM combines new payee × amount × channel (and, for ATO, login
+city × burst × off-hour) even when each alone overlaps genuine behaviour. `demo` reads 0.95–0.97 for the same configurations, but its test split has only
 17–70 fraud payments per class.
 
 ## 15
