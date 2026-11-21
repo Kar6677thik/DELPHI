@@ -151,6 +151,7 @@ evidence_records(id, case_id, source_key, outcome, raw jsonb, record_refs jsonb,
 trace_events(id bigint identity, case_id, user_id, type, payload jsonb, at)
 police_alert_drafts(id, case_id, status (DRAFT|SENT_SIMULATED|DISCARDED), payload jsonb,
                     acted_by null, acted_at null)
+       -- migration 0014 (#106); unique case_id; acted_by and acted_at set iff not DRAFT
 campaigns(id, leading_hypothesis, case_count, f3_stage_max, expected_loss_paise,
           vulnerable_victims, rank_score, merged_into null, created_at, updated_at)
 labels(id, subject_type, subject_id, hypothesis_key, label_source, known_at, created_at,
