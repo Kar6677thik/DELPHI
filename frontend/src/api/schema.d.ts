@@ -448,7 +448,8 @@ export interface paths {
          * Act On Police Alert
          * @description Send (recorded as SENT_SIMULATED, with the case's evidence list) or discard the coercion
          *     case's police alert draft (docs/09 §6). Only a human call does this: nothing sends an alert
-         *     automatically (FR-NAV-10). 404 for a case without one, 409 once it was acted on.
+         *     automatically (FR-NAV-10). 404 for a case without one, 409 once it was acted on. The case
+         *     comes back with its new version as its `ETag` (docs/16 §1).
          */
         post: operations["act_on_police_alert_api_v1_cases__case_id__police_alert__action__post"];
         delete?: never;

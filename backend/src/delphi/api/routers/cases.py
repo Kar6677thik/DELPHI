@@ -508,10 +508,12 @@ def act_on_police_alert(
     *,
     principal: Annotated[Principal, Depends(require(Permission.CASE_WRITE))],
     request: Request,
+    response: Response,
 ) -> CaseDetail:
     """Send (recorded as SENT_SIMULATED, with the case's evidence list) or discard the coercion
     case's police alert draft (docs/09 §6). Only a human call does this: nothing sends an alert
-    automatically (FR-NAV-10). 404 for a case without one, 409 once it was acted on."""
+    automatically (FR-NAV-10). 404 for a case without one, 409 once it was acted on. The case
+    comes back with its new version as its `ETag` (docs/16 §1)."""
     platform = _platform(request)
     with platform.sessions.begin() as session:
         record = get_case(session, case_id)
@@ -531,4 +533,5 @@ def act_on_police_alert(
         )
         acted = get_case(session, case_id)  # the new version
         assert acted is not None
+        response.headers["ETag"] = f'"{acted.version}"'  # a mutable aggregate carries its ETag
         return _detail(session, acted, platform.clock.now())
