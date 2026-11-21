@@ -4,6 +4,8 @@ likelihoods, stores the record and returns the updated console."""
 
 from __future__ import annotations
 
+import json
+from collections import Counter
 from typing import Any
 from uuid import uuid4
 
@@ -108,6 +110,45 @@ def test_a_source_is_fetched_once_unless_refreshed(
         )
         == 1
     )
+
+
+def test_a_refresh_is_ranked_without_the_observation_it_replaces(
+    env: Env,  # noqa: F811 - the imported fixture
+    writer: tuple[TestClient, Principal],  # noqa: F811
+) -> None:
+    """#194 review: the refreshed record's rank and net value at request come from the case
+    without its old observation, so they match the first fetch's when nothing else changed.
+    The source is one whose net value no other eligible source shares: sources with no
+    information value tie on cost, and their order among themselves is not meaningful."""
+    client, _ = writer
+    case = _held_case(env)
+    # An undecided case (genuine or a digital arrest, even odds), so the sources carry real
+    # information value; in the fixture case every source's net value is just minus its cost.
+    hypotheses = list(client.get(f"/api/v1/cases/{case.id}").json()["posterior"])
+    rest = 1e-3
+    undecided = {h: rest for h in hypotheses}
+    split = (1 - rest * (len(hypotheses) - 2)) / 2
+    undecided |= {"GENUINE": split, "APP_DIGITAL_ARREST": split}
+    with env.owner.begin() as conn:
+        conn.execute(
+            text("UPDATE delphi.cases SET posterior = CAST(:p AS jsonb) WHERE id = :c"),
+            {"p": json.dumps(undecided), "c": case.id},
+        )
+    rows = client.get(f"/api/v1/cases/{case.id}").json()["next_best_evidence"]
+    values = Counter(r["net_value_paise"] for r in rows if r["eligible"])
+    source = next(
+        r["source_key"]
+        for r in rows
+        if r["eligible"]
+        and r["source_key"] != "CUSTOMER_OUTREACH_CALL"  # needs a recorded outcome
+        and values[r["net_value_paise"]] == 1
+        and r["net_value_paise"] > -r["cost_paise"]  # it has information value
+    )
+    [was] = _fetch(client, case, source_key=source).json()["evidence_records"]
+    refreshed = _fetch(client, case, source_key=source, refresh=True).json()
+    [card] = refreshed["evidence_records"]
+    assert card["rank_at_request"] == was["rank_at_request"]
+    assert card["net_value_at_request_paise"] == was["net_value_at_request_paise"]
 
 
 def test_an_outreach_call_needs_its_recorded_outcome_and_labels_coercion(

@@ -162,14 +162,17 @@ def _rank(
     *,
     kb: KnowledgeBase,
     profile: CompiledProfile,
+    posterior: Mapping[str, float],
     observed: frozenset[str],
     source_key: str,
 ) -> tuple[int | None, float | None]:
-    """The source's place and net value in the console's ranking at this moment (docs/09 §2)."""
+    """The source's place and net value in the console's ranking at this moment (docs/09 §2),
+    from ``posterior``: the case's, or for a refresh the case's without the superseded
+    observation."""
     view = console(
         kb,
         profile,
-        posterior=case.posterior,
+        posterior=posterior,
         amount_paise=case.amount_at_stake_paise,
         vulnerable=vulnerable_payer(session, case),
         protocol=case.protocol.value,
@@ -243,11 +246,18 @@ def request_evidence(
     if source_key in current and not refresh:
         return current[source_key]  # docs/09 §3: idempotent per (case, source)
 
+    before = belief_vector(profile, case.posterior)
+    if source_key in current:  # a refresh: take the superseded observation back out first
+        old = source.likelihood[source.outcomes.index(current[source_key].outcome)]
+        before = bayes_update(before, 1.0 / old)  # the KB floors likelihoods, so never 0
+    names = profile.hypotheses
+    posterior_before = {h: float(p) for h, p in zip(names, before, strict=True)}
     rank, net_value = _rank(
         session,
         case,
         kb=version.kb,
         profile=profile,
+        posterior=posterior_before,  # a refresh ranks without the observation it replaces
         observed=frozenset(current) - {source_key},
         source_key=source_key,
     )
@@ -261,13 +271,7 @@ def request_evidence(
         recorded_outcome=recorded_outcome,
         note=note,
     )
-    before = belief_vector(profile, case.posterior)
-    if source_key in current:  # a refresh: take the superseded observation back out first
-        old = source.likelihood[source.outcomes.index(current[source_key].outcome)]
-        before = bayes_update(before, 1.0 / old)  # the KB floors likelihoods, so never 0
     after = bayes_update(before, source.likelihood[source.outcomes.index(outcome)])
-    names = profile.hypotheses
-    posterior_before = {h: float(p) for h, p in zip(names, before, strict=True)}
     posterior_after = {h: float(p) for h, p in zip(names, after, strict=True)}
     record_id = uuid7(int(now.timestamp() * _MS))
     values = {
