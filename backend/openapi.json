@@ -2580,6 +2580,11 @@
               }
             ],
             "title": "Note"
+          },
+          "simulate": {
+            "type": "boolean",
+            "title": "Simulate",
+            "default": false
           }
         },
         "type": "object",

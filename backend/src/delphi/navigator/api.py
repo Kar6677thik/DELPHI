@@ -14,10 +14,12 @@ from delphi.navigator.console import (
 )
 from delphi.navigator.disposition import Disposition, dispose, vulnerable_payer
 from delphi.navigator.evidence import (
+    OUTREACH,
     EvidenceRecord,
     current_records,
     observed_sources,
     request_evidence,
+    request_simulated_outreach,
 )
 from delphi.navigator.police_alert import (
     AlertAction,
@@ -43,6 +45,7 @@ from delphi.navigator.store import (
 
 __all__ = [
     "HOLD_DECISIONS",
+    "OUTREACH",
     "AlertAction",
     "AlertStatus",
     "CaseCursor",
@@ -69,5 +72,6 @@ __all__ = [
     "open_case",
     "open_case_for_payment",
     "request_evidence",
+    "request_simulated_outreach",
     "vulnerable_payer",
 ]
