@@ -219,6 +219,24 @@ the artifact belong to `TRAIN_SENSING` (#88). Gaps the text above leaves open, f
   fallback is p_mule = 0.10, logged as a WARNING.
 - Training split: accounts are assigned to train, validation or test by the date of their
   first activity, using the same 2/3, 1/6, 1/6 proportions over the matured window as §4.
+- **Implementation** (`delphi.sensing.mule`, `delphi.sensing.trainers.load_mule_data` and
+  `train_mule_artifact`, #91). Where the bullets above are silent:
+  - **Label events.** An account is a mule if, by the training cutoff, the bank had an ACCOUNT
+    label with the MULE key (a registry listing; investigator dispositions from M5) or a
+    complaint naming it as a counterparty. Its label time is the first such event.
+  - **Each account's `as_of`.** A mule's features are taken 1 µs before its label time, so the
+    model never learns "a complaint (or a listing) means mule": `complaints_linked` is 0 for
+    every training mule (#142 review). A non-mule's features are taken at the end of the
+    matured window (cutoff − maturity), when the bank had seen no fraud label for it for at
+    least the maturity period.
+  - **"≥ 30 days of activity"** is read as: opened at least `negative_min_age_days` (30) before
+    its `as_of`. Both classes also need an executed payment before their `as_of`, and "first
+    activity" is the first such payment's execution time. The 21-day `test` history cannot hold
+    30 days of payments.
+  - The learning rate (0.1) is not in the bullets above; it lives in `sensing/config.yaml`. The
+    gate is enforced on `eval` only, as the bullet says; elsewhere it is reported.
+  - With no validation split holding both classes, the scores are left uncalibrated (the report
+    says `calibrated: false`).
 
 ## 7. Model artifacts and lifecycle
 

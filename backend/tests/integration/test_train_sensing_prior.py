@@ -105,8 +105,8 @@ def test_the_seed_trains_an_active_prior_from_delivered_labels(worker: Worker) -
     seeded, trained, elapsed = _seed_and_train(worker)
     assert seeded["rows"]["labels"] > 0
     assert trained["dataset_id"] == seeded["dataset_id"]
-    assert [a["kind"] for a in trained["artifacts"]] == ["PRIOR", "ANOMALY"]
-    assert set(trained["skipped"]) == {"MULE"}  # #91 registers its trainer
+    assert [a["kind"] for a in trained["artifacts"]] == ["PRIOR", "ANOMALY", "MULE"]
+    assert trained["skipped"] == []  # every sensing kind has its trainer (#90, #91)
     assert trained["cutoff"] == END.isoformat()  # the seed trains on what its history knew
     prior, model = worker.prior()
     assert prior.status is ArtifactStatus.ACTIVE

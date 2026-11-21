@@ -36,6 +36,7 @@ from delphi.sensing.artifacts import (
 from delphi.sensing.trainers import (
     NothingToTrainError,
     train_anomaly_artifact,
+    train_mule_artifact,
     train_prior_artifact,
 )
 from delphi.sim.api import DatasetInfo, current_dataset, history_window
@@ -66,6 +67,7 @@ Trainer = Callable[[TrainingRequest], TrainedModel]
 DEFAULT_TRAINERS: Mapping[ArtifactKind, Trainer] = {
     ArtifactKind.PRIOR: train_prior_artifact,
     ArtifactKind.ANOMALY: train_anomaly_artifact,
+    ArtifactKind.MULE: train_mule_artifact,
 }
 
 
