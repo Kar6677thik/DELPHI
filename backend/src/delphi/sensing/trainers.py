@@ -8,8 +8,9 @@ for a manual retrain, so a retrain learns from the labels that arrived since (do
 
 ``load_prior_data`` builds the prior model's three splits (the matured window, observed labels
 only, docs/13 §4); ``train_prior_artifact`` trains on them and hands ``store_artifact`` the
-blob, the report and the gate result. The tests use ``load_prior_data`` too, so they train
-exactly what the job trains.
+blob, the report and the gate result. ``train_anomaly_artifact`` fits the anomaly detector on
+the GENUINE rows of the same training split, with the same feature list (docs/13 §5). The
+tests use ``load_prior_data`` too, so they train exactly what the job trains.
 """
 
 from __future__ import annotations
@@ -21,9 +22,10 @@ from typing import TYPE_CHECKING
 import numpy as np
 from sqlalchemy import Connection, select
 
+from delphi.sensing.anomaly import train_anomaly_matrix
 from delphi.sensing.artifacts import ArtifactKind, TrainedModel
 from delphi.sensing.config import SensingConfig, load_sensing_config
-from delphi.sensing.features import prior_feature_names, to_us
+from delphi.sensing.features import PROBE_INPUT_FEATURES, prior_feature_names, to_us
 from delphi.sensing.offline import OfflineHistories, load_bank_frames
 from delphi.sensing.prior import (
     TEST,
@@ -157,4 +159,35 @@ def train_prior_artifact(request: TrainingRequest) -> TrainedModel:
         training_cutoff=request.cutoff,
         gate_passed=gate.passed,
         gate_reasons=gate.reasons,
+    )
+
+
+GENUINE = "GENUINE"
+
+
+def train_anomaly_artifact(request: TrainingRequest) -> TrainedModel:
+    """``TRAIN_SENSING``'s ANOMALY trainer (docs/13 §5): the isolation forest on the prior
+    model's training split, GENUINE rows only, with the prior's feature list. ``q`` feeds the
+    prior's open mass, so the double-count guard of docs/13 §3 applies: no probe inputs.
+
+    The anomaly detector has no quality gate (docs/13 §7 gates the prior and the mule scorer),
+    so its artifact is always activated."""
+    settings = load_sensing_config()
+    window = bank.history_window(request.dataset)
+    data = load_prior_data(request.conn, window, settings, cutoff=request.cutoff)
+    if set(data.feature_list) & PROBE_INPUT_FEATURES:  # docs/13 §3, §5
+        raise ValueError("the anomaly detector must not see probe inputs")
+    genuine = data.train.features[data.train.labels == settings.prior.classes.index(GENUINE)]
+    if len(genuine) == 0:
+        raise NothingToTrainError(
+            f"no GENUINE-labelled payment in the training split by {request.cutoff.isoformat()}"
+        )
+    model = train_anomaly_matrix(genuine, data.feature_list, settings.anomaly)
+    return TrainedModel(
+        kind=ArtifactKind.ANOMALY,
+        blob=model.to_bytes(),
+        metrics=model.metrics(),
+        feature_list=data.feature_list,
+        training_cutoff=request.cutoff,
+        gate_passed=True,
     )
