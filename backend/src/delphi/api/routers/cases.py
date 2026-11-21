@@ -29,6 +29,9 @@ from delphi.api.security import Permission, Principal, require
 from delphi.kb.model import UNEXPLAINED
 from delphi.kb.store import get_version
 from delphi.navigator.api import (
+    OUTREACH as OUTREACH_SOURCE,
+)
+from delphi.navigator.api import (
     AlertAction,
     AlertStatus,
     CaseCursor,
@@ -49,6 +52,7 @@ from delphi.navigator.api import (
     get_case,
     list_cases,
     request_evidence,
+    request_simulated_outreach,
     vulnerable_payer,
 )
 from delphi.platform.errors import DelphiError, NotFoundError, ProblemCode
@@ -463,6 +467,8 @@ class EvidenceRequest(BaseModel):
     refresh: bool = False
     outcome: str | None = None
     note: str | None = Field(default=None, max_length=2000)
+    # docs/09 §3: in simulation/autoplay the worker places the outreach call (202).
+    simulate: bool = False
 
 
 @router.post("/cases/{case_id}/evidence-requests", response_model=CaseDetail)
@@ -481,6 +487,23 @@ def request_case_evidence(
     platform = _platform(request)
 
     def run(session: Session) -> tuple[int, Any]:
+        if body.simulate:
+            if body.source_key != OUTREACH_SOURCE:
+                raise DelphiError(
+                    "Only CUSTOMER_OUTREACH_CALL can be simulated.",
+                    code=ProblemCode.VALIDATION_FAILED,
+                )
+            request_simulated_outreach(
+                session,
+                platform.clock,
+                case_id,
+                requested_by=principal.user_id,
+                simulator=platform.settings.simulation_enabled,
+            )
+            record = get_case(session, case_id)
+            assert record is not None
+            detail = _detail(session, record, platform.clock.now())
+            return HTTPStatus.ACCEPTED, detail.model_dump(mode="json")
         request_evidence(
             session,
             platform.clock,
@@ -496,7 +519,7 @@ def request_case_evidence(
         return HTTPStatus.OK, _detail(session, record, platform.clock.now()).model_dump(mode="json")
 
     reply = run_idempotent(request, raw, principal, key, run)
-    if reply.status_code == HTTPStatus.OK:
+    if reply.status_code in {HTTPStatus.OK, HTTPStatus.ACCEPTED}:
         reply.headers["ETag"] = f'"{json.loads(bytes(reply.body))["version"]}"'
     return reply
 

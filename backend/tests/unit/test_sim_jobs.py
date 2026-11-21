@@ -14,7 +14,7 @@ from delphi.kb.model import KnowledgeBase
 from delphi.platform.clock import SystemClock
 from delphi.platform.db import make_session_factory
 from delphi.platform.jobs import JobType
-from delphi.platform.settings import Settings
+from delphi.platform.settings import Settings, SettingsError
 from delphi.platform.wiring import Platform
 from delphi.probes.registry import CLASSIFIER_NAMES
 from delphi.sim.generator_config import load_generator_config
@@ -54,6 +54,13 @@ def test_the_worker_registers_generate_dataset_only_with_its_sim_pool() -> None:
     finally:
         assert sim is not None
         sim.dispose()
+
+
+def test_a_worker_that_should_simulate_needs_the_sim_pool() -> None:
+    """The api accepts simulated calls on DELPHI_SIMULATION_ENABLED; a worker with the flag but
+    no sim pool would leave them queued for ever, so it refuses to start (#196 review)."""
+    with pytest.raises(SettingsError, match="DELPHI_SIM_DATABASE_URL"):
+        worker_registry(_platform(simulation_enabled=True))
 
 
 @pytest.mark.parametrize(

@@ -17,7 +17,7 @@ clock, mapped through the ACTIVE KB at delivery (docs/14 §7).
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from typing import Any
 from uuid import UUID
@@ -27,6 +27,7 @@ from sqlalchemy import Connection, Engine, exists, func, select
 from delphi.kb.model import KnowledgeBase
 from delphi.kb.store import active_version
 from delphi.platform.clock import Clock
+from delphi.platform.errors import DelphiError, ProblemCode
 from delphi.platform.ids import uuid7
 from delphi.platform.jobs import JobContext, JobRegistry, JobType, enqueue
 from delphi.platform.locks import DATASET_WRITE_LOCK_KEY
@@ -34,11 +35,13 @@ from delphi.sim import bank
 from delphi.sim.catalog import READY, datasets
 from delphi.sim.dataset import generate_dataset
 from delphi.sim.delivery import deliver_labels
+from delphi.sim.external import outreach_answer
 from delphi.sim.generator_config import GeneratorConfig, history_end, load_generator_config
 from delphi.sim.personas import manifest_json
-from delphi.sim.response_models import load_config
+from delphi.sim.response_models import ResponseModels, load_config, load_response_models
+from delphi.sim.scenarios import ScenarioType
 from delphi.sim.stats import StatsReport, dataset_stats
-from delphi.sim.truth import persona_manifests
+from delphi.sim.truth import payment_truth, persona_manifests, scenario_instances
 from delphi.sim.writer import write_dataset
 
 # Progress reported as the job goes (docs/16 §2): started, generated, written.
@@ -224,6 +227,58 @@ class LabelDeliveryJob:
         return {"delivered": delivered, "until": now.isoformat()}
 
 
+OutreachRecorder = Callable[[UUID, str], None]
+
+
+@dataclass(frozen=True, slots=True)
+class OutreachCallJob:
+    """``SIM_OUTREACH_CALL`` (docs/09 §3): the customer's answer to the verified outreach call
+    about a held payment, sampled from the response models by the payment's scenario (ground
+    truth, which only the simulator reads; docs/14 §9's ``keyed_rng(seed, "outreach",
+    payment_id)``, so every run hears the same answer). ``record`` stores it through the
+    Navigator's evidence fetch (the composition root wires it, as the app role)."""
+
+    sim_engine: Engine
+    models: ResponseModels
+    record: OutreachRecorder
+
+    def __call__(self, ctx: JobContext) -> Mapping[str, Any] | None:
+        case_id = UUID(str(ctx.job.params["case_id"]))
+        payment_id = UUID(str(ctx.job.params["payment_id"]))
+        pt, si = payment_truth.c, scenario_instances.c
+        with self.sim_engine.connect() as conn:
+            row = conn.execute(
+                select(si.scenario_type, pt.coached)
+                .join(scenario_instances, si.id == pt.scenario_instance_id)
+                .where(pt.payment_id == payment_id)
+            ).one_or_none()
+            # The seed the bank was generated with (docs/14 §9): a dataset may override its
+            # profile's default seed, and every policy must hear the same answer.
+            seed = conn.execute(
+                select(datasets.c.seed).order_by(datasets.c.created_at.desc()).limit(1)
+            ).scalar_one_or_none()
+        if row is None or seed is None:
+            return {"recorded": False, "reason": "no ground truth for this payment"}
+        answer = outreach_answer(
+            self.models,
+            int(seed),
+            str(payment_id),
+            ScenarioType(row.scenario_type),
+            coached=bool(row.coached),
+            # sim_day stays 0: the call is about one held payment, not a day of the stream, so
+            # docs/14 §5.3's adaptation (scammers coaching better over the days) does not apply.
+            sim_day=0.0,
+        )
+        try:
+            self.record(case_id, answer)
+        except DelphiError as exc:
+            if exc.code is not ProblemCode.INVALID_STATE_TRANSITION:
+                raise
+            # The case was disposed before the call came back: nothing to record, not a failure.
+            return {"recorded": False, "reason": "case disposed", "outcome": answer}
+        return {"recorded": True, "outcome": answer}
+
+
 def register_sim_jobs(
     registry: JobRegistry,
     *,
@@ -231,8 +286,10 @@ def register_sim_jobs(
     clock: Clock,
     kb: KnowledgeBase,
     allowed_profiles: frozenset[str] | None = None,
+    record_outreach: OutreachRecorder | None = None,
 ) -> None:
-    """Add the simulator's handlers. ``sim_engine`` connects as ``delphi_sim``."""
+    """Add the simulator's handlers. ``sim_engine`` connects as ``delphi_sim``.
+    ``record_outreach`` stores a simulated outreach answer as evidence (the Navigator's)."""
     registry.register(
         JobType.GENERATE_DATASET,
         GenerateDatasetJob(
@@ -247,3 +304,12 @@ def register_sim_jobs(
     registry.register(
         JobType.LABEL_DELIVERY, LabelDeliveryJob(sim_engine=sim_engine, clock=clock, kb=kb)
     )
+    if record_outreach is not None:
+        registry.register(
+            JobType.SIM_OUTREACH_CALL,
+            OutreachCallJob(
+                sim_engine=sim_engine,
+                models=load_response_models(),
+                record=record_outreach,
+            ),
+        )

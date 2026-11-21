@@ -14,6 +14,7 @@ import threading
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
+from uuid import UUID
 
 import uvicorn
 from alembic import command
@@ -26,6 +27,10 @@ from delphi.kb.issues import KbValidationError
 from delphi.kb.loader import load_and_validate
 from delphi.kb.model import KnowledgeBase
 from delphi.kb.store import active_version, ensure_kb_v1
+from delphi.llm.service import LlmService, primary_provider
+from delphi.navigator.api import OUTREACH as OUTREACH_SOURCE
+from delphi.navigator.api import request_evidence
+from delphi.navigator.jobs import register_navigator_jobs
 from delphi.platform.accounts import BootstrapError, ensure_bootstrap_admin
 from delphi.platform.clock import SystemClock
 from delphi.platform.db import alembic_config, make_engine, make_session_factory
@@ -190,6 +195,20 @@ def worker_registry(
         registry, engine=platform.engine, sessions=platform.sessions, clock=platform.clock
     )
     settings = platform.settings
+    llm = LlmService(
+        platform.sessions,
+        platform.clock,
+        primary_provider(settings),
+        settings.llm_daily_token_budget,
+    )
+    register_navigator_jobs(registry, sessions=platform.sessions, llm=llm)
+    if settings.simulation_enabled and settings.sim_database_url is None:
+        # The api accepts simulated calls on this flag; a worker without the simulator's pool
+        # would leave them queued for ever (docs/09 §3).
+        raise SettingsError(
+            "DELPHI_SIMULATION_ENABLED is set but DELPHI_SIM_DATABASE_URL is not: the worker"
+            " could not run the simulator's jobs."
+        )
     if settings.sim_database_url is None:
         log.warning("worker.sim_jobs_disabled", reason="DELPHI_SIM_DATABASE_URL is not set")
         return registry, None
@@ -206,8 +225,28 @@ def worker_registry(
         clock=platform.clock,
         kb=kb,
         allowed_profiles=settings.allowed_dataset_profiles,
+        record_outreach=_outreach_recorder(platform),
     )
     return registry, sim_engine
+
+
+def _outreach_recorder(platform: Platform) -> Callable[[UUID, str], None]:
+    """A simulated outreach answer recorded as the case's evidence, as the app role (docs/09
+    §3): the same evidence fetch an investigator's recorded result goes through."""
+
+    def record_outreach(case_id: UUID, outcome: str) -> None:
+        with platform.sessions.begin() as session:
+            request_evidence(
+                session,
+                platform.clock,
+                case_id,
+                OUTREACH_SOURCE,
+                requested_by=None,
+                recorded_outcome=outcome,
+                note="Simulated outreach call.",
+            )
+
+    return record_outreach
 
 
 def _worker(settings: Settings) -> int:
