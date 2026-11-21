@@ -39,5 +39,9 @@ export type EvidenceRow = Schemas['EvidenceRowView'];
 export type EvidenceRecord = Schemas['EvidenceRecordView'];
 /** "What would change my mind" (docs/06 §12). */
 export type Flip = Schemas['FlipView'];
+/** `POST /cases/{id}/evidence-requests`. */
+export type EvidenceRequest = Schemas['EvidenceRequest'];
+/** `POST /cases/{id}/disposition`. */
+export type DispositionRequest = Schemas['DispositionRequest'];
 /** The case queue's orders. */
 export type CaseSort = Schemas['CaseSort'];

@@ -1,6 +1,7 @@
+import { useState } from 'react';
 import { Link, useParams } from 'react-router';
 
-import { useCase } from '../api/cases';
+import { useCase, useRequestEvidence } from '../api/cases';
 import { useKbDisplay } from '../api/guardian';
 import type { CaseDetail, EvidenceRow, Flip } from '../api/types';
 import { EvidenceCard } from '../components/EvidenceCard';
@@ -8,7 +9,12 @@ import { HypothesisBar, type HypothesisStyles, percent } from '../components/Hyp
 import { MoneyText } from '../components/MoneyText';
 import { ProblemAlert } from '../components/ProblemAlert';
 import { RiskTable } from '../components/RiskTable';
+import { RoleGate } from '../components/RoleGate';
 import { decisionText, humanise } from '../lib/format';
+import { DispositionPanel } from './DispositionPanel';
+
+/** The outreach call is recorded by the investigator, not fetched (docs/09 §3). */
+export const OUTREACH = 'CUSTOMER_OUTREACH_CALL';
 
 /** docs/09 §2 item 3; the banner follows it with the expected loss in ₹. */
 export function sufficiencyText(detail: CaseDetail): string {
@@ -45,12 +51,32 @@ export function CaseConsolePage() {
           <ProblemAlert error={found.error} title="Could not load the case" />
         </div>
       )}
-      {found.isSuccess && <Console detail={found.data.detail} styles={kb.data?.styles ?? {}} />}
+      {found.isSuccess && (
+        <Console
+          detail={found.data.detail}
+          etag={found.data.etag}
+          styles={kb.data?.styles ?? {}}
+          outreachOutcomes={kb.data?.outcomes[OUTREACH] ?? []}
+          reload={() => found.refetch()}
+        />
+      )}
     </section>
   );
 }
 
-function Console({ detail, styles }: { detail: CaseDetail; styles: HypothesisStyles }) {
+function Console({
+  detail,
+  etag,
+  styles,
+  outreachOutcomes,
+  reload,
+}: {
+  detail: CaseDetail;
+  etag: string;
+  styles: HypothesisStyles;
+  outreachOutcomes: readonly string[];
+  reload: () => Promise<unknown>;
+}) {
   const disposed = detail.status === 'DISPOSED';
   const names: Record<string, string> = Object.fromEntries(
     detail.evidence_records.map((r) => [r.id, humanise(r.source_key)]),
@@ -88,7 +114,13 @@ function Console({ detail, styles }: { detail: CaseDetail; styles: HypothesisSty
 
       {detail.evidence_sufficient && !disposed && <SufficiencyBanner detail={detail} />}
 
-      {!disposed && <NextBestEvidence rows={detail.next_best_evidence} />}
+      {!disposed && (
+        <NextBestEvidence
+          caseId={detail.id}
+          rows={detail.next_best_evidence}
+          outreachOutcomes={outreachOutcomes}
+        />
+      )}
 
       {detail.what_would_change_my_mind && (
         <WhatWouldChange flip={detail.what_would_change_my_mind} />
@@ -113,11 +145,13 @@ function Console({ detail, styles }: { detail: CaseDetail; styles: HypothesisSty
           </div>
         )}
       </section>
+
+      <DispositionPanel detail={detail} etag={etag} styles={styles} reload={reload} />
     </div>
   );
 }
 
-/** docs/09 §2 item 3: the planner says STOP. Fetching more stays allowed (part 2, #105). */
+/** docs/09 §2 item 3: the planner says STOP. Fetching more is still allowed. */
 function SufficiencyBanner({ detail }: { detail: CaseDetail }) {
   const loss = detail.risk_by_decision[detail.recommended_decision] ?? 0;
   return (
@@ -148,12 +182,27 @@ function WhatWouldChange({ flip }: { flip: Flip }) {
 }
 
 /** docs/09 §2 item 2: eligible rows by net value; the protocol's pinned row first. */
-function NextBestEvidence({ rows }: { rows: readonly EvidenceRow[] }) {
+function NextBestEvidence({
+  caseId,
+  rows,
+  outreachOutcomes,
+}: {
+  caseId: string;
+  rows: readonly EvidenceRow[];
+  outreachOutcomes: readonly string[];
+}) {
+  const fetch = useRequestEvidence(caseId);
+  const [calling, setCalling] = useState(false);
   return (
     <section aria-labelledby="next-title">
       <h2 id="next-title" className="text-lg font-semibold">
         Next best evidence
       </h2>
+      {fetch.isError && (
+        <div className="mt-2">
+          <ProblemAlert error={fetch.error} title="Could not fetch the evidence" />
+        </div>
+      )}
       {rows.length === 0 ? (
         <p className="mt-2 text-slate-600">No more evidence to fetch.</p>
       ) : (
@@ -172,6 +221,9 @@ function NextBestEvidence({ rows }: { rows: readonly EvidenceRow[] }) {
               </th>
               <th scope="col" className="py-2 pr-4 text-right">
                 Net value
+              </th>
+              <th scope="col" className="py-2 pr-4">
+                <span className="sr-only">Action</span>
               </th>
             </tr>
           </thead>
@@ -200,11 +252,118 @@ function NextBestEvidence({ rows }: { rows: readonly EvidenceRow[] }) {
                 <td className="py-2 pr-4 text-right">
                   {row.net_value_paise === null ? '—' : <MoneyText paise={row.net_value_paise} />}
                 </td>
+                <td className="py-2 pr-4">
+                  <RoleGate permission="case:write">
+                    {(allowed) => (
+                      <button
+                        type="button"
+                        disabled={!allowed || !row.eligible || fetch.isPending}
+                        onClick={() => {
+                          if (row.source_key === OUTREACH) setCalling(true);
+                          else
+                            fetch.mutate({
+                              source_key: row.source_key,
+                              refresh: false,
+                              simulate: false,
+                            });
+                        }}
+                        className="rounded-md border border-slate-300 px-3 py-1 disabled:opacity-50"
+                      >
+                        {row.source_key === OUTREACH ? 'Record call' : 'Fetch'}
+                      </button>
+                    )}
+                  </RoleGate>
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       )}
+      {calling && (
+        <OutreachForm
+          outcomes={outreachOutcomes}
+          pending={fetch.isPending}
+          onCancel={() => {
+            setCalling(false);
+          }}
+          onSubmit={(outcome, note) => {
+            fetch.mutate(
+              { source_key: OUTREACH, outcome, note, refresh: false, simulate: false },
+              {
+                onSuccess: () => {
+                  setCalling(false);
+                },
+              },
+            );
+          }}
+        />
+      )}
     </section>
+  );
+}
+
+/** docs/09 §3: the investigator records the call's result as one outcome, with a note. */
+function OutreachForm({
+  outcomes,
+  pending,
+  onCancel,
+  onSubmit,
+}: {
+  outcomes: readonly string[];
+  pending: boolean;
+  onCancel: () => void;
+  onSubmit: (outcome: string, note: string | null) => void;
+}) {
+  const [outcome, setOutcome] = useState('');
+  const [note, setNote] = useState('');
+  return (
+    <form
+      aria-label="Record the outreach call"
+      className="mt-3 space-y-3 rounded-md border border-slate-200 p-4 text-sm"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (outcome) onSubmit(outcome, note.trim() || null);
+      }}
+    >
+      <fieldset>
+        <legend className="font-medium">Call result</legend>
+        {outcomes.map((o) => (
+          <label key={o} className="mt-1 flex items-center gap-2">
+            <input
+              type="radio"
+              name="outcome"
+              value={o}
+              checked={outcome === o}
+              onChange={() => {
+                setOutcome(o);
+              }}
+            />
+            {humanise(o)}
+          </label>
+        ))}
+      </fieldset>
+      <label className="block">
+        Note
+        <textarea
+          value={note}
+          onChange={(event) => {
+            setNote(event.target.value);
+          }}
+          className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2"
+        />
+      </label>
+      <div className="flex gap-2">
+        <button
+          type="submit"
+          disabled={!outcome || pending}
+          className="rounded-md bg-slate-900 px-3 py-1 text-white disabled:opacity-50"
+        >
+          Record
+        </button>
+        <button type="button" onClick={onCancel} className="rounded-md border px-3 py-1">
+          Cancel
+        </button>
+      </div>
+    </form>
   );
 }

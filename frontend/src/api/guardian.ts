@@ -60,6 +60,8 @@ export interface KbDisplay {
   styles: HypothesisStyles;
   /** The GUARDIAN_PAYMENT profile's decisions, least intrusive first. */
   decisions: readonly string[];
+  /** Each source's outcomes (docs/07 §3), e.g. what an outreach call can record. */
+  outcomes: Readonly<Record<string, readonly string[]>>;
 }
 
 const GUARDIAN_PROFILE = 'GUARDIAN_PAYMENT';
@@ -94,7 +96,13 @@ export function kbDisplay(content: unknown): KbDisplay {
   const decisions = Array.isArray(profile.decisions)
     ? profile.decisions.filter((d): d is string => typeof d === 'string')
     : [];
-  return { styles, decisions };
+  const outcomes: Record<string, string[]> = {};
+  const sources = isRecord(kb.sources) ? kb.sources : {};
+  for (const [key, source] of Object.entries(sources)) {
+    const list = isRecord(source) && Array.isArray(source.outcomes) ? source.outcomes : [];
+    outcomes[key] = list.filter((o): o is string => typeof o === 'string');
+  }
+  return { styles, decisions, outcomes };
 }
 
 function kbVersionQuery(versionId: number) {
