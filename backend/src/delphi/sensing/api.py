@@ -16,12 +16,14 @@ from delphi.platform.errors import DelphiError, InvalidStateTransitionError, Pro
 from delphi.platform.jobs import Enqueued, JobRecord, JobStatus, JobType, enqueue, list_jobs
 from delphi.platform.tables import jobs
 from delphi.sensing.artifacts import ArtifactKind, StoredArtifact, active_artifacts
+from delphi.sensing.mule_scores import MuleScores
 from delphi.sensing.prior import with_payer_mule
 from delphi.sim.api import current_dataset
 
 __all__ = [
     "ArtifactKind",
     "Initialisation",
+    "MuleScores",
     "StoredArtifact",
     "active_artifacts",
     "initialisation",
