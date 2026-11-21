@@ -23,16 +23,17 @@ from pydantic import BaseModel
 
 from delphi.api.routers import API_PREFIX
 from delphi.api.security import Permission, Principal, require
-from delphi.guardian import ddpack
 from delphi.guardian.api import (
     SessionCursor,
     SessionFilter,
     SessionMode,
     SessionRow,
     SessionStatus,
+    build_dd_pack,
     get_session_row,
     list_sessions,
     probe_run_rows,
+    render_dd_pack_html,
 )
 from delphi.kb.store import active_version
 from delphi.platform.errors import DelphiError, NotFoundError, ProblemCode
@@ -322,7 +323,7 @@ def read_dd_pack(
 ) -> Any:
     """The session's due-diligence pack (docs/09 §7): JSON, or a printable HTML page."""
     with _platform(request).sessions() as session:
-        pack = ddpack.build(session, session_id)
+        pack = build_dd_pack(session, session_id)
     if format is DdPackFormat.HTML:
-        return HTMLResponse(ddpack.render_html(pack))
+        return HTMLResponse(render_dd_pack_html(pack))
     return pack.as_json()
