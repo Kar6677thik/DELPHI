@@ -179,8 +179,16 @@ the artifact belong to `TRAIN_SENSING` (#88). Gaps the text above leaves open, f
 
 - scikit-learn `IsolationForest(n_estimators=200, contamination="auto", random_state=7)` on the
   payment features of training-window payments labelled GENUINE.
+- **Features: the prior model's feature list**, never the probe inputs (`PROBE_INPUT_FEATURES`).
+  `q` feeds the prior's open mass (doc 06 §11), so the double-count guard of §3 applies to it
+  too: a new device or a mule-scored payee must move the belief once, through its probe, not
+  again through `q` (#134 review).
+- **Training rows:** the GENUINE-labelled rows of the prior model's training split (§4: the
+  matured window, observed labels only, up to the job's training cutoff).
 - `q` = the empirical percentile of the payment's anomaly score (−`score_samples`) within the
   training scores (stored as a sorted array of 10,001 quantiles in the artifact).
+- No quality gate: the ANOMALY artifact is activated on every training
+  (`delphi.sensing.trainers.train_anomaly_artifact`, #90).
 
 ## 6. Mule scorer
 

@@ -1,6 +1,7 @@
-"""The seed trains the prior (docs/13 §7, #88's last criteria, #159): GENERATE_DATASET writes the
-`test` dataset and delivers its labels, queues TRAIN_SENSING, and TRAIN_SENSING's PRIOR trainer
-stores an ACTIVE artifact from the delivered labels, end to end in 60 s or less. A manual retrain
+"""The seed trains the prior and the anomaly detector (docs/13 §5, §7, #88's last criteria, #159,
+#90): GENERATE_DATASET writes the `test` dataset and delivers its labels, queues TRAIN_SENSING,
+and TRAIN_SENSING's PRIOR and ANOMALY trainers store ACTIVE artifacts from the delivered labels,
+end to end in 60 s or less. A manual retrain
 cuts at the clock, so it learns from the labels delivered since (#162 review)."""
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from delphi.platform.db import make_session_factory
 from delphi.platform.jobs import JobQueue, JobRegistry, JobStatus, JobType, QueueConfig, enqueue
 from delphi.platform.tables import jobs
 from delphi.platform.worker import run_job
+from delphi.sensing.anomaly import AnomalyModel
 from delphi.sensing.artifacts import (
     ArtifactKind,
     ArtifactStatus,
@@ -29,6 +31,7 @@ from delphi.sensing.artifacts import (
     active_artifacts,
     load_blob,
 )
+from delphi.sensing.features import PROBE_INPUT_FEATURES
 from delphi.sensing.jobs import register_sensing_jobs
 from delphi.sensing.prior import PriorModel
 from delphi.sim.generator_config import history_end, load_generator_config
@@ -69,6 +72,11 @@ class Worker:
             artifact = active_artifacts(conn)[ArtifactKind.PRIOR]
             return artifact, PriorModel.from_bytes(load_blob(conn, artifact.id))
 
+    def anomaly(self) -> tuple[StoredArtifact, AnomalyModel]:
+        with self.app.connect() as conn:
+            artifact = active_artifacts(conn)[ArtifactKind.ANOMALY]
+            return artifact, AnomalyModel.from_bytes(load_blob(conn, artifact.id))
+
 
 @pytest.fixture
 def worker(create_database: Callable[[], str], kb: KnowledgeBase) -> Iterator[Worker]:
@@ -97,9 +105,8 @@ def test_the_seed_trains_an_active_prior_from_delivered_labels(worker: Worker) -
     seeded, trained, elapsed = _seed_and_train(worker)
     assert seeded["rows"]["labels"] > 0
     assert trained["dataset_id"] == seeded["dataset_id"]
-    # The registry lists some mules early in the `test` history, so MULE trains too (#91).
-    assert [a["kind"] for a in trained["artifacts"]] == ["PRIOR", "MULE"]
-    assert set(trained["skipped"]) == {"ANOMALY"}  # #90 registers its trainer
+    assert [a["kind"] for a in trained["artifacts"]] == ["PRIOR", "ANOMALY", "MULE"]
+    assert trained["skipped"] == []  # every sensing kind has its trainer (#90, #91)
     assert trained["cutoff"] == END.isoformat()  # the seed trains on what its history knew
     prior, model = worker.prior()
     assert prior.status is ArtifactStatus.ACTIVE
@@ -124,3 +131,23 @@ def test_a_manual_retrain_learns_from_the_labels_delivered_since(worker: Worker)
     prior, model = worker.prior()
     assert prior.training_cutoff == T0 and prior.version == 2
     assert model.report["n_train"] >= first.report["n_train"]
+
+
+def test_the_seed_trains_an_active_anomaly_detector_on_the_priors_features(
+    worker: Worker,
+) -> None:
+    """docs/13 §5 (#134 review): the forest uses the prior's feature list, so `q` never sees a
+    probe input, and trains on the GENUINE rows of the prior's training split."""
+    seeded, _, _ = _seed_and_train(worker)
+    prior, prior_model = worker.prior()
+    anomaly, model = worker.anomaly()
+    assert anomaly.status is ArtifactStatus.ACTIVE and anomaly.gate_passed
+    assert anomaly.dataset_id == UUID(seeded["dataset_id"])
+    assert anomaly.training_cutoff == prior.training_cutoff == END
+    assert tuple(anomaly.feature_list) == tuple(prior.feature_list) == model.feature_list
+    assert not set(anomaly.feature_list) & PROBE_INPUT_FEATURES
+    # GENUINE rows of the training split only: fewer than the prior's whole split
+    assert 0 < model.n_train < prior_model.report["n_train"]
+    assert anomaly.metrics["n_train"] == model.n_train
+    assert model.percentile_of_score(float(model.quantiles[0])) > 0.0
+    assert model.percentile_of_score(float(model.quantiles[-1]) + 1.0) == 1.0

@@ -413,10 +413,122 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/cases/{case_id}/evidence-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Request Case Evidence
+         * @description Fetch one evidence item (docs/09 §3): the adapter's facts, the outcome, and the case
+         *     posterior updated. Idempotent per (case, source) unless `refresh`; 409 once disposed; 422
+         *     for a source outside the case's profile or an outreach call without its recorded outcome.
+         */
+        post: operations["request_case_evidence_api_v1_cases__case_id__evidence_requests_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/cases/{case_id}/police-alert/{action}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Act On Police Alert
+         * @description Send (recorded as SENT_SIMULATED, with the case's evidence list) or discard the coercion
+         *     case's police alert draft (docs/09 §6). Only a human call does this: nothing sends an alert
+         *     automatically (FR-NAV-10). 404 for a case without one, 409 once it was acted on.
+         */
+        post: operations["act_on_police_alert_api_v1_cases__case_id__police_alert__action__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/guardian/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Sessions
+         * @description The monitor's list: newest first. ``from`` is inclusive and ``to`` exclusive, on the
+         *     session's start.
+         */
+        get: operations["read_sessions_api_v1_guardian_sessions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/guardian/sessions/{session_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Session */
+        get: operations["read_session_api_v1_guardian_sessions__session_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/guardian/sessions/{session_id}/dd-pack": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Dd Pack
+         * @description The session's due-diligence pack (docs/09 §7): JSON, or a printable HTML page.
+         */
+        get: operations["read_dd_pack_api_v1_guardian_sessions__session_id__dd_pack_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * AlertAction
+         * @enum {string}
+         */
+        AlertAction: "send" | "discard";
+        /**
+         * AlertStatus
+         * @enum {string}
+         */
+        AlertStatus: "DRAFT" | "SENT_SIMULATED" | "DISCARDED";
         /**
          * ArtifactKind
          * @description The sensing models (docs/13 §1).
@@ -431,6 +543,17 @@ export interface components {
             checked: number;
             /** First Bad Id */
             first_bad_id?: number | null;
+        };
+        /**
+         * Baselines
+         * @description What B1 and B2 (docs/22 §2) would have done with this payment (docs/08 §6). B2's
+         *     ``OTP_STEP_UP`` releases only if the OTP passes.
+         */
+        Baselines: {
+            /** B1 */
+            B1: string;
+            /** B2 */
+            B2: string;
         };
         /**
          * CaseDetail
@@ -513,6 +636,9 @@ export interface components {
             /** Evidence Sufficient */
             evidence_sufficient: boolean;
             what_would_change_my_mind: components["schemas"]["FlipView"] | null;
+            /** Evidence Records */
+            evidence_records: components["schemas"]["EvidenceRecordView"][];
+            police_alert: components["schemas"]["PoliceAlertView"] | null;
         };
         /** CasePage */
         CasePage: {
@@ -651,6 +777,11 @@ export interface components {
             seed?: number | null;
         };
         /**
+         * DdPackFormat
+         * @enum {string}
+         */
+        DdPackFormat: "json" | "html";
+        /**
          * DiffOp
          * @enum {string}
          */
@@ -670,6 +801,72 @@ export interface components {
             note?: string | null;
             /** Override Rationale */
             override_rationale?: string | null;
+        };
+        /**
+         * EvidenceRecordView
+         * @description docs/09 §2 item 5: one fetched evidence record (an evidence card).
+         */
+        EvidenceRecordView: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Source Key */
+            source_key: string;
+            /** Outcome */
+            outcome: string;
+            /** Facts */
+            facts: {
+                [key: string]: unknown;
+            };
+            /** Record Refs */
+            record_refs: string[];
+            /** Posterior Before */
+            posterior_before: {
+                [key: string]: number;
+            };
+            /** Posterior After */
+            posterior_after: {
+                [key: string]: number;
+            };
+            /** Info Yield Bits */
+            info_yield_bits: number;
+            /** Rank At Request */
+            rank_at_request: number | null;
+            /** Net Value At Request Paise */
+            net_value_at_request_paise: number | null;
+            /** Fetch Ms */
+            fetch_ms: number;
+            /** Requested By */
+            requested_by: string | null;
+            /**
+             * Requested At
+             * Format: date-time
+             */
+            requested_at: string;
+            /** Narrative */
+            narrative: string | null;
+            /** Narrative Source */
+            narrative_source: string | null;
+        };
+        /**
+         * EvidenceRequest
+         * @description docs/16: `{source_key, refresh?}`; `CUSTOMER_OUTREACH_CALL` also takes the investigator's
+         *     recorded `outcome` and a `note` (docs/09 §3).
+         */
+        EvidenceRequest: {
+            /** Source Key */
+            source_key: string;
+            /**
+             * Refresh
+             * @default false
+             */
+            refresh: boolean;
+            /** Outcome */
+            outcome?: string | null;
+            /** Note */
+            note?: string | null;
         };
         /**
          * EvidenceRowView
@@ -708,6 +905,104 @@ export interface components {
             new_decision: string;
             /** Risk Change Paise */
             risk_change_paise: number;
+        };
+        /** GuardianSessionPage */
+        GuardianSessionPage: {
+            /** Items */
+            items: components["schemas"]["GuardianSessionSummary"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
+        /**
+         * GuardianSessionSummary
+         * @description A row of the monitor's list (docs/08 §6).
+         */
+        GuardianSessionSummary: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            payment: components["schemas"]["PaymentSummary"];
+            /** Status */
+            status: string;
+            /** Decision */
+            decision: string | null;
+            /** Terminal Reason */
+            terminal_reason: string | null;
+            /** Kb Version Id */
+            kb_version_id: number;
+            /** Leading Hypothesis */
+            leading_hypothesis: string | null;
+            /** Posterior */
+            posterior: {
+                [key: string]: number;
+            } | null;
+            /** Unexplained */
+            unexplained: boolean;
+            baselines: components["schemas"]["Baselines"] | null;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /** Decided At */
+            decided_at: string | null;
+            /** Case Id */
+            case_id: string | null;
+            /** Dd Pack Complete */
+            dd_pack_complete: boolean;
+            /** Version */
+            version: number;
+        };
+        /**
+         * GuardianSessionView
+         * @description docs/16 `GuardianSessionView`.
+         */
+        GuardianSessionView: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            payment: components["schemas"]["PaymentSummary"];
+            /** Status */
+            status: string;
+            /** Decision */
+            decision: string | null;
+            /** Terminal Reason */
+            terminal_reason: string | null;
+            /** Kb Version Id */
+            kb_version_id: number;
+            /** Leading Hypothesis */
+            leading_hypothesis: string | null;
+            /** Posterior */
+            posterior: {
+                [key: string]: number;
+            } | null;
+            /** Unexplained */
+            unexplained: boolean;
+            baselines: components["schemas"]["Baselines"] | null;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /** Decided At */
+            decided_at: string | null;
+            /** Case Id */
+            case_id: string | null;
+            /** Dd Pack Complete */
+            dd_pack_complete: boolean;
+            /** Version */
+            version: number;
+            prior: components["schemas"]["PriorView"];
+            /** Risk By Decision */
+            risk_by_decision: {
+                [key: string]: number;
+            } | null;
+            /** Probe Runs */
+            probe_runs: components["schemas"]["ProbeRunView"][];
         };
         /** HealthView */
         HealthView: {
@@ -882,12 +1177,131 @@ export interface components {
             /** Gate Passed */
             gate_passed: boolean;
         };
+        /** PaymentSummary */
+        PaymentSummary: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Payer Account Id
+             * Format: uuid
+             */
+            payer_account_id: string;
+            /**
+             * Payee Account Id
+             * Format: uuid
+             */
+            payee_account_id: string;
+            /** Amount Paise */
+            amount_paise: number;
+            /** Channel */
+            channel: string;
+            /**
+             * Initiated At
+             * Format: date-time
+             */
+            initiated_at: string;
+            /** Device Id */
+            device_id: string | null;
+            /** Status */
+            status: string;
+        };
         /**
          * Permission
          * @description docs/19 §3.
          * @enum {string}
          */
         Permission: "view" | "demo:drive" | "case:write" | "chase:write" | "fde" | "admin";
+        /**
+         * PoliceAlertView
+         * @description docs/09 §6: the coercion case's police alert draft and what a human did with it.
+         */
+        PoliceAlertView: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            status: components["schemas"]["AlertStatus"];
+            /** Payload */
+            payload: {
+                [key: string]: unknown;
+            };
+            /** Acted By */
+            acted_by: string | null;
+            /** Acted At */
+            acted_at: string | null;
+        };
+        /** PriorView */
+        PriorView: {
+            /** Probs */
+            probs: {
+                [key: string]: number;
+            } | null;
+            /** P Model */
+            p_model: {
+                [key: string]: number;
+            } | null;
+            /** Anomaly Percentile */
+            anomaly_percentile: number | null;
+            /** Open Mass */
+            open_mass: number | null;
+            /** Top Features */
+            top_features: {
+                [key: string]: unknown;
+            }[];
+        };
+        /** ProbeRunView */
+        ProbeRunView: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Seq */
+            seq: number;
+            /** Probe Key */
+            probe_key: string;
+            /** Mode */
+            mode: string;
+            /** Status */
+            status: string;
+            /** Selected By */
+            selected_by: string | null;
+            /** Propensity */
+            propensity: number | null;
+            /** Outcome */
+            outcome: string | null;
+            /** Posterior Before */
+            posterior_before: {
+                [key: string]: number;
+            } | null;
+            /** Posterior After */
+            posterior_after: {
+                [key: string]: number;
+            } | null;
+            /** Info Yield Bits */
+            info_yield_bits: number | null;
+            /** Voi Myopic Paise */
+            voi_myopic_paise: number | null;
+            /** Net Value Paise */
+            net_value_paise: number | null;
+            /** Cost Paise */
+            cost_paise: number | null;
+            /** Candidates */
+            candidates: {
+                [key: string]: unknown;
+            }[];
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /** Completed At */
+            completed_at: string | null;
+        };
         /**
          * Problem
          * @description The body of every error response: RFC 9457 plus the stable ``code`` (docs/16 §1).
@@ -940,6 +1354,16 @@ export interface components {
          * @enum {string}
          */
         Role: "VIEWER" | "INVESTIGATOR" | "FDE_ENGINEER" | "ADMIN";
+        /**
+         * SessionMode
+         * @enum {string}
+         */
+        SessionMode: "LIVE" | "AUTOPLAY" | "EVAL";
+        /**
+         * SessionStatus
+         * @enum {string}
+         */
+        SessionStatus: "CREATED" | "PASSIVE_PROBING" | "PLANNING" | "AWAITING_CUSTOMER" | "DECIDED" | "CANCELLED_BY_CUSTOMER";
         /** StatusView */
         StatusView: {
             /** Dataset Ready */
@@ -1733,6 +2157,179 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CaseDetail"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    request_case_evidence_api_v1_cases__case_id__evidence_requests_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EvidenceRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseDetail"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    act_on_police_alert_api_v1_cases__case_id__police_alert__action__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                case_id: string;
+                action: components["schemas"]["AlertAction"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseDetail"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    read_sessions_api_v1_guardian_sessions_get: {
+        parameters: {
+            query?: {
+                status?: components["schemas"]["SessionStatus"] | null;
+                /** @description A decision of the ACTIVE KB's profile */
+                decision?: string | null;
+                unexplained?: boolean | null;
+                mode?: components["schemas"]["SessionMode"] | null;
+                from?: string | null;
+                to?: string | null;
+                limit?: number;
+                cursor?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GuardianSessionPage"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    read_session_api_v1_guardian_sessions__session_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GuardianSessionView"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    read_dd_pack_api_v1_guardian_sessions__session_id__dd_pack_get: {
+        parameters: {
+            query?: {
+                format?: components["schemas"]["DdPackFormat"];
+            };
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                    "text/html": unknown;
                 };
             };
             /** @description An RFC 9457 problem (docs/16 §1) */

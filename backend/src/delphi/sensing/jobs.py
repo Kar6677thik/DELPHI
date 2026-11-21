@@ -36,6 +36,7 @@ from delphi.sensing.artifacts import (
 from delphi.sensing.mule_scores import MuleSweepJob
 from delphi.sensing.trainers import (
     NothingToTrainError,
+    train_anomaly_artifact,
     train_mule_artifact,
     train_prior_artifact,
 )
@@ -66,6 +67,7 @@ Trainer = Callable[[TrainingRequest], TrainedModel]
 # Registered by #89 (PRIOR), #90 (ANOMALY) and #91 (MULE) as each lands.
 DEFAULT_TRAINERS: Mapping[ArtifactKind, Trainer] = {
     ArtifactKind.PRIOR: train_prior_artifact,
+    ArtifactKind.ANOMALY: train_anomaly_artifact,
     ArtifactKind.MULE: train_mule_artifact,
 }
 

@@ -12,6 +12,8 @@ import { SCREENS } from './screens';
 /** Screens that are built, loaded on first visit; the others still show their placeholder. */
 const PAGES: Partial<Record<string, () => Promise<ComponentType>>> = {
   '/cases': () => import('./CasesPage').then((m) => m.CasesPage),
+  '/guardian': () => import('./GuardianPage').then((m) => m.GuardianPage),
+  '/guardian/:id': () => import('./GuardianSessionPage').then((m) => m.GuardianSessionPage),
 };
 
 export const routes: RouteObject[] = [
