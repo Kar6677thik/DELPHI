@@ -227,3 +227,54 @@ def test_investment_fees_follow_the_deposits_made(long_test: Dataset) -> None:
 def test_crm_events_fall_inside_the_history(long_test: Dataset) -> None:
     start = long_test.population.history_start
     assert all(e.at >= start for e in long_test.history.crm_events)
+
+
+def _circular_gap(a: float, b: float) -> float:
+    gap = abs(a - b) % 24
+    return min(gap, 24 - gap)
+
+
+def test_app_payments_fall_near_the_victims_habitual_hour(long_test: Dataset) -> None:
+    """#166: a coerced victim pays when the scammer says, often during their normal day: 70% of
+    APP payments fall at the habitual hour ± N(0, 1.5 h). ATO keeps an off-hour skew (40%)."""
+    from delphi.sim.draws import IST
+
+    history = long_test.history
+    kinds = {i.id: i.scenario_type for i in history.scenario_instances}
+    scenario = {t.payment_id: kinds[t.scenario_instance_id] for t in history.payment_truth}
+    hours: dict[UUID, list[float]] = defaultdict(list)
+    for p in history.payments:
+        if p.device_id is not None and scenario[p.id] == "GENUINE_ROUTINE":
+            local = p.initiated_at.astimezone(IST)
+            hours[p.payer_account_id].append(local.hour + local.minute / 60)
+    habit = {a: sorted(h)[len(h) // 2] for a, h in hours.items() if len(h) >= 5}
+
+    def near(kind: str) -> float:
+        gaps = [
+            _circular_gap(p.initiated_at.astimezone(IST).hour, habit[p.payer_account_id])
+            for p in history.payments
+            if scenario[p.id] == kind and p.payer_account_id in habit
+        ]
+        assert len(gaps) > 15, kind
+        return sum(g <= 3 for g in gaps) / len(gaps)
+
+    app = (near("APP_DIGITAL_ARREST") + near("APP_INVESTMENT")) / 2
+    assert app > 0.6
+    assert near("ATO") < app
+
+
+def test_some_takeovers_are_staged(long_test: Dataset) -> None:
+    """#166: 35% of takeovers saved the mule 4–48 h before the login (past the cooling-off)."""
+    history = long_test.history
+    of = {p.id: p for p in history.payments}
+    customer_of = {a.id: a.customer_id for a in long_test.population.accounts if a.customer_id}
+    saved = {(p.customer_id, p.account_id): p.added_at for p in history.payees}
+    seen = {d.id: d.first_seen_at for d in history.devices}
+    staged = []
+    for payments in _instances(long_test, "ATO").values():
+        first = of[payments[0].id]
+        assert first.device_id is not None
+        login = seen[first.device_id]
+        added = saved[customer_of[first.payer_account_id], first.payee_account_id]
+        staged.append(login - added >= timedelta(hours=4))
+    assert sum(staged) / len(staged) == pytest.approx(0.35, abs=0.2)

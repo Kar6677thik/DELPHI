@@ -46,7 +46,9 @@ from delphi.platform.clock import Clock
 from delphi.platform.errors import DelphiError, NotFoundError, ProblemCode
 from delphi.platform.events import EventType, publish
 from delphi.platform.ids import uuid7
+from delphi.platform.jobs import JobStatus, JobType, enqueue
 from delphi.platform.labels import LabelRow, replace_label
+from delphi.platform.tables import jobs
 from delphi.probes.api import EVIDENCE_CLASSIFIERS, RECORDED_EVIDENCE
 from delphi.sim import api as bank
 
@@ -140,6 +142,16 @@ def _subject(session: Session, case: CaseRecord, now: datetime) -> EvidenceSubje
         payer_account_id=case.subject_account_id,
         payer_customer_id=owner,
     )
+
+
+def narrative_subject(
+    session: Session, case: CaseRecord, subject: str | None
+) -> tuple[UUID | None, datetime]:
+    """The account a narrative is about (the KB source's ``subject``: the counterparty, or the
+    payer for PAYER and PAYER_TO_COUNTERPARTY sources) and the case's ``as_of``."""
+    s = _subject(session, case, case.opened_at)
+    account = s.counterparty_account_id if subject == "COUNTERPARTY" else s.payer_account_id
+    return account, s.as_of
 
 
 def _leading(posterior: Mapping[str, float], order: Sequence[str]) -> str:
@@ -297,6 +309,13 @@ def request_evidence(
             .values(superseded_by=record_id)
         )
     session.execute(evidence_records.insert().values(**values))
+    enqueue(  # docs/09 §3: the narrative is written by the worker (docs/15)
+        session,
+        clock,
+        JobType.LLM_NARRATIVE,
+        idempotency_key=f"narrative:{record_id}",
+        params={"evidence_record_id": str(record_id)},
+    )
     order = [h for h in names if h != UNEXPLAINED] + [UNEXPLAINED]
     session.execute(
         update(cases)
@@ -351,3 +370,56 @@ def request_evidence(
     return EvidenceRecord.of(
         session.execute(select(evidence_records).where(evidence_records.c.id == record_id)).one()
     )
+
+
+def request_simulated_outreach(
+    session: Session,
+    clock: Clock,
+    case_id: UUID,
+    *,
+    requested_by: UUID | None,
+    simulator: bool,
+) -> bool:
+    """docs/09 §3: in simulation the outreach call is the worker's (`SIM_OUTREACH_CALL`): it
+    samples the customer's answer and records it through ``request_evidence``. Returns whether a
+    call was queued: not when the case already has the call's record, nor while an earlier call
+    is still queued or running. A call that ended without a record (no ground truth, a failure)
+    can be placed again: each attempt has its own job key. ``simulator`` says whether this
+    deployment runs the simulator's jobs (``DELPHI_SIMULATION_ENABLED``); without it the call
+    could never run, so it is refused (503) rather than queued, once the case itself is known
+    to be valid (404 and 409 come first)."""
+    case = get_case(session, case_id)
+    if case is None:
+        raise NotFoundError("No case with this id.")
+    if case.status is CaseStatus.DISPOSED:
+        raise DelphiError(
+            "A disposed case takes no more evidence.", code=ProblemCode.INVALID_STATE_TRANSITION
+        )
+    if case.subject_payment_id is None:
+        raise _invalid("A simulated outreach call is about a held payment.")
+    if not simulator:
+        raise DelphiError(
+            "This deployment does not run the simulator, so no simulated call can be placed.",
+            code=ProblemCode.NOT_INITIALISED,
+        )
+    if OUTREACH in observed_sources(session, case_id):
+        return False
+    j = jobs.c
+    attempts = session.execute(
+        select(j.status).where(
+            j.type == JobType.SIM_OUTREACH_CALL.value,
+            j.params["case_id"].astext == str(case_id),
+        )
+    ).scalars()
+    statuses = list(attempts)
+    if any(s in (JobStatus.QUEUED.value, JobStatus.RUNNING.value) for s in statuses):
+        return False  # the call is under way; its record arrives over SSE
+    enqueue(
+        session,
+        clock,
+        JobType.SIM_OUTREACH_CALL,
+        idempotency_key=f"outreach:{case_id}:{len(statuses) + 1}",
+        params={"case_id": str(case_id), "payment_id": str(case.subject_payment_id)},
+        created_by=requested_by,
+    )
+    return True

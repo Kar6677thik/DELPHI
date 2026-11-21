@@ -71,6 +71,7 @@ def test_a_coercion_case_drafts_an_alert_that_nothing_sends_by_itself(
     sent = _act(client, case, "send")
     assert sent.status_code == 200, sent.text
     assert sent.json()["version"] == before + 1  # the alert changed the case view (#195 review)
+    assert sent.headers["etag"] == f'"{before + 1}"'  # with its new ETag (docs/16 §1)
     alert = sent.json()["police_alert"]
     assert alert["status"] == "SENT_SIMULATED" and alert["acted_by"] == str(principal.user_id)
     assert [e["source_key"] for e in alert["payload"]["evidence"]] == ["ACCOUNT_PROFILE"]
@@ -96,6 +97,7 @@ def test_an_alert_can_be_discarded_and_a_standard_case_has_none(
     assert discarded.status_code == 200
     assert discarded.json()["police_alert"]["status"] == "DISCARDED"
     assert discarded.json()["version"] == coercion.version + 1
+    assert discarded.headers["etag"] == f'"{coercion.version + 1}"'
     assert _status(env, coercion) == "DISCARDED"
     standard = _held_case(env, "HOLD_FOR_REVIEW")
     assert client.get(f"/api/v1/cases/{standard.id}").json()["police_alert"] is None

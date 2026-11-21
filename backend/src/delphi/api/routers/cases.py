@@ -29,6 +29,9 @@ from delphi.api.security import Permission, Principal, require
 from delphi.kb.model import UNEXPLAINED
 from delphi.kb.store import get_version
 from delphi.navigator.api import (
+    OUTREACH as OUTREACH_SOURCE,
+)
+from delphi.navigator.api import (
     AlertAction,
     AlertStatus,
     CaseCursor,
@@ -49,6 +52,7 @@ from delphi.navigator.api import (
     get_case,
     list_cases,
     request_evidence,
+    request_simulated_outreach,
     vulnerable_payer,
 )
 from delphi.platform.errors import DelphiError, NotFoundError, ProblemCode
@@ -463,6 +467,8 @@ class EvidenceRequest(BaseModel):
     refresh: bool = False
     outcome: str | None = None
     note: str | None = Field(default=None, max_length=2000)
+    # docs/09 §3: in simulation/autoplay the worker places the outreach call (202).
+    simulate: bool = False
 
 
 @router.post("/cases/{case_id}/evidence-requests", response_model=CaseDetail)
@@ -481,6 +487,23 @@ def request_case_evidence(
     platform = _platform(request)
 
     def run(session: Session) -> tuple[int, Any]:
+        if body.simulate:
+            if body.source_key != OUTREACH_SOURCE:
+                raise DelphiError(
+                    "Only CUSTOMER_OUTREACH_CALL can be simulated.",
+                    code=ProblemCode.VALIDATION_FAILED,
+                )
+            request_simulated_outreach(
+                session,
+                platform.clock,
+                case_id,
+                requested_by=principal.user_id,
+                simulator=platform.settings.simulation_enabled,
+            )
+            record = get_case(session, case_id)
+            assert record is not None
+            detail = _detail(session, record, platform.clock.now())
+            return HTTPStatus.ACCEPTED, detail.model_dump(mode="json")
         request_evidence(
             session,
             platform.clock,
@@ -496,7 +519,7 @@ def request_case_evidence(
         return HTTPStatus.OK, _detail(session, record, platform.clock.now()).model_dump(mode="json")
 
     reply = run_idempotent(request, raw, principal, key, run)
-    if reply.status_code == HTTPStatus.OK:
+    if reply.status_code in {HTTPStatus.OK, HTTPStatus.ACCEPTED}:
         reply.headers["ETag"] = f'"{json.loads(bytes(reply.body))["version"]}"'
     return reply
 
@@ -508,10 +531,12 @@ def act_on_police_alert(
     *,
     principal: Annotated[Principal, Depends(require(Permission.CASE_WRITE))],
     request: Request,
+    response: Response,
 ) -> CaseDetail:
     """Send (recorded as SENT_SIMULATED, with the case's evidence list) or discard the coercion
     case's police alert draft (docs/09 §6). Only a human call does this: nothing sends an alert
-    automatically (FR-NAV-10). 404 for a case without one, 409 once it was acted on."""
+    automatically (FR-NAV-10). 404 for a case without one, 409 once it was acted on. The case
+    comes back with its new version as its `ETag` (docs/16 §1)."""
     platform = _platform(request)
     with platform.sessions.begin() as session:
         record = get_case(session, case_id)
@@ -531,4 +556,5 @@ def act_on_police_alert(
         )
         acted = get_case(session, case_id)  # the new version
         assert acted is not None
+        response.headers["ETag"] = f'"{acted.version}"'  # a mutable aggregate carries its ETag
         return _detail(session, acted, platform.clock.now())

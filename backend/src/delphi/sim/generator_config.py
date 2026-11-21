@@ -91,6 +91,8 @@ class MerchantConfig(_Frozen):
     per_customer: float = Field(gt=0)
     hospital_one_in: int = Field(ge=1)
     categories: dict[str, float]
+    # #166: new small merchants, opened `population.young_account_days` before the history.
+    young_share: Probability
 
     @model_validator(mode="after")
     def _categories(self) -> MerchantConfig:
@@ -105,6 +107,34 @@ class NewPersonPayeeConfig(_Frozen):
     lead_minutes: Range
     follow_up_payments: Range
     follow_up_days: float = Field(gt=0)
+    # #166: their own amounts and channels (× the income band's scale): a new payee is often a
+    # bigger one-off (rent to a new landlord, a contractor, school fees). None: the routine's.
+    amount_inr: LogNormal | None = None
+    channel: dict[str, float] | None = None
+    # #166: a share is saved days before the first payment (added one evening, paid when the
+    # bill or the rent falls due), as some fraud victims' payees are.
+    early_share: Probability = 0.0
+    early_lead_days: Range = Range(min=1, max=10)
+
+
+class NewMerchantPayeeConfig(NewPersonPayeeConfig):
+    """#166: first-time scan-and-pay at an everyday shop."""
+
+    categories: tuple[str, ...]
+
+
+class NewPayeeAdoptionConfig(_Frozen):
+    """#166: a payee saved during the history joins the customer's routine."""
+
+    share: Probability  # of routine payments, while the customer has a recent payee
+    window_days: float = Field(gt=0)  # how long a saved payee counts as recent
+
+
+class TravelConfig(_Frozen):
+    """#166: genuine customers travel, so a login from a new city is no ATO tell."""
+
+    mean_days: float = Field(gt=0)  # exponential gaps between trips
+    days: Range  # a trip's length
 
 
 class GenuineRoutineConfig(_Frozen):
@@ -119,6 +149,9 @@ class GenuineRoutineConfig(_Frozen):
     payroll_opening_balance_inr: int = Field(gt=0)
     payroll_account_age_days: int = Field(ge=0)
     new_person_payee: NewPersonPayeeConfig
+    new_merchant_payee: NewMerchantPayeeConfig
+    new_payee_adoption: NewPayeeAdoptionConfig
+    travel: TravelConfig
 
     @model_validator(mode="after")
     def _shapes(self) -> GenuineRoutineConfig:
@@ -203,6 +236,9 @@ class MuleRingConfig(_Frozen):
     age: Range
     minimal_kyc_share: Probability
     opened_days_before_history: Range
+    # #166: a share of mule accounts are aged or rented (opened years ago), from their own stream.
+    aged_share: Probability
+    aged_opened_days_before_history: Range
     opening_balance_inr: LogNormal
     false_listing_share: Probability
 
@@ -225,6 +261,9 @@ class AtoConfig(_Frozen):
     sim_swap_lead_hours: Range
     payee_lead_minutes: Range
     channel: dict[str, float]
+    # #166: a share of takeovers save the mule hours before the drain (the staged attack).
+    staged_share: Probability = 0.0
+    staged_lead_hours: Range = Range(min=4, max=48)
 
     @model_validator(mode="after")
     def _weights(self) -> AtoConfig:
@@ -242,6 +281,11 @@ class DigitalArrestConfig(_Frozen):
     span_days: Range
     balance_share: Range
     channel: dict[str, float]
+    # #166: the "safe account" is sometimes saved days before the first transfer, on the
+    # scammer's instruction, and later transfers often go back to an account already paid.
+    early_payee_share: Probability
+    early_payee_days: Range
+    reuse_payee_share: Probability
 
     @model_validator(mode="after")
     def _weights(self) -> DigitalArrestConfig:
@@ -266,12 +310,22 @@ class InvestmentConfig(_Frozen):
         return self
 
 
+class FraudTimingConfig(_Frozen):
+    """#166: when a victim pays. With ``habitual_share[scenario]`` a payment moves to the
+    victim's habitual hour that day (+ N(0, hour_sd)): a coerced victim pays when the scammer
+    says, often during their normal day. The rest keep their uniform time (off-hour)."""
+
+    habitual_share: dict[str, Probability]
+    hour_sd: float = Field(gt=0)
+
+
 class FraudConfig(_Frozen):
     """The fraud victims' scenarios (docs/14 §4)."""
 
     rate_per_10k: dict[str, float]
     genuine_rate_per_10k: float = Field(gt=0)
     payee_lead_minutes: Range
+    timing: FraudTimingConfig
     ato: AtoConfig
     digital_arrest: DigitalArrestConfig
     investment: InvestmentConfig
