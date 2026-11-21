@@ -62,7 +62,13 @@ def test_templates_render_amounts_in_indian_grouping() -> None:
 def test_the_other_branches_of_the_templates() -> None:
     quiet = payload(
         "PASS_THROUGH_DWELL",
-        {"median_dwell_minutes": None, "credits": 0, "window_days": 7, "departure_share": 0.8},
+        {
+            "median_dwell_minutes": None,
+            "credits": 0,
+            "still_dwelling": 0,
+            "window_days": 7,
+            "departure_share": 0.8,
+        },
     )
     assert "received no credits" in render_narrative(quiet)
     none = payload("LINKED_COMPLAINTS", {"complaints": 0})

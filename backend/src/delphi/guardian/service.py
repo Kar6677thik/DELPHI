@@ -42,6 +42,7 @@ from delphi.engine.planner import (
 from delphi.engine.prior import build_prior, is_fast_path, open_mass
 from delphi.engine.risk import decide, loss_matrix, risk_by_decision, voi_myopic
 from delphi.engine.types import CompiledProfile, Phase, PlanResult, StopReason
+from delphi.guardian import ddpack
 from delphi.guardian.active import (
     STEP_UPS,
     ClientSignals,
@@ -264,7 +265,7 @@ class GuardianService:
         shares = {h: profile.open_mass_shares.get(h, 0.0) for h in kb_only}
         risks = risk_by_decision(prior, ctx.losses())
         prior_probs = ctx.as_dict(prior)
-        # B1/B2's verdicts for the monitor (docs/08 §6, FR-GDN-15): B2 from this same prior.
+        # B1/B2's verdicts for the monitor (docs/08 §6, FR-GDN-12): B2 from this same prior.
         baselines = bank.baseline_decisions(
             s,
             ctx.payment,
@@ -836,8 +837,20 @@ class GuardianService:
             entity_id=str(ctx.record.id),
             payload=payload,
         )
+        # docs/09 §7: the flag is recomputed on every change; a decision is the last one. The
+        # check never blocks the decision: if building the pack fails, the flag stays false.
+        if self._dd_pack_complete(s, decided.id):
+            decided = self._write(s, decided, dd_pack_complete=True)
         publish(s, EventType.GUARDIAN_SESSION_DECIDED, str(ctx.record.id), _event(decided))
         return decided
+
+    def _dd_pack_complete(self, s: Session, session_id: UUID) -> bool:
+        try:
+            with s.begin_nested():  # a failed read must not abort the decision's transaction
+                return ddpack.build(s, session_id).complete
+        except Exception:
+            log.exception("guardian.dd_pack_check_failed", session_id=str(session_id))
+            return False
 
     # ------------------------------------------------------------------ plumbing
 
