@@ -1,5 +1,5 @@
 """The B1 and B2 verdicts a Guardian session shows next to its own decision (docs/08 §6,
-docs/22 §2, FR-GDN-15).
+docs/22 §2, FR-GDN-12).
 
 They are computed from what the bank knew when the payment was initiated (no ground truth): the
 registry listings published by then, when the customer saved the payee and whether a payment to
