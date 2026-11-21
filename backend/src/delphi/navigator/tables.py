@@ -83,3 +83,15 @@ evidence_records = Table(
     Column("superseded_by", UUID(as_uuid=True)),
     _ts("created_at"),
 )
+
+police_alert_drafts = Table(
+    "police_alert_drafts",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("case_id", UUID(as_uuid=True), nullable=False, unique=True),
+    Column("status", Text, nullable=False),
+    Column("payload", JSONB, nullable=False),
+    Column("acted_by", UUID(as_uuid=True)),
+    _ts("acted_at", nullable=True),
+    _ts("created_at"),
+)
