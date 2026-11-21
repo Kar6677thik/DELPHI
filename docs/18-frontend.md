@@ -57,17 +57,25 @@ the police alert yet (its own issue). `/cases/:id` follows doc 09 §2 from `GET 
 - the "Evidence sufficient — recommend {decision} (expected loss ₹X)" banner while
   `evidence_sufficient` and not disposed;
 - the next-best-evidence rows in the server's order, with the "Protocol" badge, minutes, "X% of
-  remaining uncertainty" and net value;
+  remaining uncertainty" and net value. "Fetch" posts the evidence request; the outreach call
+  opens a form for its outcome (the KB source's `outcomes`) and note;
 - "What would change my mind";
 - one `EvidenceCard` per record, whose narrative is labelled "AI-written summary" (`LLM`) or
   "Template summary". Its `[record_id]` citations render as chips that scroll to, focus and
   highlight that record's fact table (a citation to a record not on the page is plain text).
   Facts named `*_paise` show as ₹ and `*_share` as a percentage;
 - loading and error states; a disposed case shows "(decision taken)" in the risk table and
-  neither the banner nor the next-best evidence.
+  neither the banner nor the next-best evidence;
+- the disposition panel. Its decisions are the keys of `risk_by_decision`. CONFIRM_FRAUD names
+  a typology (the case's fraud hypotheses, most likely first, then FRAUD_OTHER). Confidence is
+  1–5, and an override needs a rationale of at least 20 characters.
 
-`evidence.narrative_ready` invalidates the `['cases']` queries, like `case.*`. The console's write
-controls (fetch, the outreach call, the disposition and its 412 handling) follow in part 2.
+Without `case:write`, the fetch buttons are disabled and the disposition form is replaced by a
+note. Every POST sends a fresh `Idempotency-Key`; the disposition sends the ETag the console was
+showing as `If-Match`. On 412 the panel shows "This case changed — reload" with the fields that
+changed (status, leading hypothesis, recommendation, evidence count, disposition), and locks the
+form until "Reload". `evidence.narrative_ready` invalidates the `['cases']` queries, like
+`case.*`.
 
 **M4 Guardian screens (#100):** `/guardian` lists `GET /guardian/sessions` newest first, 50 at a
 time, with "Load more sessions" while `next_cursor` is set: start time (linking to
