@@ -116,6 +116,10 @@ class Settings(BaseSettings):
     # Retention (docs/17 §6).
     outbox_retention_h: int = Field(default=24, ge=1, le=24 * 30)
     idempotency_retention_h: int = Field(default=24, ge=1, le=24 * 30)
+    # Off-policy evaluation of the first active probe (docs/12 §3).
+    ope_bootstrap_resamples: int = Field(default=1_000, ge=100, le=100_000)
+    ope_min_ess: float = Field(default=30.0, gt=0)
+    ope_min_support_coverage: float = Field(default=0.5, gt=0, le=1)
 
     http_host: str = "0.0.0.0"  # nosec B104: binds inside the pod only (docs/23 §4)
     http_port: Port = 8000

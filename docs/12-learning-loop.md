@@ -78,6 +78,14 @@ rather than hiding it.
 
 The Learning page reports V̂ for the logged policy (on-policy mean) and for each target policy,
 with ESS and a 95% bootstrap CI (1,000 resamples). An ESS < 30 is shown as "insufficient data".
+The resamples, the ESS minimum and the 50% coverage minimum are settings
+(`DELPHI_OPE_*`, doc 23 §4).
+
+**Rows.** E_i is rebuilt from the logged candidates table as doc 06 §10 defines it (eligible,
+net ≥ 0, tier ≤ tier(a*)), with tiers from the session's pinned KB. Sessions whose first active
+probe has no propensity (no exploration configured) are left out. "Greedy under candidate KB"
+re-plans each context with a learning run's candidate KB, so it arrives with the learning runs
+(§2); the other targets need only the logged row (`delphi.learning.ope`).
 
 ## 4. Label coverage (selective-labels fix)
 
