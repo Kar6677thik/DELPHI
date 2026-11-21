@@ -48,6 +48,17 @@ and error states. `case.opened` and `case.updated` invalidate the `['cases']` qu
 (`lib/liveQueries.ts`, the first SSE → query-key map). Sorting controls, expected loss and
 campaign arrive with the console and campaigns (#103, M5).
 
+**M4 Guardian screens (#100):** `/guardian` lists the first page of `GET /guardian/sessions`,
+newest first: start time (linking to `/guardian/:id`), amount (`MoneyText`), the leading
+hypothesis's display name with an "Unexplained" badge, status, decision and the B1 / B2
+verdicts, with filters for status, decision and "unexplained only". `/guardian/:id` shows the
+`HypothesisTimeline` (the prior, then the posterior after each completed probe), the
+`RiskTable` with the decision taken marked, the baseline comparison (B2's `OTP_STEP_UP` reads
+"released if the OTP passes"), one `CandidatesTable` per planning step and the DD pack link.
+Hypothesis names and colours come from the session's pinned KB version (`GET /kb/versions/{id}`,
+fetched once per version). `guardian.session.updated` and `guardian.session.decided` invalidate
+the `['guardian']` queries.
+
 ## 3. Shared components (single implementation each)
 
 - `HypothesisBar`: horizontal stacked bar. Fixed colour per hypothesis (doc 07 §4). Every

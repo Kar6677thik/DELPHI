@@ -1,6 +1,7 @@
 import type { QueryClient, QueryKey } from '@tanstack/react-query';
 
 import { CASES_QUERY_KEY } from '../api/cases';
+import { GUARDIAN_QUERY_KEY } from '../api/guardian';
 
 /**
  * Which cached queries an SSE event makes stale (docs/18 §1: "SSE events invalidate the relevant
@@ -10,6 +11,8 @@ import { CASES_QUERY_KEY } from '../api/cases';
 export const LIVE_QUERIES: Readonly<Record<string, readonly QueryKey[]>> = {
   'case.opened': [CASES_QUERY_KEY.slice(0, 1)],
   'case.updated': [CASES_QUERY_KEY.slice(0, 1)],
+  'guardian.session.updated': [GUARDIAN_QUERY_KEY],
+  'guardian.session.decided': [GUARDIAN_QUERY_KEY],
 };
 
 export function invalidateFor(client: QueryClient, eventType: string): void {
