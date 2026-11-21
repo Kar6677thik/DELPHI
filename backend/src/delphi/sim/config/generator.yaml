@@ -88,9 +88,9 @@ genuine_routine:
   payroll_account_age_days: 3650           # payroll accounts are ten years old
   # Owner decision (#56): genuine customers also add new person (family or friend) payees
   # during the history, so a person payee saved during the history is not a mule tell. Gaps:
-  # about once a year per customer; another customer's DLPH account or an external person
+  # every 45 days per customer; another customer's DLPH account or an external person
   # account (population.counterparty_home_bank_share); saved minutes before the first
-  # payment (as a victim's mule payee is); 0–3 more payments over the next 60 days.
+  # payment (as a victim's mule payee is); 0–1 more payments over the next 60 days.
   new_person_payee:
     mean_days: 45   # #166: was 365, so a new person payee is no tell
     lead_minutes: {min: 2, max: 30}

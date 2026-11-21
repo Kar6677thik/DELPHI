@@ -239,8 +239,8 @@ review pending):
   - Half are SIM swaps, which the CRM records (`SIM_SWAP_REPORTED`) 1–48 h before the login;
     half are phishing.
   - The attacker logs in from a new device in another city and saves the mule 1–5 minutes later.
-    35% of takeovers are staged (#166): the mule was saved 4–48 h before the login, past the
-    new-payee cooling-off, and the transfers fall in the 30 minutes after the login.
+    35% of takeovers are staged (#166): the mule was saved 4–48 h before the login, hours
+    before the drain, and the transfers fall in the 30 minutes after the login.
   - The transfers (IMPS 0.6 / UPI 0.4) fall uniformly in the rest of the 30 minutes. Transfer
     j of k takes `d / k` of the first balance, d uniform over 60–95%, as a share of what is left.
 - **APP_DIGITAL_ARREST.** The victim is aged ≥ 60 with probability 0.6. Each transfer sends

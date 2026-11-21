@@ -17,13 +17,13 @@ habitual hour, and fraud payees' accounts were ~300 days old against genuine one
 **Fraud:**
 - **Timing.** APP payments (digital arrest, investment, collect-refund) fall at the victim's
   habitual hour ± N(0, 1.5 h) with probability 0.70, else as before. ATO keeps an off-hour
-  skew (0.40 habitual). From each instance's own stream, so other draws don't move.
+  skew (0.40 habitual). From each instance's own stream.
 - **Aged and rented mules.** 50% of mule accounts were opened 1–7 years before the history
   (the rest 5–400 days, as before).
 - **Payees saved earlier.** A digital-arrest victim saves the first mule 1–10 days ahead with
   probability 0.40, and returns to an account already paid with probability 0.50. 35% of
-  takeovers are staged: the mule is saved 4–48 h before the drain, past the new-payee
-  cooling-off.
+  takeovers are staged: the mule is saved 4–48 h before the drain, hours before the drain
+  rather than minutes.
 
 **Genuine customers:**
 - **Young accounts.** 20% of genuine non-merchant accounts (was 10%) and 35% of merchants are
@@ -31,7 +31,7 @@ habitual hour, and fraud payees' accounts were ~300 days old against genuine one
 - **New payees.** New person payees every 45 days (was 365; median ₹10,000, UPI/IMPS/NEFT
   0.40/0.40/0.20), and first visits to everyday shops every 10 days (median ₹500, scan and
   pay, 1–10 min after saving). 30% of new people and 10% of new shops are saved 0.2–10 days
-  before the first payment.
+  before the first payment. A new person payee's follow-up payments are 0–1 (were 0–3).
 - **Routine.** Once saved, a payee joins the routine: while a customer has payees saved in
   the last 45 days, 25% of its routine payments go to one of them. So new payees take a share
   of the docs/14 rate instead of adding to it (0.62 customer payments a day on `test`).
@@ -39,6 +39,10 @@ habitual hour, and fraud payees' accounts were ~300 days old against genuine one
   they are, so a new login city is no ATO tell.
 - **Salary.** The median salary is ₹40,000 (was ₹30,000, a gap value) to fund the extra
   first payments: spending per customer-month is +14% on `test`.
+
+The new-payee rules run before the routine loop, and routine adoption draws from the routine
+stream, so the routine draws and the ids after them shift as well. Generation stays
+deterministic per seed.
 
 **Separability on `eval`** (the prior trained as in `test_sensing_prior.py`; reproduce with
 `uv run python -m scripts.prior_separability --profile eval`, about 30 min):
