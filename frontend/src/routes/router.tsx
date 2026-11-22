@@ -17,6 +17,7 @@ const PAGES: Partial<Record<string, () => Promise<ComponentType>>> = {
   '/guardian': () => import('./GuardianPage').then((m) => m.GuardianPage),
   '/guardian/:id': () => import('./GuardianSessionPage').then((m) => m.GuardianSessionPage),
   '/kb': () => import('./KbPage').then((m) => m.KbPage),
+  '/admin': () => import('./AdminPage').then((m) => m.AdminPage),
 };
 
 export const routes: RouteObject[] = [

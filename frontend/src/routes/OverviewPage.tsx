@@ -6,7 +6,7 @@ import { useMetricsSummary, useRecentDecisions, useStatus } from '../api/overvie
 import type { MetricsSummary, StatusView } from '../api/types';
 import { MoneyText } from '../components/MoneyText';
 import { ProblemAlert } from '../components/ProblemAlert';
-import { decisionText, humanise } from '../lib/format';
+import { decisionText, duration, humanise } from '../lib/format';
 
 /**
  * The Overview (docs/18 §2 `/`, docs/22 §7, docs/20 §4, #126). Its one question: is DELPHI
@@ -28,18 +28,7 @@ const NOT_TRACKED: Readonly<Record<string, string>> = {
 };
 
 const SECONDS_PER_MINUTE = 60;
-const MINUTES_PER_HOUR = 60;
 const PERCENT = 100;
-
-export function duration(seconds: number | null | undefined): string {
-  if (seconds === null || seconds === undefined) return '—';
-  if (seconds < SECONDS_PER_MINUTE) return `${String(Math.round(seconds))} s`;
-  const m = Math.floor(seconds / SECONDS_PER_MINUTE);
-  if (m < MINUTES_PER_HOUR) {
-    return `${String(m)} m ${String(Math.round(seconds % SECONDS_PER_MINUTE)).padStart(2, '0')} s`;
-  }
-  return `${String(Math.floor(m / MINUTES_PER_HOUR))} h ${String(m % MINUTES_PER_HOUR).padStart(2, '0')} m`;
-}
 
 function share(value: number | null | undefined): string {
   return value === null || value === undefined ? '—' : `${(value * PERCENT).toFixed(0)}%`;

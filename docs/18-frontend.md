@@ -89,6 +89,18 @@ odds, with each hypothesis's factor against its even share. That is an explainer
 update (which starts from the session's prior). A version with a parent shows `GET …/diff`;
 "Export as YAML" downloads `GET …/export`. Promote and rollback follow with the shadow evaluations.
 
+**Admin (#231):** `/admin` opens with one readiness line, then a strip from `GET /status`: the
+dataset (with the seeding progress while it is made) and each sensing model's ACTIVE version,
+marked "below its gate" when it is in `models_below_gate`. "Set up the demo" queues a dataset
+(`POST /admin/datasets`, the profile chosen) and a retraining (`POST /admin/sensing/train`,
+disabled without a dataset), each with a fresh `Idempotency-Key`; a 409 shows as a problem alert.
+"Audit chain" runs `GET /admin/audit/verify` only on a click, because it reads every entry: it shows
+"Intact" with the entries checked, or "Broken" with the first bad entry. "Jobs" lists `GET /jobs`
+newest first, filtered by status and type, 25 more at a time: type, status (a live mark while
+running), progress, tries, when it was queued, how long it took, and the error; a FAILED job has
+"Retry" (`POST /jobs/{id}/retry`). `job.updated` invalidates the `['admin']` queries. User
+management follows in a second PR; the demo story runner and demo reset come with their endpoints.
+
 **M4 Guardian screens (#100):** `/guardian` lists `GET /guardian/sessions` newest first, 50 at a
 time, with "Load more sessions" while `next_cursor` is set: start time (linking to
 `/guardian/:id`), amount (`MoneyText`), the leading hypothesis's display name (from each row's own
