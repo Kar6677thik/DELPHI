@@ -206,6 +206,7 @@ class GuardianService:
         fetchers: Mapping[str, Fetcher],
         executor: Executor,
         *,
+        otp_key: bytes,
         demo_time: bool = False,
         explore: bool = True,
     ) -> None:
@@ -214,6 +215,7 @@ class GuardianService:
         self._prior = prior
         self._fetchers = fetchers
         self._executor = executor
+        self._otp_key = otp_key  # Settings.otp_key: keys the OTP digest (#171)
         self._demo_time = demo_time
         self._explore = explore  # False: greedy only (evaluation ablations, replays)
         self._profiles: dict[int, CompiledProfile] = {}
@@ -571,7 +573,10 @@ class GuardianService:
                 raw["options"] = [o.key for o in question.options]
             elif ui is Ui.OTP:
                 code = new_otp()
-                raw |= {"otp_sha256": otp_digest(str(probe_run_id), code), "otp_attempts": 0}
+                raw |= {
+                    "otp_sha256": otp_digest(self._otp_key, str(probe_run_id), code),
+                    "otp_attempts": 0,
+                }
             s.execute(
                 update(probe_runs)
                 .where(probe_runs.c.id == probe_run_id)
@@ -617,7 +622,7 @@ class GuardianService:
             else:
                 code = otp_code(answer)
                 attempts = int(raw["otp_attempts"]) + 1
-                correct = otp_matches(str(probe_run_id), code, raw["otp_sha256"])
+                correct = otp_matches(self._otp_key, str(probe_run_id), code, raw["otp_sha256"])
                 raw["otp_attempts"] = attempts
                 raw["answer"] = {"otp": "******"}  # never keep a code, right or wrong
                 left = thresholds.otp_max_attempts - attempts
