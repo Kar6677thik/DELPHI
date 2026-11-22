@@ -84,6 +84,38 @@ fetched once per version); the KB content and the candidates are read with field
 casts, until the api types them (#198). `guardian.session.updated` and `guardian.session.decided` invalidate
 the `['guardian']` queries.
 
+## 2a. Design system: "data terminal", dark (#99)
+
+DELPHI is a monitoring tool read in long sessions, so it is dark and quiet: colour belongs to
+data (the hypotheses' hues, a status), never to chrome. The tokens live in `src/index.css`:
+
+- **Ground and surfaces.** A near-black ground (`#171719`), cards one step darker (`#131217`),
+  separated by tone, not by lines or shadows. Text is white, with two greys (`#bdbdc0` soft,
+  `#8a8c92` muted) that both pass 4.5:1.
+- **One selection mark.** The active navigation item, and every other selection, is a 1px line
+  in the accent (`#4a8ad6`) exactly as wide as its label. The primary action is inverted (a white
+  pill with dark text). No gradients, glows, glass or tinted icon chips.
+- **Type.** Public Sans for text, and IBM Plex Mono for every figure that stacks or updates
+  (probabilities, ₹ amounts, bits, timers). Both are self-hosted (`@fontsource/*`), because the
+  CSP is `default-src 'self'` (doc 19 §4).
+- **Hypothesis colours** come from the KB (doc 07 §4). They are set for light paper, so the UI
+  draws each at the same hue lifted to at least 60% lightness (`forDark`); the KB is unchanged.
+- **Existing screens.** The classes the M4–M5 screens were written with (`slate-*` and the pale
+  tints) are mapped onto this palette in `index.css`, so those screens are dark without being
+  rewritten. New screens use the role names (`bg-surface`, `text-muted`, `text-accent` …).
+- **Shell.** A labelled sidebar on the ground with DELPHI's mark and scope; on a phone it folds
+  into a 48px bar with a menu sheet.
+
+**The mock phone (`/phone`).** A drawn handset (status bar, camera island, side keys) hosts the
+customer's bank app. That app is deliberately its own white-on-black look, not DELPHI's chrome.
+Each probe `ui` type has its own screen (doc 08 §4); the protective hold turns the whole screen
+paper-white with a red shield (doc 08 §7). The DELPHI side leads with the leading hypothesis's
+share as the largest figure and the posterior as a tall bar, then what the customer said, why
+this question (the candidates) and the risk table. "Phone only" shows the handset alone on black
+for the projector (Escape returns). Until the Guardian API (#98) lands, the phone's endpoints are
+typed by hand in `src/api/phone.ts` from doc 08 §4 and doc 16, and the page says so when they
+404.
+
 ## 3. Shared components (single implementation each)
 
 - `HypothesisBar`: horizontal stacked bar. Fixed colour per hypothesis (doc 07 §4). Every

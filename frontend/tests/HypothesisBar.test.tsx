@@ -2,6 +2,7 @@ import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
 import {
+  forDark,
   HypothesisBar,
   HypothesisTimeline,
   LABEL_MIN_SHARE,
@@ -81,7 +82,7 @@ describe('HypothesisBar (docs/18 §3)', () => {
 
   it('picks the label colour with the better contrast (docs/18 §5)', () => {
     expect(textColor('#C2410C')).toBe('#FFFFFF');
-    expect(textColor('#FDE68A')).toBe('#0F172A'); // a light colour gets dark text
+    expect(textColor('#FDE68A')).toBe('#131217'); // a light colour gets dark text
   });
 
   it('stacks one bar per step in the timeline variant', () => {
@@ -102,5 +103,22 @@ describe('HypothesisBar (docs/18 §3)', () => {
     expect(screen.getByRole('list', { name: '1. Call status' })).toHaveTextContent(
       'Digital arrest 60%Genuine 40%',
     );
+  });
+});
+
+describe('forDark (the KB colours on the dark ground)', () => {
+  it('keeps the hue and lifts a dark KB colour to at least 60% lightness', () => {
+    const lifted = forDark('#1D4ED8'); // MULE's blue, set for light paper
+    const [r, g, b] = [1, 3, 5].map((i) => Number.parseInt(lifted.slice(i, i + 2), 16));
+    expect(b).toBeGreaterThan(r ?? 0); // still blue
+    expect(b).toBeGreaterThan(g ?? 0);
+    expect(
+      (Math.max(r ?? 0, g ?? 0, b ?? 0) + Math.min(r ?? 0, g ?? 0, b ?? 0)) / 2 / 255,
+    ).toBeGreaterThanOrEqual(0.59);
+  });
+
+  it('leaves a light colour and a non-hex value alone', () => {
+    expect(forDark('#E4E4E6')).toBe('#E4E4E6');
+    expect(forDark('red')).toBe('red');
   });
 });

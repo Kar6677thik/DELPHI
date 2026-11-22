@@ -1,1 +1,135 @@
+/*
+ * DELPHI's design system: "data terminal", dark (docs/18 §3, #99).
+ *
+ * A monitoring screen read in long sessions: a near-black ground, cards one step darker,
+ * figures in a monospace that stacks, signs instead of colour on numbers, and every selection
+ * marked by the same 1px accent line. Colour belongs to data: the hypotheses' hues, a status.
+ *
+ * Fonts are self-hosted (the CSP is `default-src 'self'`, docs/19 §4).
+ */
+@import '@fontsource/public-sans/400.css';
+@import '@fontsource/public-sans/500.css';
+@import '@fontsource/public-sans/600.css';
+@import '@fontsource/public-sans/700.css';
+@import '@fontsource/ibm-plex-mono/400.css';
+@import '@fontsource/ibm-plex-mono/500.css';
+@import '@fontsource/ibm-plex-mono/600.css';
 @import 'tailwindcss';
+
+@theme {
+  --font-sans: 'Public Sans', Inter, system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+
+  /* The terminal palette, by role (bg-ground, text-muted, border-line, text-accent …). */
+  --color-ground: #171719;
+  --color-surface: #131217;
+  --color-raised: #212023;
+  --color-line: #222224;
+  --color-rule: #1b1a1f;
+  --color-control: #3a3a3e;
+  --color-ink: #ffffff;
+  --color-soft: #bdbdc0;
+  --color-muted: #8a8c92;
+  --color-accent: #4a8ad6;
+  --color-positive: #5fc39c;
+  --color-negative: #e5566f;
+  --color-warning: #d9a441;
+  --color-positive-bg: #1b2828;
+  --color-negative-bg: #2c1a20;
+  --color-warning-bg: #2a2416;
+
+  /*
+   * The light-theme classes the existing screens were written with, mapped onto the dark
+   * palette (white and black keep their meaning): the neutral scale inverted (slate-50 was the page, now the ground; slate-900 was
+   * ink, now near-white), and each pale tint + dark text pair turned into a dark tint + light
+   * text of the same hue. New screens use the role names above instead.
+   */
+  --color-slate-50: #171719;
+  --color-slate-100: #1b1a1f;
+  --color-slate-200: #222224;
+  --color-slate-300: #3a3a3e;
+  --color-slate-400: #5c5d63;
+  --color-slate-500: #8a8c92;
+  --color-slate-600: #8a8c92;
+  --color-slate-700: #bdbdc0;
+  --color-slate-800: #e4e4e6;
+  --color-slate-900: #f2f2f3;
+  --color-slate-950: #ffffff;
+  --color-red-50: #2c1a20;
+  --color-red-300: #5a2a35;
+  --color-red-700: #e5566f;
+  --color-red-800: #e5566f;
+  --color-red-900: #f08a9b;
+  --color-emerald-50: #1b2828;
+  --color-emerald-300: #2d5a4a;
+  --color-emerald-600: #44a282;
+  --color-emerald-800: #5fc39c;
+  --color-emerald-900: #7fd3b1;
+  --color-amber-100: #2a2416;
+  --color-amber-400: #d9a441;
+  --color-amber-500: #d9a441;
+  --color-amber-900: #e3b968;
+  --color-sky-50: #15202c;
+  --color-sky-100: #1a2a3d;
+  --color-sky-900: #8cb8ec;
+  /* No violet in the system: the "Unexplained" tag the monitor drew in violet is a neutral chip. */
+  --color-violet-100: #212023;
+  --color-violet-900: #bdbdc0;
+}
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+  html,
+  body {
+    background: var(--color-ground);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+  }
+  body {
+    font-size: 13px;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection {
+    background: var(--color-accent);
+    color: var(--color-ink);
+  }
+  :focus-visible {
+    outline: 1px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+}
+
+@layer utilities {
+  /* Every figure that updates or stacks: the monospace, with digits of one width. */
+  .figure {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+  /* The style's one selection mark: a 1px accent line exactly as wide as the label. */
+  .selected-line {
+    box-shadow: inset 0 -1px 0 0 var(--color-accent);
+  }
+}
+
+/* The mock SMS dropping in from the top of the phone. */
+@keyframes sms-in {
+  from {
+    transform: translateY(-16px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

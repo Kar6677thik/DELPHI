@@ -5,6 +5,7 @@ import { z } from 'zod';
 
 import { useLogin } from '../api/auth';
 import { isRateLimited, isUnauthenticated } from '../api/client';
+import { DelphiMark } from '../components/DelphiMark';
 import { ProblemAlert } from '../components/ProblemAlert';
 import { safeNext } from '../lib/safeNext';
 
@@ -22,7 +23,7 @@ export function lockoutMessage(retryAfterSeconds: number | null): string {
 }
 
 const inputClass =
-  'mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 focus-visible:outline-2 focus-visible:outline-slate-900';
+  'mt-2 block h-11 w-full rounded-md border border-control bg-surface px-3 text-[15px] text-ink transition-colors hover:border-muted focus-visible:border-accent focus-visible:outline-none';
 
 export function LoginPage() {
   const login = useLogin();
@@ -43,76 +44,97 @@ export function LoginPage() {
   });
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-slate-50 p-4 text-slate-900">
-      <form
-        onSubmit={(event) => {
-          void onSubmit(event);
-        }}
-        noValidate
-        aria-labelledby="login-title"
-        className="w-full max-w-sm space-y-4 rounded-lg border border-slate-200 bg-white p-6 shadow-sm"
+    <main className="grid min-h-screen bg-ground text-ink lg:grid-cols-[minmax(0,1fr)_480px]">
+      <section
+        aria-label="About DELPHI"
+        className="flex flex-col justify-between border-line px-6 py-8 lg:border-r lg:px-16 lg:py-14"
       >
-        <h1 id="login-title" className="text-xl font-semibold">
-          Sign in to DELPHI
-        </h1>
-        {login.isError &&
-          (isUnauthenticated(login.error) ? (
-            // Generic on purpose: never say which of the two was wrong (docs/19 §1).
-            <p role="alert" className="text-sm text-red-800">
-              Invalid username or password.
-            </p>
-          ) : isRateLimited(login.error) ? (
-            <p role="alert" className="text-sm text-red-800">
-              {lockoutMessage(login.error.retryAfterSeconds)}
-            </p>
-          ) : (
-            <ProblemAlert error={login.error} title="Sign-in failed" />
-          ))}
-        <div>
-          <label htmlFor="username" className="text-sm font-medium">
-            Username
-          </label>
-          <input
-            id="username"
-            autoComplete="username"
-            aria-invalid={errors.username ? true : undefined}
-            aria-describedby={errors.username ? 'username-error' : undefined}
-            className={inputClass}
-            {...register('username')}
-          />
-          {errors.username && (
-            <p id="username-error" className="mt-1 text-sm text-red-800">
-              {errors.username.message}
-            </p>
-          )}
+        <span className="flex items-center gap-2">
+          <DelphiMark size={26} />
+          <span className="text-[17px] font-semibold tracking-tight">DELPHI</span>
+        </span>
+        <div className="my-12 max-w-[640px] lg:my-0">
+          <p className="text-[40px] font-semibold leading-[1.05] tracking-[-0.03em] lg:text-[64px]">
+            Ask before the money moves.
+          </p>
+          <p className="mt-6 max-w-[520px] text-[16px] leading-relaxed text-soft">
+            DELPHI holds a payment for the seconds it takes to ask the payer the one question worth
+            asking, then releases, holds or protects it, and explains why.
+          </p>
         </div>
-        <div>
-          <label htmlFor="password" className="text-sm font-medium">
-            Password
-          </label>
-          <input
-            id="password"
-            type="password"
-            autoComplete="current-password"
-            aria-invalid={errors.password ? true : undefined}
-            aria-describedby={errors.password ? 'password-error' : undefined}
-            className={inputClass}
-            {...register('password')}
-          />
-          {errors.password && (
-            <p id="password-error" className="mt-1 text-sm text-red-800">
-              {errors.password.message}
-            </p>
-          )}
-        </div>
-        <button
-          type="submit"
-          disabled={login.isPending}
-          className="w-full rounded-md bg-slate-900 px-3 py-2 font-medium text-white hover:bg-slate-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900 disabled:opacity-60"
+        <p className="hidden text-[13px] text-muted lg:block">Demo bank · synthetic data only</p>
+      </section>
+      <div className="flex items-center justify-center px-6 pb-12 lg:p-12">
+        <form
+          onSubmit={(event) => {
+            void onSubmit(event);
+          }}
+          noValidate
+          aria-labelledby="login-title"
+          className="w-full max-w-sm space-y-5"
         >
-          {login.isPending ? 'Signing in…' : 'Sign in'}
-        </button>
-      </form>
+          <h1 id="login-title" className="text-[26px] font-semibold tracking-tight">
+            Sign in to DELPHI
+          </h1>
+          {login.isError &&
+            (isUnauthenticated(login.error) ? (
+              // Generic on purpose: never say which of the two was wrong (docs/19 §1).
+              <p role="alert" className="text-sm text-red-800">
+                Invalid username or password.
+              </p>
+            ) : isRateLimited(login.error) ? (
+              <p role="alert" className="text-sm text-red-800">
+                {lockoutMessage(login.error.retryAfterSeconds)}
+              </p>
+            ) : (
+              <ProblemAlert error={login.error} title="Sign-in failed" />
+            ))}
+          <div>
+            <label htmlFor="username" className="text-[13px] font-medium text-soft">
+              Username
+            </label>
+            <input
+              id="username"
+              autoComplete="username"
+              aria-invalid={errors.username ? true : undefined}
+              aria-describedby={errors.username ? 'username-error' : undefined}
+              className={inputClass}
+              {...register('username')}
+            />
+            {errors.username && (
+              <p id="username-error" className="mt-1 text-sm text-red-800">
+                {errors.username.message}
+              </p>
+            )}
+          </div>
+          <div>
+            <label htmlFor="password" className="text-[13px] font-medium text-soft">
+              Password
+            </label>
+            <input
+              id="password"
+              type="password"
+              autoComplete="current-password"
+              aria-invalid={errors.password ? true : undefined}
+              aria-describedby={errors.password ? 'password-error' : undefined}
+              className={inputClass}
+              {...register('password')}
+            />
+            {errors.password && (
+              <p id="password-error" className="mt-1 text-sm text-red-800">
+                {errors.password.message}
+              </p>
+            )}
+          </div>
+          <button
+            type="submit"
+            disabled={login.isPending}
+            className="h-11 w-full rounded-full bg-ink text-[15px] font-semibold text-ground transition-transform duration-100 hover:bg-soft active:scale-[0.99] disabled:opacity-60"
+          >
+            {login.isPending ? 'Signing in…' : 'Sign in'}
+          </button>
+        </form>
+      </div>
     </main>
   );
 }
