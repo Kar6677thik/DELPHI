@@ -66,6 +66,8 @@ describe('app shell', () => {
     setMockSession('viewer');
     renderApp('/campaigns/0192-abc');
     expect(await screen.findByRole('heading', { name: 'Campaign' })).toBeInTheDocument();
+    // A screen still being built says what brings it.
+    expect(screen.getByText(/arrives with campaigns/)).toBeInTheDocument();
   });
 
   it('signs out from the user menu', async () => {
