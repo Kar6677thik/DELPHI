@@ -14,6 +14,7 @@ import { SCREENS } from './screens';
 
 const NAV_ITEMS = [
   { path: '/', label: 'Overview', permission: 'view' as const },
+  { path: '/theatre', label: 'Theatre', permission: 'view' as const },
   ...SCREENS.flatMap((s) =>
     s.nav ? [{ path: s.path, label: s.nav, permission: s.permission }] : [],
   ),
