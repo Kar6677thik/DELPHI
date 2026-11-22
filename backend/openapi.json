@@ -1611,6 +1611,51 @@
           }
         }
       }
+    },
+    "/api/v1/metrics/summary": {
+      "get": {
+        "tags": [
+          "metrics"
+        ],
+        "summary": "Read Summary",
+        "operationId": "read_summary_api_v1_metrics_summary_get",
+        "parameters": [
+          {
+            "name": "hours",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 720,
+              "minimum": 1,
+              "default": 24,
+              "title": "Hours"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetricsSummary"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An RFC 9457 problem (docs/16 §1)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1631,6 +1676,29 @@
           "DISCARDED"
         ],
         "title": "AlertStatus"
+      },
+      "AlertView": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "message",
+          "count"
+        ],
+        "title": "AlertView"
       },
       "ArtifactKind": {
         "type": "string",
@@ -2007,6 +2075,49 @@
           "DISPOSED"
         ],
         "title": "CaseStatus"
+      },
+      "CaseSummary": {
+        "properties": {
+          "open_cases": {
+            "type": "integer",
+            "title": "Open Cases"
+          },
+          "open_by_protocol": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Open By Protocol"
+          },
+          "sla_breaches": {
+            "type": "integer",
+            "title": "Sla Breaches"
+          },
+          "disposed": {
+            "type": "integer",
+            "title": "Disposed"
+          },
+          "median_hold_resolution_minutes": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Median Hold Resolution Minutes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "open_cases",
+          "open_by_protocol",
+          "sla_breaches",
+          "disposed",
+          "median_hold_resolution_minutes"
+        ],
+        "title": "CaseSummary"
       },
       "CaseType": {
         "type": "string",
@@ -3038,6 +3149,88 @@
         "title": "GuardianSessionView",
         "description": "docs/16 `GuardianSessionView`."
       },
+      "GuardianSummary": {
+        "properties": {
+          "decided": {
+            "type": "integer",
+            "title": "Decided"
+          },
+          "decisions": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Decisions"
+          },
+          "median_session_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Median Session Seconds"
+          },
+          "active_probes_per_session": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Probes Per Session"
+          },
+          "info_yield_bits": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Info Yield Bits"
+          },
+          "held": {
+            "type": "integer",
+            "title": "Held"
+          },
+          "label_coverage_held": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label Coverage Held"
+          },
+          "dd_pack_completeness": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dd Pack Completeness"
+          }
+        },
+        "type": "object",
+        "required": [
+          "decided",
+          "decisions",
+          "median_session_seconds",
+          "active_probes_per_session",
+          "info_yield_bits",
+          "held",
+          "label_coverage_held",
+          "dd_pack_completeness"
+        ],
+        "title": "GuardianSummary"
+      },
       "HealthView": {
         "properties": {
           "status": {
@@ -3540,6 +3733,60 @@
           "permissions"
         ],
         "title": "MeView"
+      },
+      "MetricsSummary": {
+        "properties": {
+          "window_hours": {
+            "type": "integer",
+            "title": "Window Hours"
+          },
+          "as_of": {
+            "type": "string",
+            "title": "As Of"
+          },
+          "guardian": {
+            "$ref": "#/components/schemas/GuardianSummary"
+          },
+          "cases": {
+            "$ref": "#/components/schemas/CaseSummary"
+          },
+          "golden_hour_ratio": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Golden Hour Ratio"
+          },
+          "alerts": {
+            "items": {
+              "$ref": "#/components/schemas/AlertView"
+            },
+            "type": "array",
+            "title": "Alerts"
+          },
+          "alerts_not_tracked": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Alerts Not Tracked"
+          }
+        },
+        "type": "object",
+        "required": [
+          "window_hours",
+          "as_of",
+          "guardian",
+          "cases",
+          "golden_hour_ratio",
+          "alerts",
+          "alerts_not_tracked"
+        ],
+        "title": "MetricsSummary"
       },
       "ModelStatus": {
         "properties": {

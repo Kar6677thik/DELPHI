@@ -41,3 +41,7 @@ export type EvidenceRecord = Schemas['EvidenceRecordView'];
 export type Flip = Schemas['FlipView'];
 /** The case queue's orders. */
 export type CaseSort = Schemas['CaseSort'];
+/** `GET /metrics/summary`: the Overview's live KPIs and alerts (docs/22 §7, docs/20 §4). */
+export type MetricsSummary = Schemas['MetricsSummary'];
+/** `GET /status`: whether the demo is seeded and its models trained (docs/16, docs/20 §3). */
+export type StatusView = Schemas['StatusView'];
