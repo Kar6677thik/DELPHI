@@ -13,11 +13,12 @@ import { useStatus } from '../api/overview';
 import type { DatasetRequest, JobStatus, JobType, JobView, StatusView } from '../api/types';
 import { ProblemAlert } from '../components/ProblemAlert';
 import { duration, keyText } from '../lib/format';
+import { Users } from './AdminUsers';
 
 /**
  * Admin (docs/18 §2 `/admin`, docs/16 §2 "Admin and jobs", #231): is the demo set up, is the
- * audit trail intact, and what are the background jobs doing. The demo story runner and the
- * demo reset arrive with their endpoints (#101, #132).
+ * audit trail intact, what are the background jobs doing, and who can sign in. The demo story
+ * runner and the demo reset arrive with their endpoints (#101, #132).
  */
 
 const PERCENT = 100;
@@ -108,6 +109,7 @@ export function AdminPage() {
       </div>
 
       <Jobs />
+      <Users />
     </section>
   );
 }

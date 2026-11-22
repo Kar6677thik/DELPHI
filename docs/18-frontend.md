@@ -98,8 +98,12 @@ disabled without a dataset), each with a fresh `Idempotency-Key`; a 409 shows as
 "Intact" with the entries checked, or "Broken" with the first bad entry. "Jobs" lists `GET /jobs`
 newest first, filtered by status and type, 25 more at a time: type, status (a live mark while
 running), progress, tries, when it was queued, how long it took, and the error; a FAILED job has
-"Retry" (`POST /jobs/{id}/retry`). `job.updated` invalidates the `['admin']` queries. User
-management follows in a second PR; the demo story runner and demo reset come with their endpoints.
+"Retry" (`POST /jobs/{id}/retry`). `job.updated` invalidates the `['admin']` queries. "Users"
+lists `GET /admin/users` (the signed-in admin marked "you"): a role select, "Disable" / "Enable"
+(never offered on your own row) and "Reset password" each send `PATCH /admin/users/{id}` with the
+row's `version` as `If-Match`; a 412 or the last-admin 409 shows as a problem alert and the list is
+re-read. "Add a user" posts `POST /admin/users` (username pattern, display name, a password of at
+least 12 characters, role). The demo story runner and demo reset come with their endpoints.
 
 **M4 Guardian screens (#100):** `/guardian` lists `GET /guardian/sessions` newest first, 50 at a
 time, with "Load more sessions" while `next_cursor` is set: start time (linking to

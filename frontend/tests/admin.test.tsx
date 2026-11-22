@@ -1,8 +1,8 @@
-import { screen, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
-import type { JobView, StatusView } from '../src/api/types';
+import type { JobView, StatusView, UserView } from '../src/api/types';
 import { MOCK_STATUS, problem, setMockSession } from './mocks/handlers';
 import { server } from './mocks/node';
 import { renderApp } from './renderApp';
@@ -42,6 +42,31 @@ const FAILED = job({
   attempts: 3,
   error: 'The worker stopped mid-batch.',
   finished_at: null,
+});
+
+function user(overrides: Partial<UserView> = {}): UserView {
+  return {
+    id: '00000000-0000-4000-8000-000000000002',
+    username: 'priya.investigator',
+    display_name: 'Priya Investigator',
+    role: 'INVESTIGATOR',
+    disabled: false,
+    created_at: '2026-11-08T09:00:00Z',
+    version: 3,
+    ...overrides,
+  };
+}
+
+const ADA = user({
+  id: '00000000-0000-4000-8000-000000000004',
+  username: 'admin',
+  display_name: 'Ada Admin',
+  role: 'ADMIN',
+  version: 1,
+});
+
+beforeEach(() => {
+  server.use(http.get('/api/v1/admin/users', () => HttpResponse.json([ADA, user()])));
 });
 
 describe('/admin', () => {
@@ -165,3 +190,115 @@ describe('/admin', () => {
     expect(keys[1]).not.toBe(keys[0]);
   });
 });
+
+describe('/admin users', () => {
+  it('lists the users, marks you, and never offers to disable you', async () => {
+    setMockSession('admin');
+    server.use(http.get('/api/v1/jobs', () => HttpResponse.json({ items: [], next_cursor: null })));
+    renderApp('/admin');
+    const table = await screen.findByRole('table', { name: 'Users' });
+    const [, adaRow, priyaRow] = within(table).getAllByRole('row');
+    if (!adaRow || !priyaRow) throw new Error('missing rows');
+    expect(within(adaRow).getByText('you')).toBeVisible();
+    expect(within(adaRow).queryByRole('button', { name: 'Disable' })).not.toBeInTheDocument();
+    expect(within(priyaRow).getByRole('button', { name: 'Disable' })).toBeVisible();
+    expect(screen.getByText(/2 accounts, 2 enabled/)).toBeVisible();
+  });
+
+  it('changes a role with the row’s version as If-Match, and shows a 412', async () => {
+    setMockSession('admin');
+    const sent: { ifMatch: string | null; body: unknown }[] = [];
+    server.use(
+      http.get('/api/v1/jobs', () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.patch('/api/v1/admin/users/:id', async ({ request }) => {
+        sent.push({ ifMatch: request.headers.get('If-Match'), body: await request.json() });
+        return sent.length === 1
+          ? HttpResponse.json(user({ role: 'FDE_ENGINEER', version: 4 }))
+          : problem(
+              412,
+              'Precondition Failed',
+              'VERSION_CONFLICT',
+              'This user was changed by someone else; reload and retry.',
+              request.url,
+            );
+      }),
+    );
+    const { user: u } = renderApp('/admin');
+    const role = await screen.findByLabelText('Role of Priya Investigator');
+    await u.selectOptions(role, 'FDE_ENGINEER');
+    expect(sent[0]).toEqual({ ifMatch: '"3"', body: { role: 'FDE_ENGINEER' } });
+
+    await u.click(screen.getByRole('button', { name: 'Disable' }));
+    expect(
+      await screen.findByText('This user was changed by someone else; reload and retry.'),
+    ).toBeVisible();
+    expect(sent[1]?.body).toEqual({ disabled: true });
+  });
+
+  it('resets a password only once it is long enough', async () => {
+    setMockSession('admin');
+    let body: unknown = null;
+    server.use(
+      http.get('/api/v1/jobs', () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.patch('/api/v1/admin/users/:id', async ({ request }) => {
+        body = await request.json();
+        return HttpResponse.json(user({ version: 4 }));
+      }),
+    );
+    const { user: u } = renderApp('/admin');
+    const table = await screen.findByRole('table', { name: 'Users' });
+    const reset = within(table).getAllByRole('button', { name: 'Reset password' })[1];
+    if (!reset) throw new Error('missing button');
+    await u.click(reset);
+    const field = screen.getByLabelText('New password for Priya Investigator');
+    await u.type(field, 'short');
+    expect(screen.getByText('At least 12 characters.')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Set the password' })).toBeDisabled();
+    await u.type(field, '-but-now-long');
+    await u.click(screen.getByRole('button', { name: 'Set the password' }));
+    expect(body).toEqual({ password: 'short-but-now-long' });
+    await waitForGone('New password for Priya Investigator');
+  });
+
+  it('adds a user, and shows a taken username', async () => {
+    setMockSession('admin');
+    const bodies: unknown[] = [];
+    server.use(
+      http.get('/api/v1/jobs', () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.post('/api/v1/admin/users', async ({ request }) => {
+        bodies.push(await request.json());
+        return problem(
+          422,
+          'Unprocessable',
+          'VALIDATION_FAILED',
+          'That username is taken.',
+          request.url,
+        );
+      }),
+    );
+    const { user: u } = renderApp('/admin');
+    await u.click(await screen.findByRole('button', { name: 'Add a user' }));
+    const form = screen.getByRole('form', { name: 'Add a user' });
+    const add = within(form).getByRole('button', { name: 'Add the user' });
+    expect(add).toBeDisabled();
+    await u.type(within(form).getByLabelText('Username'), 'ravi.k');
+    await u.type(within(form).getByLabelText('Display name'), 'Ravi Kumar');
+    await u.type(within(form).getByLabelText('Password'), 'a-long-password');
+    await u.selectOptions(within(form).getByLabelText('Role'), 'INVESTIGATOR');
+    expect(within(form).getByText('Works cases and chases')).toBeVisible();
+    await u.click(add);
+    expect(await within(form).findByText('That username is taken.')).toBeVisible();
+    expect(bodies[0]).toEqual({
+      username: 'ravi.k',
+      display_name: 'Ravi Kumar',
+      password: 'a-long-password',
+      role: 'INVESTIGATOR',
+    });
+  });
+});
+
+async function waitForGone(label: string) {
+  await waitFor(() => {
+    expect(screen.queryByLabelText(label)).not.toBeInTheDocument();
+  });
+}
