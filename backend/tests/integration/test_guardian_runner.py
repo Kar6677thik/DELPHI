@@ -231,8 +231,13 @@ def _sim_customer(env: Env) -> SimulatedCustomer:
     )
 
 
+# The simulated customer draws its answers keyed by the payment id, so the id is fixed: with a
+# random one, some runs draw a cancel during the cooling-off and the session never decides (#225).
+SIM_PAYMENT = UUID("5e1f0c3a-7b2d-4c88-9a61-0d4e2f7b9c15")
+
+
 def test_a_simulated_customer_answers_through_the_channel_contract(env: Env) -> None:
-    payment = env.payment(480_000)
+    payment = env.payment(480_000, payment_id=SIM_PAYMENT)
     _truth(env, payment, "APP_DIGITAL_ARREST")
     customer = _sim_customer(env)
 
