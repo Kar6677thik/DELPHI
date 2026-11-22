@@ -1,6 +1,6 @@
 import type { QueryClient, QueryKey } from '@tanstack/react-query';
 
-import { CASES_QUERY_KEY } from '../api/cases';
+import { CASES_ROOT_KEY } from '../api/cases';
 import { GUARDIAN_QUERY_KEY } from '../api/guardian';
 
 /**
@@ -9,8 +9,9 @@ import { GUARDIAN_QUERY_KEY } from '../api/guardian';
  * invalidates every query under it.
  */
 export const LIVE_QUERIES: Readonly<Record<string, readonly QueryKey[]>> = {
-  'case.opened': [CASES_QUERY_KEY.slice(0, 1)],
-  'case.updated': [CASES_QUERY_KEY.slice(0, 1)],
+  'case.opened': [CASES_ROOT_KEY],
+  'case.updated': [CASES_ROOT_KEY],
+  'evidence.narrative_ready': [CASES_ROOT_KEY],
   'guardian.session.updated': [GUARDIAN_QUERY_KEY],
   'guardian.session.decided': [GUARDIAN_QUERY_KEY],
 };
