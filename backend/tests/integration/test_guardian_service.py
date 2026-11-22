@@ -53,6 +53,7 @@ from ._db import engine_as, upgrade
 T0 = datetime(2026, 11, 15, 10, 0, tzinfo=UTC)
 KB_DIR = Path(__file__).resolve().parents[3] / "kb"
 INR = 100  # paise
+OTP_KEY = b"test-otp-key-32-bytes-long-enough"
 
 GENUINE_SURE = {
     "GENUINE": 0.999,
@@ -193,7 +194,13 @@ class Env:
         fetch = fetchers(outcomes, kw.pop("slow", None))
         self._release = fetch.pop("_release")
         return GuardianService(
-            self.sessions, self.clock, prior, fetch, passive_executor(threads=8), **kw
+            self.sessions,
+            self.clock,
+            prior,
+            fetch,
+            passive_executor(threads=8),
+            otp_key=OTP_KEY,
+            **kw,
         )
 
     def release_slow(self) -> None:

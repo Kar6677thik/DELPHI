@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+
 import pytest
 
 from delphi.guardian.active import (
@@ -34,10 +36,21 @@ def test_each_active_probe_has_a_screen() -> None:
 def test_otp_codes_are_six_digits_and_only_their_keyed_digest_matches() -> None:
     codes = {new_otp() for _ in range(50)}
     assert all(len(c) == 6 and c.isdigit() for c in codes) and len(codes) > 1
-    digest = otp_digest("run-1", "123456")
-    assert otp_matches("run-1", "123456", digest)
-    assert not otp_matches("run-1", "123457", digest)
-    assert not otp_matches("run-2", "123456", digest)  # keyed by the probe run
+    key = b"k" * 32
+    digest = otp_digest(key, "run-1", "123456")
+    assert otp_matches(key, "run-1", "123456", digest)
+    assert not otp_matches(key, "run-1", "123457", digest)
+    assert not otp_matches(key, "run-2", "123456", digest)  # keyed by the probe run
+    assert not otp_matches(b"x" * 32, "run-1", "123456", digest)  # and by the server secret
+
+
+def test_a_database_reader_cannot_recover_the_code_without_the_key() -> None:
+    """#171: the digest is no plain hash, so trying all 10⁶ codes without the key finds
+    nothing."""
+    digest = otp_digest(b"server-secret-" * 3, "run-1", "042917")
+    plain = {hashlib.sha256(f"run-1:{c:06d}".encode()).hexdigest() for c in range(42_900, 42_950)}
+    assert digest not in plain
+    assert digest != otp_digest(b"another-secret-" * 3, "run-1", "042917")
     for bad in ({"otp": "12345"}, {"otp": "12345a"}, {"otp": 123456}, {}):
         with pytest.raises(DelphiError, match="6 digits"):
             otp_code(bad)
