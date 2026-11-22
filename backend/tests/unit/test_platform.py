@@ -71,6 +71,28 @@ def test_migrate_url_overrides_app_url() -> None:
     assert settings.effective_migrate_url == other
 
 
+def test_the_otp_key_is_the_server_secret(clean_env: pytest.MonkeyPatch) -> None:
+    """#171: DELPHI_SECRET_KEY keys the OTP digest; demo refuses to run a Guardian without it,
+    dev and test fall back to a fixed development key."""
+    clean_env.setenv("DELPHI_DATABASE_URL", PG)
+    clean_env.setenv("DELPHI_SECRET_KEY", "s" * 32)
+    clean_env.setenv("DELPHI_ENV", "demo")
+    assert load_settings().otp_key == b"s" * 32
+    clean_env.delenv("DELPHI_SECRET_KEY")
+    demo = load_settings()  # starts: only building a Guardian needs the key
+    with pytest.raises(SettingsError, match="DELPHI_SECRET_KEY"):
+        _ = demo.otp_key
+    clean_env.setenv("DELPHI_ENV", "dev")
+    assert len(load_settings().otp_key) > 0
+
+
+def test_a_short_secret_key_is_rejected(clean_env: pytest.MonkeyPatch) -> None:
+    clean_env.setenv("DELPHI_DATABASE_URL", PG)
+    clean_env.setenv("DELPHI_SECRET_KEY", "too-short")
+    with pytest.raises(SettingsError, match="DELPHI_SECRET_KEY"):
+        load_settings()
+
+
 def test_sqlalchemy_url_selects_psycopg3() -> None:
     assert sqlalchemy_url(PG) == "postgresql+psycopg://u:p@localhost:5432/delphi"
     already = "postgresql+psycopg://u@h/d"

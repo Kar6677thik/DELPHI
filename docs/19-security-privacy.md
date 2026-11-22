@@ -73,7 +73,7 @@ draft. This applies even to ADMIN.
 | Secret | Where | Rotation |
 |---|---|---|
 | DB passwords and URLs (`delphi_app`, `delphi_sim`, postgres superuser) | k8s Secrets `delphi-postgres`, `delphi-app`, `delphi-worker`, `delphi-migrate` (doc 23 §4); created by the bootstrap, never in git | Manual (doc 23 §7) |
-| `ANTHROPIC_API_KEY`, `DELPHI_SECRET_KEY`, bootstrap admin | k8s Secret `delphi-app` | Manual; rotate the API key if it ever appears in a log |
+| `ANTHROPIC_API_KEY`, `DELPHI_SECRET_KEY` (keys the OTP digest, doc 08 §4), bootstrap admin | k8s Secret `delphi-app` | Manual; rotate the API key if it ever appears in a log. Rotating `DELPHI_SECRET_KEY` only fails OTPs in flight at that moment |
 | `delphi-deployer` token, cluster CA, Tailscale OIDC credential | GitHub environment `megatron` secrets and variables (doc 23 §3) | Token every 90 days, at once if leaked (doc 23 §7) |
 | `GHCR_PUSH_TOKEN` (classic PAT, `write:packages` only) | GitHub environment `production` secret, usable only from `main` (doc 23 §3) | On PAT expiry; immediately if leaked. No cluster pull credentials are needed (public package, A-05) |
 
