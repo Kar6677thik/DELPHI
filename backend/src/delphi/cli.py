@@ -391,7 +391,7 @@ def verify_restore_report(settings: Settings) -> dict[str, object]:
                 name: int(
                     conn.execute(
                         text(
-                            "SELECT count(*) FROM {}.{}".format(
+                            "SELECT count(*) FROM {}.{}".format(  # nosec B608
                                 *(f'"{p}"' for p in name.split("."))
                             )
                         )

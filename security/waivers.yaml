@@ -1,0 +1,9 @@
+# Vulnerability waivers (docs/21 §6). A HIGH or CRITICAL finding from pip-audit, pnpm audit or
+# Trivy may stay only with an entry here, and each entry expires within 30 days. None so far.
+#
+# - id: CVE-YYYY-NNNNN
+#   scanner: trivy            # trivy | pip-audit | pnpm-audit
+#   reason: why it does not apply to DELPHI
+#   accepted_by: github-login
+#   expires: YYYY-MM-DD
+waivers: []
