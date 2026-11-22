@@ -394,11 +394,16 @@ def read_case(
     return detail
 
 
+# A KB key (a decision, typology, source or outcome): bounded, so a request cannot carry an
+# arbitrarily long string into the audit log and the problem detail (#127).
+KbKey = Annotated[str, Field(min_length=1, max_length=64)]
+
+
 class DispositionRequest(BaseModel):
     """docs/16: `{decision, typology?, confidence (1–5), note?, override_rationale?}`."""
 
-    decision: str
-    typology: str | None = None
+    decision: KbKey
+    typology: KbKey | None = None
     confidence: int = Field(ge=1, le=5)
     note: str | None = Field(default=None, max_length=2000)
     override_rationale: str | None = Field(default=None, max_length=2000)
@@ -463,9 +468,9 @@ class EvidenceRequest(BaseModel):
     """docs/16: `{source_key, refresh?}`; `CUSTOMER_OUTREACH_CALL` also takes the investigator's
     recorded `outcome` and a `note` (docs/09 §3)."""
 
-    source_key: str
+    source_key: KbKey
     refresh: bool = False
-    outcome: str | None = None
+    outcome: KbKey | None = None
     note: str | None = Field(default=None, max_length=2000)
     # docs/09 §3: in simulation/autoplay the worker places the outreach call (202).
     simulate: bool = False

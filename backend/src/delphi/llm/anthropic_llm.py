@@ -89,8 +89,11 @@ def output_schema(model: type[BaseModel]) -> dict[str, Any]:
 
 
 def user_message(payload: Mapping[str, Any]) -> str:
-    """docs/15 §4: the payload as JSON inside <evidence> tags, last (cache-friendly)."""
-    return f"<evidence>\n{json.dumps(payload, sort_keys=True, ensure_ascii=False)}\n</evidence>"
+    """docs/15 §4: the payload as JSON inside <evidence> tags, last (cache-friendly). ``<`` is
+    written as the JSON escape ``\\u003c`` (the same JSON value), so no value in the payload can
+    close the tag early (#127)."""
+    data = json.dumps(payload, sort_keys=True, ensure_ascii=False).replace("<", "\\u003c")
+    return f"<evidence>\n{data}\n</evidence>"
 
 
 class AnthropicLlm:

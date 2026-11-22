@@ -39,12 +39,26 @@ class QueueConfig(BaseModel):
         return self
 
 
+class TargetsConfig(BaseModel):
+    """The pre-registered targets (docs/22 §5). Never tuned to the results."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    genuine_hold_reduction_vs_b1: float = Field(gt=0, le=1)
+    coercion_catch_multiple_vs_b2: float = Field(gt=0)
+    median_resolution_fraction_of_b1: float = Field(gt=0, le=1)
+    min_label_coverage_held: float = Field(gt=0, le=1)
+    golden_hour_multiple_vs_manual: float = Field(gt=0)
+    dd_completeness: float = Field(gt=0, le=1)
+
+
 class EvaluationConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     bootstrap: BootstrapConfig
     label_coverage_days: float = Field(gt=0)
     queue: QueueConfig
+    targets: TargetsConfig
 
 
 def load_evaluation_config(path: Path = CONFIG_FILE) -> EvaluationConfig:

@@ -10,9 +10,13 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import Response
+from starlette.routing import Route
 
 from delphi.api.app import create_app
-from delphi.api.rate_limit import EXEMPT
+from delphi.api.rate_limit import EXEMPT, LOGIN, RateLimitMiddleware, RateLimits
 from delphi.api.security import SESSION_COOKIE
 from delphi.platform.clock import FixedClock
 from delphi.platform.db import make_session_factory
@@ -64,13 +68,16 @@ def test_bad_parameters_are_refused() -> None:
 
 @pytest.fixture
 def client(tmp_path: Path) -> Iterator[TestClient]:
-    """An app with a 3-request burst refilling at 1/s; the database is never touched."""
+    """An app with a 3-request burst per caller and 6 per address, refilling at 1/s; the database
+    is never touched."""
     settings = Settings(
         database_url="postgresql://nobody:x@127.0.0.1:1/none",
         migrations_dir=MIGRATIONS_DIR,
         static_dir=tmp_path / "no-frontend-build",
         rate_limit_per_s=1,
         rate_limit_burst=3,
+        rate_limit_address_per_s=1,
+        rate_limit_address_burst=6,
         db_connect_timeout_s=1,
     )
     engine = create_engine("postgresql+psycopg://nobody:x@127.0.0.1:1/none")
@@ -112,6 +119,44 @@ def test_sessions_are_limited_separately_from_addresses(client: TestClient) -> N
     assert client.get(PING).status_code == 200  # a signed-in caller has its own bucket
     client.cookies.set(SESSION_COOKIE, "session-b")
     assert client.get(PING).status_code == 200
+
+
+def test_rotating_session_cookies_does_not_escape_the_address_limit(client: TestClient) -> None:
+    """#127: any cookie value got a fresh bucket, so a caller sending a new one each time was
+    never limited. The address's own bucket caps it."""
+    codes = []
+    for n in range(8):
+        client.cookies.set(SESSION_COOKIE, f"made-up-{n}")
+        codes.append(client.get(PING).status_code)
+    assert codes == [200] * 6 + [429, 429]
+
+
+def test_sign_in_attempts_have_their_own_address_bucket() -> None:
+    """Each attempt costs an Argon2 hash, so sign-in has a tight per-address limit whatever
+    the username or cookie. A stub sign-in route, so no database is involved."""
+
+    async def signed_in(_: Request) -> Response:
+        return Response(status_code=204)
+
+    async def ping(_: Request) -> Response:
+        return Response(status_code=200)
+
+    clock = FixedClock(T0)
+    app = Starlette(routes=[Route(LOGIN, signed_in, methods=["POST"]), Route(PING, ping)])
+    limits = RateLimits(
+        callers=TokenBuckets(clock, rate=1, burst=10),
+        addresses=TokenBuckets(clock, rate=1, burst=10),
+        logins=TokenBuckets(clock, rate=1, burst=2),
+    )
+    client = TestClient(RateLimitMiddleware(app, limits=limits, client_ip_header=None))
+    codes = []
+    for n in range(3):
+        client.cookies.set(SESSION_COOKIE, f"made-up-{n}")
+        codes.append(client.post(LOGIN, json={"username": f"user{n}"}).status_code)
+    assert codes == [204, 204, 429]
+    assert client.get(PING).status_code == 200  # other requests still go through
+    clock.advance(timedelta(seconds=1))
+    assert client.post(LOGIN).status_code == 204  # one attempt a second after the burst
 
 
 def test_the_probes_and_non_api_paths_are_exempt(client: TestClient) -> None:

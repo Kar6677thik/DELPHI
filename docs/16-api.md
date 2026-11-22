@@ -5,7 +5,8 @@ checked into `backend/openapi.json` (regenerate with `uv run delphi openapi`). C
 generated file differs from the committed one (schema-first discipline, EFG §7). Every operation
 documents its error body as a `default` response of `application/problem+json` with the
 `Problem` schema (§1). Frontend types are generated from it with
-`openapi-typescript` into `frontend/src/api/schema.d.ts`, and CI checks that file too.
+`openapi-typescript` into `frontend/src/api/schema.d.ts`, and CI checks that file too. The api also serves the document at `GET /api/v1/openapi.json` without signing in: the same
+file is in this public repository, so it reveals nothing more (#127).
 
 ## 1. Conventions
 
@@ -22,7 +23,7 @@ documents its error body as a `default` response of `application/problem+json` w
 | Concurrency | Mutable aggregates return `ETag: "<version>"`. Mutations need `If-Match`; a mismatch returns `412 VERSION_CONFLICT` |
 | Errors | RFC 9457 `application/problem+json`: `{type, title, status, detail, code, instance, request_id, errors?: [{path, code, message}]}` |
 | Request id | `X-Request-Id` is accepted or generated, and echoed in the response and the logs |
-| Rate limits | Login: 5 failures / 15 min per (username, IP) → `429 RATE_LIMITED`. Global: 20 req/s per session, token bucket with burst 40 (`DELPHI_RATE_LIMIT_PER_S`, `DELPHI_RATE_LIMIT_BURST`) → `429 RATE_LIMITED` with `Retry-After`. Every `/api/` request takes a token except `/health` and `/ready`; a caller without a session is keyed by its client address. The SSE stream is one request. In process memory, like the login throttle (one api replica) |
+| Rate limits | Login: 5 failures / 15 min per (username, IP) → `429 RATE_LIMITED`. Global: 20 req/s per session, token bucket with burst 40 (`DELPHI_RATE_LIMIT_PER_S`, `DELPHI_RATE_LIMIT_BURST`) → `429 RATE_LIMITED` with `Retry-After`. Every `/api/` request takes a token except `/health` and `/ready`; a caller without a session is keyed by its client address. Every request also takes a token from its client address's own bucket, 100 req/s with burst 200 (`DELPHI_RATE_LIMIT_ADDRESS_PER_S`, `DELPHI_RATE_LIMIT_ADDRESS_BURST`), so sending a new session cookie each time does not escape the limit; and `POST /auth/login` takes one from the address's sign-in bucket, 1/s with burst 10 (`DELPHI_LOGIN_RATE_PER_S`, `DELPHI_LOGIN_RATE_BURST`), since each attempt costs an Argon2 hash (#127). The SSE stream is one request. In process memory, like the login throttle (one api replica) |
 
 ### Error codes (stable)
 
