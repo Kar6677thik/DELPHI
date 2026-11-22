@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 import threading
 from collections.abc import Callable, Sequence
@@ -19,6 +20,7 @@ from uuid import UUID
 
 import uvicorn
 from alembic import command
+from pydantic import ValidationError
 from sqlalchemy import Engine, text
 
 from delphi.api.app import create_app
@@ -28,6 +30,7 @@ from delphi.kb.issues import KbValidationError
 from delphi.kb.loader import load_and_validate
 from delphi.kb.model import KnowledgeBase
 from delphi.kb.store import active_version, ensure_kb_v1
+from delphi.llm.evaluation import CASES_FILE, load_cases, render_report, run_eval
 from delphi.llm.service import LlmService, primary_provider
 from delphi.navigator.api import OUTREACH as OUTREACH_SOURCE
 from delphi.navigator.api import request_evidence
@@ -333,6 +336,35 @@ def _migrate(settings: Settings) -> int:
     return 0
 
 
+LLM_EVAL_REPORTS = _REPO_KB_DIR.parent / "docs" / "reports"
+
+
+def _llm_eval(args: argparse.Namespace) -> int:
+    """docs/15 §8: run the fixed cases through the real model and write the report. Needs
+    DELPHI_LLM_PROVIDER=anthropic and ANTHROPIC_API_KEY; it uses no database."""
+    try:
+        settings = Settings(  # the eval reads no database; any other DELPHI_* comes from env
+            database_url=os.environ.get("DELPHI_DATABASE_URL", "postgresql://unused/llm-eval")
+        )
+    except ValidationError as exc:
+        print(f"delphi: invalid configuration: {exc}", file=sys.stderr)
+        return EXIT_CONFIG_ERROR
+    provider = primary_provider(settings)
+    if provider is None:
+        print(
+            "delphi llm-eval: set DELPHI_LLM_PROVIDER=anthropic and ANTHROPIC_API_KEY"
+            " (the run calls the real model and costs money)",
+            file=sys.stderr,
+        )
+        return EXIT_CONFIG_ERROR
+    report = run_eval(provider, load_cases(Path(args.cases)))
+    today = datetime.now(UTC).date()
+    out = Path(args.out) if args.out else LLM_EVAL_REPORTS / f"llm-eval-{today.isoformat()}.md"
+    out.write_text(render_report(report, on=today, git_sha=settings.version), encoding="utf-8")
+    print(f"llm-eval: {'PASS' if report.passed else 'FAIL'}; report written to {out}")
+    return 0 if report.passed else 1
+
+
 # The schemas whose tables the restore check counts (docs/17).
 RESTORE_SCHEMAS = ("delphi", "bank")
 
@@ -420,6 +452,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--if-empty", action="store_true", help="do nothing if a dataset is already there"
     )
     seed.set_defaults(func=lambda args: _with_settings(lambda s: _seed(s, args))(args))
+
+    llm_eval = sub.add_parser(
+        "llm-eval", help="evaluate the LLM path against the real model (docs/15 §8; costs money)"
+    )
+    llm_eval.add_argument("--cases", default=str(CASES_FILE), help="the eval cases (JSONL)")
+    llm_eval.add_argument("--out", help="default: docs/reports/llm-eval-<date>.md")
+    llm_eval.set_defaults(func=_llm_eval)
 
     sub.add_parser(
         "verify-restore",
