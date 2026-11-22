@@ -145,8 +145,11 @@ class Env:
     sessions: sessionmaker[Session]
     clock: FixedClock
 
-    def payment(self, amount_inr: int, *, balance_inr: int = 1_000_000) -> UUID:
-        customer, payer, payee, payment = uuid4(), uuid4(), uuid4(), uuid4()
+    def payment(
+        self, amount_inr: int, *, balance_inr: int = 1_000_000, payment_id: UUID | None = None
+    ) -> UUID:
+        customer, payer, payee = uuid4(), uuid4(), uuid4()
+        payment = payment_id or uuid4()
         with self.owner.begin() as conn:
             conn.execute(
                 text(
