@@ -5,6 +5,7 @@ from __future__ import annotations
 from delphi.guardian.ddpack import DdPack
 from delphi.guardian.ddpack import build as build_dd_pack
 from delphi.guardian.ddpack import render_html as render_dd_pack_html
+from delphi.guardian.kpis import GuardianKpis, guardian_kpis
 from delphi.guardian.store import SessionMode, SessionStatus
 from delphi.guardian.views import (
     SessionCursor,
@@ -17,6 +18,7 @@ from delphi.guardian.views import (
 
 __all__ = [
     "DdPack",
+    "GuardianKpis",
     "SessionCursor",
     "SessionFilter",
     "SessionMode",
@@ -24,6 +26,7 @@ __all__ = [
     "SessionStatus",
     "build_dd_pack",
     "get_session_row",
+    "guardian_kpis",
     "list_sessions",
     "probe_run_rows",
     "render_dd_pack_html",

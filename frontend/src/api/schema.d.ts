@@ -517,6 +517,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/metrics/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Summary */
+        get: operations["read_summary_api_v1_metrics_summary_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -531,6 +548,15 @@ export interface components {
          * @enum {string}
          */
         AlertStatus: "DRAFT" | "SENT_SIMULATED" | "DISCARDED";
+        /** AlertView */
+        AlertView: {
+            /** Code */
+            code: string;
+            /** Message */
+            message: string;
+            /** Count */
+            count: number;
+        };
         /**
          * ArtifactKind
          * @description The sensing models (docs/13 §1).
@@ -666,6 +692,21 @@ export interface components {
          * @enum {string}
          */
         CaseStatus: "OPEN" | "IN_PROGRESS" | "DISPOSED";
+        /** CaseSummary */
+        CaseSummary: {
+            /** Open Cases */
+            open_cases: number;
+            /** Open By Protocol */
+            open_by_protocol: {
+                [key: string]: number;
+            };
+            /** Sla Breaches */
+            sla_breaches: number;
+            /** Disposed */
+            disposed: number;
+            /** Median Hold Resolution Minutes */
+            median_hold_resolution_minutes: number | null;
+        };
         /**
          * CaseType
          * @enum {string}
@@ -1012,6 +1053,29 @@ export interface components {
             /** Probe Runs */
             probe_runs: components["schemas"]["ProbeRunView"][];
         };
+        /** GuardianSummary */
+        GuardianSummary: {
+            /** Decided */
+            decided: number;
+            /** Decisions */
+            decisions: {
+                [key: string]: number;
+            };
+            /** Median Session Seconds */
+            median_session_seconds: number | null;
+            /** Active Probes Per Session */
+            active_probes_per_session: number | null;
+            /** Info Yield Bits */
+            info_yield_bits: {
+                [key: string]: number;
+            };
+            /** Held */
+            held: number;
+            /** Label Coverage Held */
+            label_coverage_held: number | null;
+            /** Dd Pack Completeness */
+            dd_pack_completeness: number | null;
+        };
         /** HealthView */
         HealthView: {
             /**
@@ -1177,6 +1241,21 @@ export interface components {
             role: components["schemas"]["Role"];
             /** Permissions */
             permissions: components["schemas"]["Permission"][];
+        };
+        /** MetricsSummary */
+        MetricsSummary: {
+            /** Window Hours */
+            window_hours: number;
+            /** As Of */
+            as_of: string;
+            guardian: components["schemas"]["GuardianSummary"];
+            cases: components["schemas"]["CaseSummary"];
+            /** Golden Hour Ratio */
+            golden_hour_ratio: number | null;
+            /** Alerts */
+            alerts: components["schemas"]["AlertView"][];
+            /** Alerts Not Tracked */
+            alerts_not_tracked: string[];
         };
         /** ModelStatus */
         ModelStatus: {
@@ -2338,6 +2417,37 @@ export interface operations {
                 content: {
                     "application/json": unknown;
                     "text/html": unknown;
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    read_summary_api_v1_metrics_summary_get: {
+        parameters: {
+            query?: {
+                hours?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MetricsSummary"];
                 };
             };
             /** @description An RFC 9457 problem (docs/16 §1) */

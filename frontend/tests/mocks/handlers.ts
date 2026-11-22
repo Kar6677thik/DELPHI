@@ -8,7 +8,9 @@ import type {
   EvidenceRecord,
   LoginRequest,
   Me,
+  MetricsSummary,
   Permission,
+  StatusView,
 } from '../../src/api/types';
 
 /**
@@ -209,8 +211,46 @@ export const MOCK_KB_CONTENT = {
 /** The case queue the mock api serves; tests replace it with `server.use`. */
 export const MOCK_CASES: CasePage = { items: [mockCase()], next_cursor: null };
 
+/** The Overview's live figures with nothing decided yet; tests replace it with `server.use`. */
+export const MOCK_SUMMARY: MetricsSummary = {
+  window_hours: 24,
+  as_of: '2026-11-22T10:00:00Z',
+  guardian: {
+    decided: 0,
+    decisions: {},
+    median_session_seconds: null,
+    active_probes_per_session: null,
+    info_yield_bits: {},
+    held: 0,
+    label_coverage_held: null,
+    dd_pack_completeness: null,
+  },
+  cases: {
+    open_cases: 0,
+    open_by_protocol: {},
+    sla_breaches: 0,
+    disposed: 0,
+    median_hold_resolution_minutes: null,
+  },
+  golden_hour_ratio: null,
+  alerts: [],
+  alerts_not_tracked: ['BACKUP_AGE', 'SSE_OUTBOX_LAG', 'PROBE_YIELD_DEGRADED'],
+};
+
+export const MOCK_STATUS: StatusView = {
+  dataset_ready: true,
+  models_ready: true,
+  seed_job_id: null,
+  seed_progress: null,
+  models: {},
+  models_below_gate: [],
+};
+
 export const handlers = [
   http.get('/api/v1/cases', () => HttpResponse.json(MOCK_CASES)),
+  http.get('/api/v1/metrics/summary', () => HttpResponse.json(MOCK_SUMMARY)),
+  http.get('/api/v1/status', () => HttpResponse.json(MOCK_STATUS)),
+  http.get('/api/v1/guardian/sessions', () => HttpResponse.json({ items: [], next_cursor: null })),
   http.post('/api/v1/auth/login', async ({ request }) => {
     if (request.headers.get(CSRF_HEADER) !== '1') {
       return problem(403, 'Forbidden', 'CSRF_REJECTED', 'Missing CSRF header.', request.url);

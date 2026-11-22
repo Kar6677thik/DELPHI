@@ -25,6 +25,7 @@ from delphi.api.routers import (
     guardian,
     jobs,
     kb,
+    metrics,
     platform,
     sensing,
     status,
@@ -94,6 +95,7 @@ def create_app(resources: Platform, *, event_hub: EventHub | None = None) -> Fas
     app.include_router(sensing.router)
     app.include_router(cases.router)
     app.include_router(guardian.router)
+    app.include_router(metrics.router)
     # Last: the SPA catch-all must not shadow any API route.
     install_spa(app, resources.settings.static_dir)
     return app
