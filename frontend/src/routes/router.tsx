@@ -13,14 +13,28 @@ import { SCREENS } from './screens';
 const PAGES: Partial<Record<string, () => Promise<ComponentType>>> = {
   '/cases': () => import('./CasesPage').then((m) => m.CasesPage),
   '/cases/:id': () => import('./CaseConsolePage').then((m) => m.CaseConsolePage),
+  '/phone': () => import('./PhonePage').then((m) => m.PhonePage),
   '/guardian': () => import('./GuardianPage').then((m) => m.GuardianPage),
   '/guardian/:id': () => import('./GuardianSessionPage').then((m) => m.GuardianSessionPage),
+  '/kb': () => import('./KbPage').then((m) => m.KbPage),
 };
 
 export const routes: RouteObject[] = [
   {
     path: '/login',
     lazy: () => import('./LoginPage').then((m) => ({ Component: m.LoginPage })),
+  },
+  {
+    // The Theatre is full-screen for the projector: signed in, but outside the app shell.
+    path: '/theatre',
+    lazy: () =>
+      import('./TheatrePage').then((m) => ({
+        element: (
+          <RequireSession>
+            <m.TheatrePage />
+          </RequireSession>
+        ),
+      })),
   },
   {
     element: (

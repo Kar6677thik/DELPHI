@@ -71,6 +71,28 @@ def test_migrate_url_overrides_app_url() -> None:
     assert settings.effective_migrate_url == other
 
 
+def test_the_otp_key_is_the_server_secret(clean_env: pytest.MonkeyPatch) -> None:
+    """#171: DELPHI_SECRET_KEY keys the OTP digest; demo refuses to run a Guardian without it,
+    dev and test fall back to a fixed development key."""
+    clean_env.setenv("DELPHI_DATABASE_URL", PG)
+    clean_env.setenv("DELPHI_SECRET_KEY", "s" * 32)
+    clean_env.setenv("DELPHI_ENV", "demo")
+    assert load_settings().otp_key == b"s" * 32
+    clean_env.delenv("DELPHI_SECRET_KEY")
+    demo = load_settings()  # starts: only building a Guardian needs the key
+    with pytest.raises(SettingsError, match="DELPHI_SECRET_KEY"):
+        _ = demo.otp_key
+    clean_env.setenv("DELPHI_ENV", "dev")
+    assert len(load_settings().otp_key) > 0
+
+
+def test_a_short_secret_key_is_rejected(clean_env: pytest.MonkeyPatch) -> None:
+    clean_env.setenv("DELPHI_DATABASE_URL", PG)
+    clean_env.setenv("DELPHI_SECRET_KEY", "too-short")
+    with pytest.raises(SettingsError, match="DELPHI_SECRET_KEY"):
+        load_settings()
+
+
 def test_sqlalchemy_url_selects_psycopg3() -> None:
     assert sqlalchemy_url(PG) == "postgresql+psycopg://u:p@localhost:5432/delphi"
     already = "postgresql+psycopg://u@h/d"
@@ -169,6 +191,26 @@ def test_logs_are_json_lines_with_context_and_redaction() -> None:
     assert entry["password"] == REDACTED
     assert entry["headers"] == {"Authorization": REDACTED, "accept": "json"}
     assert entry["ts"].endswith("Z")
+
+
+def test_secrets_inside_text_and_tracebacks_are_masked() -> None:
+    """#127: key names are not enough; a URL's password or an API key inside a message, a
+    value or a traceback is masked too."""
+    stream = io.StringIO()
+    configure_logging("INFO", stream=stream)
+    url = "postgresql://delphi_app:s3cr3t-pw@db:5432/delphi"
+    try:
+        raise RuntimeError(f"cannot connect to {url}")
+    except RuntimeError:
+        get_logger("test").exception(
+            f"db.down {url}", dsn=url, note="key sk-ant-api03-AbC_d-9 leaked", nested=[url]
+        )
+    text = stream.getvalue()
+    assert "s3cr3t-pw" not in text and "sk-ant-api03" not in text
+    entry = json.loads(text.splitlines()[0])
+    assert entry["dsn"] == "postgresql://delphi_app:***@db:5432/delphi"
+    assert entry["note"] == "key *** leaked"
+    assert "postgresql://delphi_app:***@db" in entry["exception"]
 
 
 # ------------------------------------------------------------------ worker shell

@@ -97,7 +97,7 @@ its own transaction:
   caller error (409), not an engine error.
 - **Active probes** (step 7). `issue` turns a PENDING run into AWAITING_CUSTOMER and returns
   what the channel shows: the question variant (doc 07 §9, rotated over the payer's earlier
-  sessions), or a fresh OTP code (the run stores `sha256(probe_run_id:code)` and never the code;
+  sessions), or a fresh OTP code (the run stores `HMAC-SHA256(DELPHI_SECRET_KEY, probe_run_id:code)` and never the code;
   a wrong attempt is masked too). `respond` checks the client signals (§4), classifies (§5),
   updates and returns to PLANNING; a COOLING_OFF cancel ends the session. The run stores its
   `deadline_at` (issue time + `timeout_s`): an answer after it is refused (409), and `timeout`
@@ -155,7 +155,9 @@ Response: `POST /api/v1/guardian/sessions/{id}/probe-responses`
 **OTP protocol.**
 
 1. When `OTP_STEP_UP` is issued, the server generates a 6-digit code (CSPRNG) and stores its
-   hash on the probe run.
+   HMAC-SHA256 on the probe run, keyed with the api's server secret `DELPHI_SECRET_KEY`. A
+   6-digit code has only 10⁶ values, so a plain hash would hand anyone who can read
+   `probe_runs` the live code (#171).
 2. It "sends" the code as an `otp.sms` SSE event to the phone, which shows it as a mock SMS
    notification. Simulated customers receive it internally.
 3. Each attempt is one POST with `{ "otp": "123456" }`. A wrong code returns 200 with

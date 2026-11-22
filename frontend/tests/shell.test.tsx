@@ -26,6 +26,7 @@ describe('app shell', () => {
     await screen.findByRole('heading', { name: 'Overview' });
     expect(navLabels()).toEqual([
       'Overview',
+      'Theatre',
       'Guardian',
       'Cases',
       'Campaigns',
@@ -42,6 +43,7 @@ describe('app shell', () => {
     await screen.findByRole('heading', { name: 'Overview' });
     expect(navLabels()).toEqual([
       'Overview',
+      'Theatre',
       'Phone',
       'Guardian',
       'Cases',

@@ -30,6 +30,12 @@ test:
     uv run coverage report --include="src/delphi/engine/*" --fail-under=95
     uv run coverage report --fail-under=80
 
+# The LLM path against the real model (docs/15 §8): costs money, never in CI. Needs
+# DELPHI_LLM_PROVIDER=anthropic and ANTHROPIC_API_KEY; writes docs/reports/llm-eval-<date>.md
+[working-directory: 'backend']
+llm-eval:
+    uv run delphi llm-eval
+
 # Install frontend dependencies from the lockfile
 [working-directory: 'frontend']
 fe-sync:
