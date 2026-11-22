@@ -202,8 +202,8 @@ node address range allowed to reach it, and the optional monitoring scrape rule.
   - `DELPHI_LOG_LEVEL=INFO`
 - Secrets are created by the bootstrap from values generated on the operator's machine, and
   mounted with `envFrom: secretRef`. Manifests never name keys and never inline a value.
-  - **Secret `delphi-app`**, for the api: the app's database URL and the bootstrap admin. Later
-    also the LLM key.
+  - **Secret `delphi-app`**, for the api: the app's database URL, the bootstrap admin and the
+    server secret `DELPHI_SECRET_KEY` (it keys the OTP digest). Later also the LLM key.
   - **Secret `delphi-worker`**, for the worker only: the app and sim database URLs.
   - **Secret `delphi-migrate`**, for the migrate Job: the owner database URL.
   - **Secret `delphi-seed`**, for the seed Job: the app's database URL only.
@@ -297,6 +297,7 @@ to start, exit code 2, naming the variable, if one is missing or invalid.
 | `DELPHI_WORKER_DEFAULT_CONCURRENCY` / `DELPHI_WORKER_FAST_CONCURRENCY` | `2` / `1` | worker | doc 04 §5.4 |
 | `DELPHI_WORKER_POLL_INTERVAL_S` / `DELPHI_WORKER_HEARTBEAT_MAX_AGE_S` | `1.0` / `30` | worker | doc 20 §3 |
 | `DELPHI_OUTBOX_RETENTION_H` / `DELPHI_IDEMPOTENCY_RETENTION_H` | `24` / `24` | worker | doc 17 §6 |
+| `DELPHI_SECRET_KEY` | unset | api | Secret `delphi-app` (`openssl rand -hex 32`; 32 characters or more). Keys the Guardian's OTP digest (doc 08 §4). Required in `demo` wherever the Guardian runs; `dev` and `test` fall back to a fixed development key |
 | `DELPHI_PUBLIC_ORIGIN` | unset | api | ConfigMap: `https://delphi.karthiksurkanti.in`. The Origin that mutating requests must carry (CSRF, doc 19 §4). Unset in development: the request's own origin |
 | `DELPHI_CLIENT_IP_HEADER` | unset | api | ConfigMap: `CF-Connecting-IP`. The header with the real client IP behind the tunnel, used for the login lockout and audit. Safe because only the node (the host tunnel) can reach the api pod (§4 NetworkPolicies) |
 | `DELPHI_SESSION_IDLE_H` / `DELPHI_SESSION_ABSOLUTE_DAYS` | `12` / `7` | api | doc 19 §2 |
