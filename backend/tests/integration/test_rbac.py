@@ -67,7 +67,15 @@ def clients(create_database: Callable[[], str]) -> Iterator[dict[Role | None, Te
     engine = engine_as(url, "delphi_app")
     clock = FixedClock(datetime(2026, 11, 7, tzinfo=UTC))
     platform = Platform(
-        settings=Settings(database_url=url, migrations_dir=MIGRATIONS_DIR),
+        # Every request below comes from one address on a fixed clock, so no bucket refills:
+        # lift the rate limits, which test_rate_limit.py covers (#127).
+        settings=Settings(
+            database_url=url,
+            migrations_dir=MIGRATIONS_DIR,
+            rate_limit_burst=100_000,
+            rate_limit_address_burst=100_000,
+            login_rate_burst=10_000,
+        ),
         engine=engine,
         sessions=make_session_factory(engine),
         clock=clock,

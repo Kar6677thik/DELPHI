@@ -2364,12 +2364,16 @@
         "properties": {
           "decision": {
             "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
             "title": "Decision"
           },
           "typology": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 64,
+                "minLength": 1
               },
               {
                 "type": "null"
@@ -2552,6 +2556,8 @@
         "properties": {
           "source_key": {
             "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
             "title": "Source Key"
           },
           "refresh": {
@@ -2562,7 +2568,9 @@
           "outcome": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 64,
+                "minLength": 1
               },
               {
                 "type": "null"
