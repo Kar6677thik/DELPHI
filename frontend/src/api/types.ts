@@ -53,3 +53,13 @@ export type CaseSort = Schemas['CaseSort'];
 export type MetricsSummary = Schemas['MetricsSummary'];
 /** `GET /status`: whether the demo is seeded and its models trained (docs/16, docs/20 §3). */
 export type StatusView = Schemas['StatusView'];
+/** `GET /jobs/{id}` and the rows of `GET /jobs` (docs/16 §2 "Admin and jobs"). */
+export type JobView = Schemas['JobView'];
+/** `GET /jobs`: one keyset page, newest first. */
+export type JobPage = Schemas['JobPage'];
+export type JobStatus = Schemas['JobStatus'];
+export type JobType = Schemas['JobType'];
+/** `GET /admin/audit/verify`: whether the audit hash chain is intact (docs/17 §4). */
+export type AuditVerifyView = Schemas['AuditVerifyView'];
+/** `POST /admin/datasets`. */
+export type DatasetRequest = Schemas['DatasetRequest'];
