@@ -57,7 +57,10 @@ export const routes: RouteObject[] = [
         const load = PAGES[screen.path];
         return load
           ? { path: screen.path, lazy: () => load().then((Page) => ({ element: gate(<Page />) })) }
-          : { path: screen.path, element: gate(<PlaceholderPage title={screen.title} />) };
+          : {
+              path: screen.path,
+              element: gate(<PlaceholderPage title={screen.title} path={screen.path} />),
+            };
       }),
       { path: '*', element: <NotFoundPage /> },
     ],

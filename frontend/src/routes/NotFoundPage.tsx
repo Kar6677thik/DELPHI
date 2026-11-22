@@ -1,16 +1,9 @@
-import { Link } from 'react-router';
+import { StatePage } from './StatePage';
 
 export function NotFoundPage() {
   return (
-    <section aria-labelledby="not-found-title">
-      <h1 id="not-found-title" className="text-2xl font-semibold">
-        Page not found
-      </h1>
-      <p className="mt-2 text-slate-700">
-        <Link to="/" className="underline">
-          Go to the Overview
-        </Link>
-      </p>
-    </section>
+    <StatePage code="404" title="Page not found">
+      There is no screen at this address. It may have moved, or the link may be mistyped.
+    </StatePage>
   );
 }
