@@ -29,6 +29,19 @@ prior:                         # docs/13 §4, the LightGBM multiclass prior mode
     min_macro_auc: 0.85
     enforced_profiles: [demo, eval]      # `test` is reported only
 
+mule:                          # docs/13 §6, the LightGBM binary mule scorer
+  num_leaves: 15
+  learning_rate: 0.1           # gap: docs/13 §6 names leaves, trees and seed but not the rate
+  n_estimators: 300
+  seed: 7
+  # Negatives: accounts with no fraud label, opened at least this long before their as_of
+  # (docs/13 §6 "≥ 30 days of activity"; the test profile's history is only 21 days long).
+  negative_min_age_days: 30
+  label_hypothesis: MULE
+  gate:
+    min_auc: 0.90
+    enforced_profiles: [eval]  # docs/13 §6: "AUC ≥ 0.90 on test (eval profile)"
+
 features:                      # docs/13 §2–3, the payment features
   local_utc_offset_minutes: 330  # IST, which has no daylight saving (docs/14 §2)
   amount_floor_inr: 100        # amount_z_30d's std floor and sum_24h_ratio_30d's mean floor

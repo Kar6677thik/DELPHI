@@ -146,11 +146,12 @@ class _Builder:
         years = tenure.min + (tenure.max - tenure.min) * rng.random()
         return self.start - timedelta(seconds=int(years * _DAYS_PER_YEAR * _SECONDS_PER_DAY))
 
-    def _young(self, account_id: UUID, opened_at: datetime) -> datetime:
-        """A share of genuine accounts are young (#56), so a young account is a mule signal,
-        not a tell. Each account draws from ``keyed_rng(seed, "young_account", id)``."""
+    def _young(self, account_id: UUID, opened_at: datetime, share: float | None = None) -> datetime:
+        """A share of genuine accounts are young (#56; merchants too, #166), so a young account
+        is a mule signal, not a tell. Each account draws from
+        ``keyed_rng(seed, "young_account", id)``."""
         rng = keyed_rng(self.spec.seed, "young_account", str(account_id))
-        if rng.random() >= self.cfg.young_account_share:
+        if rng.random() >= (self.cfg.young_account_share if share is None else share):
             return opened_at
         days = self.cfg.young_account_days
         return self.start - timedelta(days=days.min + (days.max - days.min) * rng.random())
@@ -167,13 +168,15 @@ class _Builder:
         for i in range(count):
             category = HOSPITAL if i < hospitals else choice(rng, self.merchant_cfg.categories)
             bank_code = self._bank(rng)
+            account_id = self.ids["merchant_account"].next()
+            opened_at = self._young(account_id, self._opened_at(rng), self.merchant_cfg.young_share)
             account = Account(
-                id=self.ids["merchant_account"].next(),
+                id=account_id,
                 customer_id=None,
                 bank_code=bank_code,
                 is_merchant=True,
                 merchant_category=category,
-                opened_at=self._opened_at(rng),
+                opened_at=opened_at,
                 kyc_level=FULL_KYC,
                 status=ACTIVE,
                 balance_paise=0,

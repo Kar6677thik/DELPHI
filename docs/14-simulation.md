@@ -18,6 +18,13 @@ Research §12 ("Data"). Module `delphi.sim`. The simulator is a first-class deli
    evaluation is not circular.
 4. **Every number below lives in `backend/src/delphi/sim/config/*.yaml`**, versioned as
    `generator_version`.
+5. **Realistically hard for the prior** (#166, owner decision). No single payment feature
+   separates any fraud class from GENUINE above an AUC of 0.90 on `eval` (max(AUC, 1 − AUC),
+   per feature and class). The prior's overall macro AUC is reported, not gated: what separability
+   remains comes from combinations of signals that each overlap genuine behaviour, and lowering it
+   further would take unrealistic genuine spending or changes to the calibrated rates here.
+   `scripts/prior_separability.py --profile eval` measures both; v16 has a maximum single-feature
+   AUC of 0.871 and a macro AUC of 0.984 (CHANGELOG).
 
 ## 2. Dataset profiles
 
@@ -62,10 +69,11 @@ from its own stream, `keyed_rng(seed, "customer", i)`, and the merchants from
 - **Every customer** is a `RETAIL` customer with one `ACTIVE` account at `DLPH`,
   opened 1–10 years (uniform) before the history starts. The opening balance is log-normal,
   median ₹40,000 × the income band's amount scale, σ = 1.0.
-- **Young accounts** (#56, owner decision). 10% of genuine non-merchant accounts (customers'
-  and external counterparties') were opened 30–365 days before the history instead, from
-  `keyed_rng(seed, "young_account", account_id)`. So a young payee account is a mule signal,
-  not a tell. Devices and payees still come after the opening.
+- **Young accounts** (#56, owner decision; 20% since #166). 20% of genuine non-merchant accounts
+  (customers' and external counterparties') and 35% of merchants (new small shops) were opened
+  30–365 days before the history instead, from `keyed_rng(seed, "young_account", account_id)`.
+  So a young payee account is a mule signal, not a tell. Devices and payees still come after
+  the opening.
 - **KYC.** Genuine non-merchant accounts (customers' and external counterparties') have
   `MINIMAL` KYC with probability 0.05, from `keyed_rng(seed, "kyc", account_id)`, else `FULL`;
   merchants are `FULL`. Minimal KYC is then a strong mule signal but not a tell (owner
@@ -132,7 +140,8 @@ review pending):
   payment falls at that hour + N(0, 1.5 h). Channels by payee type: family UPI_PUSH 0.80 /
   IMPS 0.15 / NEFT 0.05; utility UPI_PUSH 0.60 / NEFT 0.40; merchant UPI_PUSH.
 - **Salary.** Every customer gets a monthly salary on the 1st, 10:00–12:00 IST, by NEFT, from a
-  payroll account at one of the external banks. The amount is log-normal, median ₹30,000 ×
+  payroll account at one of the external banks. The amount is log-normal, median ₹40,000 (#166;
+  it funds the new payees' first payments) ×
   the income scale, σ 0.4. Salaries are not customer sessions: no telemetry, no B1, no labels.
 - **Session telemetry** comes from the scenario's §5.1 signals, placed on the intended side of
   the KB's classifier thresholds:
@@ -166,17 +175,29 @@ review pending):
   a new merchant is one not saved before or during the history (if none is left, the event is
   a new phone). An event that falls outside the history saves no payee and adds no phone. One
   the customer cannot fund keeps its payee or phone: the payment failed, the set-up did not.
-- **New person payees** (#56, owner decision). About once a year (exponential gaps, mean 365
-  days), a genuine customer saves a new person as a payee: another customer's DLPH account
+- **New person payees** (#56, owner decision; #166). Every 45 days on average (exponential
+  gaps), a genuine customer saves a new person as a payee: another customer's DLPH account
   (0.7) or an external person account (0.3), never one already saved, from
   `keyed_rng(seed, "person_payee", i)`. Persona customers take no part, as savers or as
   payees (§6).
   - The payee is "Family N", saved 2–30 minutes before the first payment, as a victim saves a
-    mule.
-  - The first payment has the family amount and channel; 0–3 more follow over the next 60 days.
+    mule; or, with probability 0.3, 0.2–10 days before (added one evening, paid when the rent
+    falls due).
+  - The first payment is log-normal, median ₹10,000 × the income scale, σ 1.2 (rent, a
+    contractor, a loan to a friend), by UPI 0.40 / IMPS 0.40 / NEFT 0.20; 0–1 more follow over
+    the next 60 days.
   - The process runs through the window too.
-  - So a person payee saved during the history is no longer a mule tell: on `demo`, 791 of
-    1,639 are genuine.
+  - So a person payee saved during the history is no longer a mule tell: most are genuine.
+- **New shops** (#166). Every 10 days on average, a genuine customer pays an everyday shop
+  (grocery, retail, fuel, telecom, utility, education) it never paid before, from
+  `keyed_rng(seed, "merchant_payee", i)`: scan and pay, saved 1–10 minutes before (or, with
+  probability 0.1, a biller registered 0.2–10 days ahead), median ₹500 × the income scale,
+  σ 1.2, UPI 0.75 / IMPS 0.20 / NEFT 0.05; 0–1 more payments over 30 days. Personas take no
+  part.
+- **Saved payees join the routine** (#166). While a customer has payees saved in the last 45
+  days, each routine payment goes, with probability 0.25, to one of them (uniformly), with the
+  routine amount and channel for its type. So new payees take a share of the Gamma–Poisson
+  rate rather than adding to it, and a payee days or weeks old is an everyday sight.
 - **Payee labels** (#64). Every person payee saved during the history or the window (by the
   customer, by a fraud's victim, or by a home-bank mule) is "Family N". N is its place among
   all the customer's payees: after the population's, then in the order they were saved
@@ -188,7 +209,11 @@ review pending):
   newest device.
 - **Logins.** Every customer session starts with a login 30–300 s earlier (never before the
   history starts), from the session's device (a stable synthetic `10.x.y.0/24` per device) in
-  the home city. Saved times and new phones are likewise never before the history starts.
+  the city the customer is in: the home city, or a trip's city. Saved times and new phones are
+  likewise never before the history starts.
+- **Travel** (#166). Customers travel: a 2–7 day trip every 90 days on average (exponential
+  gaps), to a uniformly chosen other city, from `keyed_rng(seed, "travel", customer_id)`.
+  Personas stay home. So a login from a new city is no ATO tell.
 - **B1 inputs.** B1 sees a payee as new by doc 13 §3's `is_new_payee`: saved < 24 h ago, or
   never paid and saved within the 30-day baseline window (`legacy_policy.new_payee_hours` and
   `payee_baseline_days`, the one place the simulator reads them from). It sees a device as new if
@@ -205,15 +230,24 @@ review pending):
   pays layer-1 mules of a uniformly chosen ring, saved as a payee 2–30 minutes before the
   first payment to it and labelled like any family payee ("Family N", numbered as above), so
   the label gives nothing away.
+- **Timing** (#166). An APP payment (digital arrest, investment, collect-refund) falls, with
+  probability 0.70, at the victim's habitual hour ± N(0, 1.5 h) on the same IST day (a coerced
+  victim pays during their normal day); an ATO login does so with probability 0.40, so ATO
+  keeps an off-hour skew. Else the time is drawn as below. From `keyed_rng(seed, stream,
+  "fraud_hour", scenario, instance, j)`, so no other draw moves.
 - **ATO.**
   - Half are SIM swaps, which the CRM records (`SIM_SWAP_REPORTED`) 1–48 h before the login;
     half are phishing.
   - The attacker logs in from a new device in another city and saves the mule 1–5 minutes later.
+    35% of takeovers are staged (#166): the mule was saved 4–48 h before the login, past the
+    new-payee cooling-off, and the transfers fall in the 30 minutes after the login.
   - The transfers (IMPS 0.6 / UPI 0.4) fall uniformly in the rest of the 30 minutes. Transfer
     j of k takes `d / k` of the first balance, d uniform over 60–95%, as a share of what is left.
 - **APP_DIGITAL_ARREST.** The victim is aged ≥ 60 with probability 0.6. Each transfer sends
   30–80% of the balance at the time, to a layer-1 mule of the ring (IMPS 0.6 / NEFT 0.3 /
-  UPI 0.1).
+  UPI 0.1). After the first, a transfer goes back to an account already paid with probability
+  0.5; the first mule is saved 1–10 days ahead (the scammer "registers" it) with probability
+  0.4 (#166).
 - **APP_INVESTMENT.**
   - Deposits go to one "platform" mule, the first log-normal (median ₹5,000 × the income scale,
     σ 0.5), each 1.5 × the last.
@@ -252,7 +286,8 @@ review pending):
 - **External mules** are accounts only, like the other external counterparties.
 - **Every mule account:**
   - has `MINIMAL` KYC with probability 0.5, else `FULL`
-  - was opened 5–400 days before the history (docs/13 §6 uses both as features)
+  - was opened 5–400 days before the history (docs/13 §6 uses both as features), or, for 50%
+    of them (aged or rented accounts, #166), 1–7 years before
   - has a log-normal opening balance in paise, median ₹2,000, σ 0.8
 - **Shared devices.** With probability 0.5 a ring shares one device fingerprint across 3 to
   all of its home-bank mules. Such a ring gets at least 3 home-bank mules, turning randomly

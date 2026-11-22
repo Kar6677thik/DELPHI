@@ -217,8 +217,39 @@ the artifact belong to `TRAIN_SENSING` (#88). Gaps the text above leaves open, f
   and cached in `account_scores(account_id, p_mule, computed_at, model_artifact_id)`.
 - An account with no score yet (e.g. just opened) is scored on demand. If scoring fails, the
   fallback is p_mule = 0.10, logged as a WARNING.
+- **Serving** (`delphi.sensing.mule_scores`, #91 part 2):
+  - `MULE_SWEEP` scores every account as of the clock with the ACTIVE `MULE` artifact and
+    upserts one row each; a rerun for the same slot rewrites the same rows. With no ACTIVE
+    `MULE` artifact it scores nothing and says so in its result. Its place in the recurring
+    schedule (`mule_sweep_interval_min`, time-scaled) arrives with the time scale (M5–M6).
+  - `MuleScores.p_mule(account, as_of)` (the probes' `MuleScorePort`, and the payer's score
+    for `with_payer_mule`) uses a cached score **only if it was computed before `as_of`**; a
+    score the bank did not have yet must not leak into an earlier decision. Otherwise it scores
+    the account as of `as_of` from its online snapshot, and caches that score if the account
+    had none (`computed_at = as_of`). No model, or any failure: the 0.10 fallback.
+  - `payee_p_mule` (§3) follows the same rule online (`history.payee_mule_score`) and offline
+    (`OfflineHistories`): the payee's cached score if computed before the payment, else 0.10.
+    So the parity test still holds, and history from before the first sweep keeps the fallback.
 - Training split: accounts are assigned to train, validation or test by the date of their
   first activity, using the same 2/3, 1/6, 1/6 proportions over the matured window as §4.
+- **Implementation** (`delphi.sensing.mule`, `delphi.sensing.trainers.load_mule_data` and
+  `train_mule_artifact`, #91). Where the bullets above are silent:
+  - **Label events.** An account is a mule if, by the training cutoff, the bank had an ACCOUNT
+    label with the MULE key (a registry listing; investigator dispositions from M5) or a
+    complaint naming it as a counterparty. Its label time is the first such event.
+  - **Each account's `as_of`.** A mule's features are taken 1 µs before its label time, so the
+    model never learns "a complaint (or a listing) means mule": `complaints_linked` is 0 for
+    every training mule (#142 review). A non-mule's features are taken at the end of the
+    matured window (cutoff − maturity), when the bank had seen no fraud label for it for at
+    least the maturity period.
+  - **"≥ 30 days of activity"** is read as: opened at least `negative_min_age_days` (30) before
+    its `as_of`. Both classes also need an executed payment before their `as_of`, and "first
+    activity" is the first such payment's execution time. The 21-day `test` history cannot hold
+    30 days of payments.
+  - The learning rate (0.1) is not in the bullets above; it lives in `sensing/config.yaml`. The
+    gate is enforced on `eval` only, as the bullet says; elsewhere it is reported.
+  - With no validation split holding both classes, the scores are left uncalibrated (the report
+    says `calibrated: false`).
 
 ## 7. Model artifacts and lifecycle
 
