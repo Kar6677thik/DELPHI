@@ -37,7 +37,10 @@ from delphi.platform.ddpack import (
     method_note,
 )
 from delphi.platform.errors import NotFoundError
+from delphi.platform.logging import get_logger
 from delphi.sim import api as bank
+
+log = get_logger(__name__)
 
 CUSTOMER_PREFIX = "CUST"
 TOP_HYPOTHESES = 3  # docs/09 §7 section 2
@@ -239,7 +242,17 @@ def _decided_note(case: CaseRecord) -> str | None:
 
 def refresh_complete(session: Session, case_id: UUID, trail: GuardianTrail | None) -> bool:
     """Recompute and store ``cases.dd_pack_complete`` (docs/09 §7: on every change), in the
-    caller's transaction. The flag is derived, so it does not bump the case's version."""
+    caller's transaction. The flag is derived, so it does not bump the case's version. A failure
+    leaves the flag as it was and never blocks the change that asked (docs/09 §7)."""
+    try:
+        with session.begin_nested():  # a failed read must not abort the caller's transaction
+            return _refresh(session, case_id, trail)
+    except Exception:
+        log.exception("navigator.dd_pack_check_failed", case_id=str(case_id))
+        return False
+
+
+def _refresh(session: Session, case_id: UUID, trail: GuardianTrail | None) -> bool:
     case = get_case(session, case_id)
     if case is None:
         raise NotFoundError("No case with this id.")

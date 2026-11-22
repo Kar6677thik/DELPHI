@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 from delphi.api.idempotency import IdempotencyKey, RawBody, run_idempotent
 from delphi.api.routers import API_PREFIX
 from delphi.api.security import Permission, Principal, require
+from delphi.guardian.api import case_trail
 from delphi.kb.model import UNEXPLAINED
 from delphi.kb.store import get_version
 from delphi.navigator.api import (
@@ -51,6 +52,7 @@ from delphi.navigator.api import (
     get_alert,
     get_case,
     list_cases,
+    refresh_dd_pack_complete,
     request_evidence,
     request_simulated_outreach,
     sort_value,
@@ -464,6 +466,8 @@ def dispose_case(
             expected_version=expected,
             user_id=principal.user_id,
         )
+        refresh_dd_pack_complete(session, case_id, case_trail)  # docs/09 §7: on every change
+        record = get_case(session, case_id) or record
         return HTTPStatus.OK, _detail(session, record, platform.clock.now()).model_dump(mode="json")
 
     reply = run_idempotent(request, raw, principal, key, run)
