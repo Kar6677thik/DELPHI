@@ -63,3 +63,9 @@ export type JobType = Schemas['JobType'];
 export type AuditVerifyView = Schemas['AuditVerifyView'];
 /** `POST /admin/datasets`. */
 export type DatasetRequest = Schemas['DatasetRequest'];
+/** `GET /admin/users` rows; `version` is the ETag a change sends as `If-Match`. */
+export type UserView = Schemas['UserView'];
+/** `POST /admin/users`. */
+export type CreateUser = Schemas['CreateUser'];
+/** `PATCH /admin/users/{id}`: only the fields present change. */
+export type UpdateUser = Schemas['UpdateUser'];
