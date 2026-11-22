@@ -13,7 +13,7 @@ from delphi.api.problems import (
     document_problem_media_type,
     install_problem_handlers,
 )
-from delphi.api.rate_limit import RateLimitMiddleware
+from delphi.api.rate_limit import RateLimitMiddleware, RateLimits
 from delphi.api.request_context import RequestContextMiddleware
 from delphi.api.routers import (
     API_PREFIX,
@@ -71,11 +71,15 @@ def create_app(resources: Platform, *, event_hub: EventHub | None = None) -> Fas
     document_problem_media_type(app)
     # Starlette runs the last-added middleware first: the request id wraps everything, so even
     # a CSRF rejection or a 429 carries one, and every response gets the security headers.
-    app.state.rate_limit = TokenBuckets(
-        resources.clock, rate=s.rate_limit_per_s, burst=s.rate_limit_burst
+    app.state.rate_limit = RateLimits(
+        callers=TokenBuckets(resources.clock, rate=s.rate_limit_per_s, burst=s.rate_limit_burst),
+        addresses=TokenBuckets(
+            resources.clock, rate=s.rate_limit_address_per_s, burst=s.rate_limit_address_burst
+        ),
+        logins=TokenBuckets(resources.clock, rate=s.login_rate_per_s, burst=s.login_rate_burst),
     )
     app.add_middleware(
-        RateLimitMiddleware, buckets=app.state.rate_limit, client_ip_header=s.client_ip_header
+        RateLimitMiddleware, limits=app.state.rate_limit, client_ip_header=s.client_ip_header
     )
     app.add_middleware(WebSecurityMiddleware, public_origin=s.public_origin)
     app.add_middleware(RequestContextMiddleware)
