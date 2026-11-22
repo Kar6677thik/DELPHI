@@ -4,11 +4,14 @@ import { apiFetch, getJson } from './client';
 import { OVERVIEW_QUERY_KEY } from './overview';
 import type {
   AuditVerifyView,
+  CreateUser,
   DatasetRequest,
   JobPage,
   JobStatus,
   JobType,
   JobView,
+  UpdateUser,
+  UserView,
 } from './types';
 
 /** The Admin screen's queries share this key, so a `job.updated` event refreshes them. */
@@ -79,5 +82,53 @@ export function useRetryJob() {
   return useJobMutation(async (id: string) => {
     const response = await apiFetch(`/jobs/${encodeURIComponent(id)}/retry`, { method: 'POST' });
     return (await response.json()) as JobView;
+  });
+}
+
+/** docs/19 §2: the server refuses a shorter password. */
+export const MIN_PASSWORD_LENGTH = 12;
+
+const USERS_KEY = [...ADMIN_QUERY_KEY, 'users'] as const;
+
+export function useUsers() {
+  return useQuery({ queryKey: USERS_KEY, queryFn: () => getJson<UserView[]>('/admin/users') });
+}
+
+/** `POST /admin/users`: a taken username is a 422. */
+export function useCreateUser() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: async (user: CreateUser) => {
+      const response = await apiFetch('/admin/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(user),
+      });
+      return (await response.json()) as UserView;
+    },
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: USERS_KEY });
+    },
+  });
+}
+
+/**
+ * `PATCH /admin/users/{id}` with the version the row was read at as `If-Match`: 412 if someone
+ * changed the user since, 409 for the last enabled admin. Either way the list is re-read.
+ */
+export function useUpdateUser() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ user, change }: { user: UserView; change: UpdateUser }) => {
+      const response = await apiFetch(`/admin/users/${encodeURIComponent(user.id)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'If-Match': `"${String(user.version)}"` },
+        body: JSON.stringify(change),
+      });
+      return (await response.json()) as UserView;
+    },
+    onSettled: () => {
+      void client.invalidateQueries({ queryKey: USERS_KEY });
+    },
   });
 }
