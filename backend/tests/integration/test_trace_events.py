@@ -92,7 +92,7 @@ def test_the_server_records_opening_requests_and_the_disposition(
         "typology": body["typology"],
         "confidence": 4,
         "is_override": False,
-        "seconds_since_opened": 0.0,  # the fixed clock has not moved
+        "seconds_since_opened": 0,  # whole seconds; the fixed clock has not moved
     }
 
 

@@ -192,7 +192,8 @@ def dispose(
             "typology": typology,
             "confidence": disposition.confidence,
             "is_override": is_override,
-            "seconds_since_opened": (now - case.opened_at).total_seconds(),
+            # whole seconds keep the analytics payload stable (docs/09 §5)
+            "seconds_since_opened": round((now - case.opened_at).total_seconds()),
         },
     )
     publish(
