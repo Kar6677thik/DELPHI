@@ -113,6 +113,18 @@
   }
 }
 
+/* The Theatre's caption arriving with each step. */
+@keyframes caption-in {
+  from {
+    transform: translateY(10px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
 /* The mock SMS dropping in from the top of the phone. */
 @keyframes sms-in {
   from {

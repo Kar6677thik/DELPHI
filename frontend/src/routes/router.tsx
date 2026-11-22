@@ -24,6 +24,18 @@ export const routes: RouteObject[] = [
     lazy: () => import('./LoginPage').then((m) => ({ Component: m.LoginPage })),
   },
   {
+    // The Theatre is full-screen for the projector: signed in, but outside the app shell.
+    path: '/theatre',
+    lazy: () =>
+      import('./TheatrePage').then((m) => ({
+        element: (
+          <RequireSession>
+            <m.TheatrePage />
+          </RequireSession>
+        ),
+      })),
+  },
+  {
     element: (
       <RequireSession>
         <AppShell />
