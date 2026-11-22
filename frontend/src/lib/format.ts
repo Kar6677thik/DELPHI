@@ -10,3 +10,15 @@ export function humanise(key: string): string {
 export function decisionText(key: string): string {
   return key === 'OTP_STEP_UP' ? 'OTP step-up' : humanise(key);
 }
+
+const ACRONYMS = new Set(['OTP', 'CRM', 'KYC', 'UPI', 'ATO', 'APP', 'SMS', 'IP']);
+
+/** A KB key as words, keeping its acronyms: OTP_STEP_UP → "OTP step up". */
+export function keyText(key: string): string {
+  return key
+    .split('_')
+    .map((w, i) =>
+      ACRONYMS.has(w) ? w : i === 0 ? w.charAt(0) + w.slice(1).toLowerCase() : w.toLowerCase(),
+    )
+    .join(' ');
+}

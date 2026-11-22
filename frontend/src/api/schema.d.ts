@@ -459,6 +459,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/cases/{case_id}/dd-pack": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Case Dd Pack
+         * @description The case's due-diligence pack (docs/09 §7, FR-NAV-11): JSON, or a printable HTML page.
+         *     Computed on read, so it is authoritative over the stored ``dd_pack_complete``.
+         */
+        get: operations["read_case_dd_pack_api_v1_cases__case_id__dd_pack_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/guardian/sessions": {
         parameters: {
             query?: never;
@@ -2313,6 +2334,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CaseDetail"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    read_case_dd_pack_api_v1_cases__case_id__dd_pack_get: {
+        parameters: {
+            query?: {
+                format?: components["schemas"]["DdPackFormat"];
+            };
+            header?: never;
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                    "text/html": unknown;
                 };
             };
             /** @description An RFC 9457 problem (docs/16 §1) */

@@ -32,8 +32,8 @@ describe('CandidatesTable (docs/18 §3)', () => {
     );
     expect(rows.slice(1).map((r) => (r as HTMLTableRowElement).cells[0]?.textContent)).toEqual([
       'Spell-breaker: police check', // the KB's display name
-      'Purpose question', // no name given: the key, humanised
-      'Otp step up',
+      'Purpose question', // no name given: the key as words
+      'OTP step up',
     ]);
     expect(screen.getByText('₹1,23,456.00')).toBeInTheDocument();
     expect(screen.getByText('No: Coercion defeats')).toBeInTheDocument();

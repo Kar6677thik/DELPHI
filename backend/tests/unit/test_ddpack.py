@@ -12,7 +12,9 @@ from delphi.guardian.ddpack import NOT_APPLICABLE, DdPack, Section
 
 
 def _pack(*sections: Section) -> DdPack:
-    return DdPack(session_id=uuid4(), sections=sections)
+    return DdPack(
+        id_key="session_id", subject_id=uuid4(), subject="Guardian session", sections=sections
+    )
 
 
 @pytest.mark.parametrize(

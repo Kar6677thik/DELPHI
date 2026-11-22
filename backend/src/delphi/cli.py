@@ -25,6 +25,7 @@ from sqlalchemy import Engine, text
 
 from delphi.api.app import create_app
 from delphi.api.contract import OPENAPI_FILE, openapi_document
+from delphi.guardian.api import case_trail
 from delphi.kb.canonical import content_sha256
 from delphi.kb.issues import KbValidationError
 from delphi.kb.loader import load_and_validate
@@ -212,7 +213,7 @@ def worker_registry(
         primary_provider(settings),
         settings.llm_daily_token_budget,
     )
-    register_navigator_jobs(registry, sessions=platform.sessions, llm=llm)
+    register_navigator_jobs(registry, sessions=platform.sessions, llm=llm, trail=case_trail)
     if settings.simulation_enabled and settings.sim_database_url is None:
         # The api accepts simulated calls on this flag; a worker without the simulator's pool
         # would leave them queued for ever (docs/09 §3).

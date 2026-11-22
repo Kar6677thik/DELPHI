@@ -93,7 +93,7 @@ monitor's "OTP would pass" line). Risks are whole paise; probabilities have 6 de
 | POST `/cases/{id}/outreach-result` | `case:write` | `{outcome, note}`: records CUSTOMER_OUTREACH_CALL |
 | POST `/cases/{id}/disposition` | `case:write` | `If-Match`, `Idempotency-Key`; `{decision, typology?, confidence (1–5), note?, override_rationale?}` → `CaseDetail`. 412 stale version, 409 already disposed, 422 a decision outside the profile, CONFIRM_FRAUD without a fraud typology, or an override without a 20+ character rationale (#103) |
 | POST `/cases/{id}/trace-events` | `view` | `{events: [{type, payload, at}]}` (batched) |
-| GET `/cases/{id}/dd-pack` | `view` | `?format=json\|html` |
+| GET `/cases/{id}/dd-pack` | `view` | `?format=json\|html`: `{case_id, complete, sections: [{number, title, required, content, note?}]}` (doc 09 §7), or a printable page. Computed on read, so it is authoritative over the stored `dd_pack_complete`; 404 for an unknown case (#108) |
 | POST `/cases/{id}/police-alert/{action}` | `case:write` | action `send\|discard` → `CaseView` with `ETag` (the case's new version: acting on the alert bumps it; with `police_alert: {id, status, payload, acted_by, acted_at}`); 404 for a case without one (only COERCION cases have one), 409 once acted on |
 | GET `/campaigns`, GET `/campaigns/{id}` | `view` | |
 
