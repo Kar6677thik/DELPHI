@@ -32,7 +32,7 @@ interface Well {
   color: THREE.Color;
 }
 
-function wellsFor(hypotheses: readonly ReplayHypothesis[]): Well[] {
+function wellsFor(hypotheses: readonly ReplayHypothesis[], wide: number): Well[] {
   const ring = hypotheses.filter((h) => h.key !== UNEXPLAINED);
   // GENUINE on the far left, so belief visibly swings across the stage.
   const start = Math.PI;
@@ -42,7 +42,7 @@ function wellsFor(hypotheses: readonly ReplayHypothesis[]): Well[] {
       i < 0
         ? new THREE.Vector3(0, 0, 0)
         : new THREE.Vector3(
-            Math.cos(start - (i * 2 * Math.PI) / ring.length) * RING_X,
+            Math.cos(start - (i * 2 * Math.PI) / ring.length) * RING_X * wide,
             Math.sin(start - (i * 2 * Math.PI) / ring.length) * RING_Y + 0.35,
             0,
           );
@@ -340,27 +340,113 @@ function Shockwave({ well, at }: { well: Well; at: number }) {
   );
 }
 
-function Drift() {
+function Drift({ distance }: { distance: number }) {
   useFrame((state) => {
     const t = state.clock.elapsedTime;
-    state.camera.position.x = Math.sin(t * 0.07) * 1.2;
-    state.camera.position.y = Math.cos(t * 0.05) * 0.6 - 0.4;
+    state.camera.position.set(Math.sin(t * 0.07) * 1.2, Math.cos(t * 0.05) * 0.6 - 0.4, distance);
     state.camera.lookAt(0, -0.3, 0);
   });
   return null;
+}
+
+const BURST = 180;
+const BURST_S = 1.1;
+
+/**
+ * An answer arriving: a burst of light from the customer's side of the stage into the well that
+ * gains most, just before belief moves. Cause, then effect.
+ */
+function AnswerBurst({
+  from,
+  to,
+  color,
+}: {
+  from: THREE.Vector3;
+  to: THREE.Vector3;
+  color: THREE.Color;
+}) {
+  const born = useRef<number | null>(null);
+  const geometry = useMemo(() => {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(BURST * 3), 3));
+    g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(BURST * 3), 3));
+    g.setAttribute(
+      'size',
+      new THREE.BufferAttribute(
+        Float32Array.from({ length: BURST }, (_, i) => 1.2 + sizeOf(i)),
+        1,
+      ),
+    );
+    return g;
+  }, []);
+  const material = useMemo(
+    () =>
+      new THREE.ShaderMaterial({
+        vertexShader: VERTEX,
+        fragmentShader: FRAGMENT,
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      }),
+    [],
+  );
+  useFrame((state) => {
+    if (born.current === null) born.current = state.clock.elapsedTime;
+    const age = state.clock.elapsedTime - born.current;
+    const pos = geometry.getAttribute('position') as THREE.BufferAttribute;
+    const col = geometry.getAttribute('color') as THREE.BufferAttribute;
+    for (let i = 0; i < BURST; i += 1) {
+      const lag = (i / BURST) * 0.45;
+      const k = Math.min(1, Math.max(0, (age - lag) / BURST_S));
+      const e = easeInOut(k);
+      const spread = Math.sin(i * 7.3) * 0.35 * (1 - e);
+      const a = 1 - e;
+      // Curved, rising towards the viewer mid-flight.
+      const mx = (from.x + to.x) / 2;
+      const my = (from.y + to.y) / 2 + 1.4;
+      pos.setXYZ(
+        i,
+        a * a * from.x + 2 * a * e * mx + e * e * to.x,
+        a * a * from.y + 2 * a * e * my + e * e * to.y + spread,
+        2 * a * e * 2.8 + Math.cos(i * 3.1) * 0.3 * (1 - e),
+      );
+      const fade = k >= 1 ? 0 : 1;
+      col.setXYZ(
+        i,
+        (0.6 + color.r * 0.4) * fade,
+        (0.6 + color.g * 0.4) * fade,
+        (0.6 + color.b * 0.4) * fade,
+      );
+    }
+    pos.needsUpdate = true;
+    col.needsUpdate = true;
+  });
+  return <points geometry={geometry} material={material} />;
 }
 
 export function Oracle({
   hypotheses,
   posterior,
   decision,
+  pulse = 0,
+  background = '#050507',
+  distance = 12.5,
+  wide = 1,
 }: {
   hypotheses: readonly ReplayHypothesis[];
   posterior: Record<string, number>;
   /** Set once the session is decided: the winning well's key. */
   decision: string | null;
+  /** Bumped when an answer arrives: a burst of light flies in from the customer's side. */
+  pulse?: number;
+  /** The stage colour: black in the Theatre, the card's surface elsewhere. */
+  background?: string;
+  /** The camera's distance: further back frames the whole ring in a smaller canvas. */
+  distance?: number;
+  /** How far the ring stretches sideways: above 1 for a wide, short canvas. */
+  wide?: number;
 }) {
-  const wells = useMemo(() => wellsFor(hypotheses), [hypotheses]);
+  const wells = useMemo(() => wellsFor(hypotheses, wide), [hypotheses, wide]);
   const total = Object.values(posterior).reduce((a, b) => a + b, 0) || 1;
   const sharesKey = wells.map((w) => (posterior[w.key] ?? 0).toFixed(4)).join(',');
   const shares = useMemo(
@@ -370,20 +456,24 @@ export function Oracle({
   );
   const leadIndex = shares.indexOf(Math.max(...shares));
   const winner = decision ? wells[leadIndex] : undefined;
+  const target = wells[leadIndex];
   return (
     <Canvas
-      camera={{ position: [0, -0.4, 12.5], fov: 50 }}
+      camera={{ position: [0, -0.4, distance], fov: 50 }}
       dpr={[1, 2]}
       gl={{ antialias: false, powerPreference: 'high-performance' }}
       aria-label="DELPHI's belief: particles grouped by hypothesis"
     >
-      <color attach="background" args={['#050507']} />
-      <fog attach="fog" args={['#050507', 14, 26]} />
-      <Drift />
+      <color attach="background" args={[background]} />
+      <fog attach="fog" args={[background, distance + 1.5, distance + 13.5]} />
+      <Drift distance={distance} />
       <Belief wells={wells} shares={shares} decided={decision !== null} />
       {wells.map((w, i) => (
         <WellMark key={w.key} well={w} share={(shares[i] ?? 0) / total} lead={i === leadIndex} />
       ))}
+      {pulse > 0 && target && (
+        <AnswerBurst key={pulse} from={PHONE_SIDE} to={target.center} color={target.color} />
+      )}
       {winner && <Shockwave key={decision} well={winner} at={0} />}
       <EffectComposer multisampling={0}>
         <Bloom mipmapBlur intensity={0.75} luminanceThreshold={0.22} luminanceSmoothing={0.35} />
@@ -392,3 +482,6 @@ export function Oracle({
     </Canvas>
   );
 }
+
+/** Where answers come from: the left of the stage, where the customer's phone stands. */
+const PHONE_SIDE = new THREE.Vector3(-7.5, -0.6, 0);

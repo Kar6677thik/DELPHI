@@ -1,12 +1,17 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
 
+import { DelphiMark } from '../components/DelphiMark';
 import { formatPaise } from '../components/MoneyText';
 import { forDark } from '../components/HypothesisBar';
 import { decisionText, humanise } from '../lib/format';
 import { DecisionScreen } from '../phone/DecisionScreen';
 import { PhoneFrame } from '../phone/PhoneFrame';
 import { caption, holdMs, leading, type ReplayStep, S1 } from '../theatre/replay';
+
+/** When Kamala's answer lands after a question appears, and how long the title card holds. */
+const TAP_MS = 2400;
+const INTRO_MS = 3000;
 
 const Oracle = lazy(() => import('../theatre/Oracle').then((m) => ({ default: m.Oracle })));
 
@@ -26,6 +31,29 @@ export function TheatrePage() {
   );
   const [playing, setPlaying] = useState(() => !search.has('paused'));
   const step = replay.steps[index] ?? replay.steps[0];
+  // A question's answer lands a beat after it is shown: until then belief holds still.
+  const [answeredAt, setAnsweredAt] = useState(-1);
+  const answered = step?.kind !== 'active' || answeredAt === index;
+  useEffect(() => {
+    if (step?.kind !== 'active') return undefined;
+    const t = setTimeout(() => {
+      setAnsweredAt(index);
+    }, TAP_MS);
+    return () => {
+      clearTimeout(t);
+    };
+  }, [index, step?.kind]);
+  // The title card, on arrival and on a restart.
+  const [intro, setIntro] = useState(() => !search.has('step'));
+  useEffect(() => {
+    if (!intro) return undefined;
+    const t = setTimeout(() => {
+      setIntro(false);
+    }, INTRO_MS);
+    return () => {
+      clearTimeout(t);
+    };
+  }, [intro]);
 
   useEffect(() => {
     if (!playing || !step) return undefined;
@@ -50,6 +78,7 @@ export function TheatrePage() {
       } else if (e.key.toLowerCase() === 'r') {
         setIndex(0);
         setPlaying(true);
+        setIntro(true);
       }
     };
     window.addEventListener('keydown', onKey);
@@ -60,6 +89,11 @@ export function TheatrePage() {
 
   if (!step) return null;
   const decided = step.kind === 'decision' ? (step.decision ?? null) : null;
+  const shownPosterior = answered
+    ? step.posterior
+    : (replay.steps[index - 1]?.posterior ?? step.posterior);
+  // Each observation arriving from the customer's side sends a burst of light into the cloud.
+  const pulse = (step.kind === 'passive' || step.kind === 'active') && answered ? index + 1 : 0;
   const [leadKey, leadShare] = leading(step.posterior);
   const lead = replay.hypotheses.find((h) => h.key === leadKey);
 
@@ -67,7 +101,12 @@ export function TheatrePage() {
     <main className="fixed inset-0 overflow-hidden bg-[#050507] text-ink">
       <div className="absolute inset-0">
         <Suspense fallback={null}>
-          <Oracle hypotheses={replay.hypotheses} posterior={step.posterior} decision={decided} />
+          <Oracle
+            hypotheses={replay.hypotheses}
+            posterior={shownPosterior}
+            decision={decided}
+            pulse={pulse}
+          />
         </Suspense>
       </div>
 
@@ -88,7 +127,7 @@ export function TheatrePage() {
       {/* Left: the customer's phone, scaled for the stage */}
       <div className="absolute left-10 top-1/2 hidden w-[372px] origin-left -translate-y-1/2 scale-[0.82] lg:block xl:scale-90">
         <PhoneFrame clock={replay.payment.time} sms={null}>
-          <PhoneStep step={step} replay={replay} />
+          <PhoneStep step={step} replay={replay} answered={answered} />
         </PhoneFrame>
       </div>
 
@@ -149,17 +188,40 @@ export function TheatrePage() {
           ))}
         </nav>
       </footer>
+
+      {intro && (
+        <div
+          role="presentation"
+          className="absolute inset-0 z-20 flex animate-[intro-out_3s_ease-in_forwards] flex-col items-center justify-center bg-[#050507]"
+        >
+          <DelphiMark size={56} />
+          <p className="mt-6 text-[56px] font-semibold leading-none tracking-[-0.03em]">
+            Ask before the money moves.
+          </p>
+          <p className="mt-5 text-[18px] text-white/55">
+            DELPHI · a payment, a question, a decision, in the seconds it takes to pay
+          </p>
+        </div>
+      )}
     </main>
   );
 }
 
 /** The phone shows what Kamala sees at this step. */
-function PhoneStep({ step, replay }: { step: ReplayStep; replay: typeof S1 }) {
+function PhoneStep({
+  step,
+  replay,
+  answered,
+}: {
+  step: ReplayStep;
+  replay: typeof S1;
+  answered: boolean;
+}) {
   if (step.kind === 'decision') {
     return <DecisionScreen decision={step.decision ?? null} onDone={() => undefined} />;
   }
   if (step.kind === 'active' && step.text) {
-    return <AskedQuestion step={step} />;
+    return <AskedQuestion step={step} tapped={answered} />;
   }
   return (
     <div className="flex h-full flex-col">
@@ -182,17 +244,8 @@ function PhoneStep({ step, replay }: { step: ReplayStep; replay: typeof S1 }) {
   );
 }
 
-/** A question on the phone; after a beat, the option Kamala chose lights up. */
-function AskedQuestion({ step }: { step: ReplayStep }) {
-  const [tapped, setTapped] = useState(false);
-  useEffect(() => {
-    const t = setTimeout(() => {
-      setTapped(true);
-    }, 2400);
-    return () => {
-      clearTimeout(t);
-    };
-  }, []);
+/** A question on the phone; once answered, the option Kamala chose lights up. */
+function AskedQuestion({ step, tapped }: { step: ReplayStep; tapped: boolean }) {
   const options = step.options ?? [];
   const shown = options.length > 5 ? options.slice(0, 5) : options;
   return (

@@ -113,6 +113,17 @@
   }
 }
 
+/* The Theatre's title card: it holds, then lifts. */
+@keyframes intro-out {
+  0%,
+  70% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
 /* The Theatre's caption arriving with each step. */
 @keyframes caption-in {
   from {

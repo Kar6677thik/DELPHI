@@ -1,4 +1,4 @@
-import { act, screen, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { caption, holdMs, leading, S1 } from '../src/theatre/replay';
@@ -52,7 +52,16 @@ describe('/theatre', () => {
       screen.getByRole('heading', { name: 'Which question is worth asking?' }),
     ).toBeInTheDocument();
     expect(screen.getByText(/One question breaks the spell/)).toBeInTheDocument();
-    expect(await screen.findByTestId('oracle')).toHaveTextContent('APP_DIGITAL_ARREST deciding');
+    // Belief holds still until her answer lands, then moves.
+    expect(await screen.findByTestId('oracle')).toHaveTextContent('GENUINE deciding');
+    await waitFor(
+      () => {
+        expect(screen.getByTestId('oracle')).toHaveTextContent('APP_DIGITAL_ARREST deciding');
+      },
+      { timeout: 4000 },
+    );
+    expect(within(phone).getByText('No')).toHaveClass('bg-white'); // what she tapped
+    expect(within(phone).getByText('Yes')).not.toHaveClass('bg-white');
   });
 
   it('steps with the arrow keys and ends on the protective hold', async () => {
@@ -72,6 +81,17 @@ describe('/theatre', () => {
     ).toBeInTheDocument();
   });
 
+  it('opens on the title card, which lifts', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    setMockSession('viewer');
+    renderApp('/theatre');
+    expect(await screen.findByText('Ask before the money moves.')).toBeInTheDocument();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3100);
+    });
+    expect(screen.queryByText('Ask before the money moves.')).not.toBeInTheDocument();
+  });
+
   it('plays the story on its own', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     setMockSession('viewer');
@@ -84,5 +104,24 @@ describe('/theatre', () => {
       );
     });
     expect(screen.getByRole('button', { name: /Step 2:/ })).toHaveAttribute('aria-current', 'step');
+  });
+});
+
+describe('wellsOf', () => {
+  it('puts GENUINE first, the KB order next and Unexplained last', async () => {
+    const { wellsOf } = await import('../src/theatre/BeliefView');
+    const styles = {
+      UNEXPLAINED: { name: 'Unexplained', color: '#888888' },
+      ATO: { name: 'Account takeover', color: '#7C3AED' },
+      GENUINE: { name: 'Genuine', color: '#15803D' },
+      MULE: { name: 'Mule account', color: '#1D4ED8' },
+    };
+    const posterior = { MULE: 0.1, UNEXPLAINED: 0.1, ATO: 0.2, GENUINE: 0.6 };
+    expect(wellsOf(posterior, styles).map((w) => w.key)).toEqual([
+      'GENUINE',
+      'ATO',
+      'MULE',
+      'UNEXPLAINED',
+    ]);
   });
 });

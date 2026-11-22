@@ -34,6 +34,7 @@ import { ProblemAlert } from '../components/ProblemAlert';
 import { RiskTable } from '../components/RiskTable';
 import { decisionText, humanise } from '../lib/format';
 import { DecisionScreen } from '../phone/DecisionScreen';
+import { BeliefView, hasWebGL } from '../theatre/BeliefView';
 import { PhoneFrame } from '../phone/PhoneFrame';
 import { ProbeScreen } from '../phone/ProbeScreens';
 import { usePhoneStream } from '../phone/usePhoneStream';
@@ -572,8 +573,17 @@ function Thinking({ session, styles }: { session: GuardianSessionView; styles: H
           </p>
         )}
         {posterior && (
-          <div className="mt-5">
-            <HypothesisBar probs={posterior} styles={styles} label="Posterior" size="lead" />
+          <div className="mt-5 space-y-4">
+            <BeliefView
+              posterior={posterior}
+              styles={styles}
+              decision={session.decision}
+              answers={answered.length}
+              fallback={
+                <HypothesisBar probs={posterior} styles={styles} label="Posterior" size="lead" />
+              }
+            />
+            {hasWebGL() && <HypothesisBar probs={posterior} styles={styles} label="Posterior" />}
           </div>
         )}
         <p aria-live="polite" className="mt-6 text-[15px]">
