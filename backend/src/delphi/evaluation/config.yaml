@@ -8,3 +8,19 @@ bootstrap:                     # docs/22 §1 step 7: 95% cluster-bootstrap CIs o
   seed: 7
 
 label_coverage_days: 7         # docs/12 §4: a label known within 7 days of the decision
+
+queue:                         # docs/22 §3: the simulated investigation queue, same for every policy
+  investigators: 2
+  shift_start_hour: 9          # 09:00–17:00 local time, every day
+  shift_end_hour: 17
+  local_utc_offset_minutes: 330  # IST (ADR-0014: working hours are local)
+  dispose_minutes: 3.0
+  accept_probability: 0.95     # DELPHI: the investigator takes the recommendation (human disagreement)
+
+targets:                       # docs/22 §5, pre-registered (DELPHI vs the named baseline)
+  genuine_hold_reduction_vs_b1: 0.50     # genuine-hold rate ≥ 50% lower than B1 …
+  coercion_catch_multiple_vs_b2: 2.0     # coercion catch rate ≥ 2× B2
+  median_resolution_fraction_of_b1: 0.10 # median hold resolution ≤ 1/10 of B1
+  min_label_coverage_held: 0.80          # label coverage (held) ≥ 80%
+  golden_hour_multiple_vs_manual: 2.0    # golden-hour recovery ratio ≥ 2× the manual baseline
+  dd_completeness: 1.0                   # due-diligence completeness = 100%
