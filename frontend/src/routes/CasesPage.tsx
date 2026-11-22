@@ -41,10 +41,18 @@ function useNow(intervalMs: number): number {
 
 const SORTS: readonly { value: CaseSort; label: string }[] = [
   { value: 'sla_due_at', label: 'Soonest SLA' },
+  { value: 'expected_loss', label: 'Highest expected loss' },
   { value: 'opened_at', label: 'Newest' },
 ];
 
-/** The case queue (docs/18 §2 `/cases`): soonest SLA first, or newest first. */
+/** The table's caption for each order. */
+const CAPTIONS: Readonly<Record<CaseSort, string>> = {
+  sla_due_at: 'Cases, soonest SLA first',
+  expected_loss: 'Cases, highest expected loss first',
+  opened_at: 'Cases, newest first',
+};
+
+/** The case queue (docs/18 §2 `/cases`): soonest SLA, highest expected loss, or newest first. */
 export function CasesPage() {
   const [sort, setSort] = useState<CaseSort>('sla_due_at');
   const cases = useCases(sort);
@@ -79,7 +87,7 @@ export function CasesPage() {
         {cases.isSuccess && cases.data.items.length > 0 && (
           <table className="w-full text-left text-sm">
             <caption className="sr-only">
-              {sort === 'sla_due_at' ? 'Cases, soonest SLA first' : 'Cases, newest first'}
+              {CAPTIONS[sort]}
             </caption>
             <thead className="border-b border-slate-300 text-slate-600">
               <tr>
