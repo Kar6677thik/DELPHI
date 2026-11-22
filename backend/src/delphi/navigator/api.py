@@ -9,8 +9,10 @@ from __future__ import annotations
 from delphi.navigator.console import (
     ConsoleView,
     EvidenceRow,
+    Recommendation,
     case_profile,
     console,
+    recommend,
 )
 from delphi.navigator.disposition import Disposition, dispose, vulnerable_payer
 from delphi.navigator.evidence import (
@@ -41,6 +43,7 @@ from delphi.navigator.store import (
     list_cases,
     open_case,
     open_case_for_payment,
+    sort_value,
 )
 
 __all__ = [
@@ -60,6 +63,7 @@ __all__ = [
     "EvidenceRecord",
     "EvidenceRow",
     "PoliceAlert",
+    "Recommendation",
     "act_on_alert",
     "case_profile",
     "console",
@@ -71,7 +75,9 @@ __all__ = [
     "observed_sources",
     "open_case",
     "open_case_for_payment",
+    "recommend",
     "request_evidence",
     "request_simulated_outreach",
+    "sort_value",
     "vulnerable_payer",
 ]

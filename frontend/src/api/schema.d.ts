@@ -363,7 +363,8 @@ export interface paths {
         };
         /**
          * Read Cases
-         * @description The case queue: soonest SLA first (``sort=sla_due_at``), or newest first.
+         * @description The case queue: soonest SLA first (``sort=sla_due_at``), the largest expected loss first
+         *     (``expected_loss``, #208), or newest first (``opened_at``).
          */
         get: operations["read_cases_api_v1_cases_get"];
         put?: never;
@@ -655,10 +656,11 @@ export interface components {
         CaseProtocol: "STANDARD" | "COERCION";
         /**
          * CaseSort
-         * @description The case queue's orders (docs/16): soonest SLA first, or newest first.
+         * @description The case queue's orders (docs/16): soonest SLA first, the largest expected loss first, or
+         *     newest first.
          * @enum {string}
          */
-        CaseSort: "sla_due_at" | "opened_at";
+        CaseSort: "sla_due_at" | "expected_loss" | "opened_at";
         /**
          * CaseStatus
          * @enum {string}

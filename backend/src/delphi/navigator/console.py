@@ -25,7 +25,7 @@ import numpy as np
 from delphi.engine.compile import compile_profile
 from delphi.engine.explain import FlipCandidate, what_would_change_my_mind
 from delphi.engine.planner import plan_next
-from delphi.engine.risk import loss_matrix
+from delphi.engine.risk import decide, loss_matrix, risk_by_decision
 from delphi.engine.types import CompiledProfile, Phase
 from delphi.kb.model import KnowledgeBase
 
@@ -73,6 +73,37 @@ def belief_vector(profile: CompiledProfile, posterior: Mapping[str, float]) -> n
         raise ValueError("the case's posterior has no mass on the profile's hypotheses")
     normalised: np.ndarray = belief / total
     return normalised
+
+
+@dataclass(frozen=True, slots=True)
+class Recommendation:
+    """The Bayes decision for a posterior and its risk under each decision (doc 06 §4); the
+    expected loss is the recommended decision's risk."""
+
+    decision: str
+    risk_by_decision: Mapping[str, float]
+
+    @property
+    def expected_loss_paise(self) -> float:
+        return self.risk_by_decision[self.decision]
+
+
+def recommend(
+    profile: CompiledProfile,
+    posterior: Mapping[str, float],
+    *,
+    amount_paise: int,
+    vulnerable: bool,
+) -> Recommendation:
+    """What the case row stores while the case is open and at disposition (#208): the same
+    numbers the console shows (``plan_next`` recommends the same argmin)."""
+    belief = belief_vector(profile, posterior)
+    losses = loss_matrix(profile, float(amount_paise), vulnerable)
+    risks = risk_by_decision(belief, losses)
+    return Recommendation(
+        decision=profile.decisions[decide(belief, losses)[0]],
+        risk_by_decision={d: float(r) for d, r in zip(profile.decisions, risks, strict=True)},
+    )
 
 
 def console(
