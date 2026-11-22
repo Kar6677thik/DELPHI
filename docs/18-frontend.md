@@ -48,10 +48,10 @@ and error states. `case.opened` and `case.updated` invalidate the `['cases']` qu
 (`lib/liveQueries.ts`, the first SSE → query-key map). Sorting controls, expected loss and
 campaign arrive with the console and campaigns (#103, M5).
 
-**M5 case queue and Navigator console (#105):** `/cases` gains an order control (soonest SLA or
-newest, `GET /cases?sort=`). The expected-loss column can now be filled: the backend stores an
-open case's recommendation and risks from the moment it opens (#208), and `GET /cases` sorts by
-`expected_loss`; the campaign column arrives with campaigns (#107). The console does not show
+**M5 case queue and Navigator console (#105):** `/cases` gains an order control (soonest SLA,
+highest expected loss or newest, `GET /cases?sort=`) and an "Expected loss" column: the loss of
+the case's `recommended_decision` in its `risk_by_decision`, which the backend stores from the
+moment a case opens (#208), and "—" for a row without one; the campaign column arrives with campaigns (#107). The console does not show
 the police alert yet (its own issue). `/cases/:id` follows doc 09 §2 from `GET /cases/{id}`:
 - the posterior `HypothesisBar` and the `RiskTable`;
 - the "Evidence sufficient — recommend {decision} (expected loss ₹X)" banner while
