@@ -58,14 +58,15 @@ def new_otp() -> str:
     return f"{secrets.randbelow(10**OTP_DIGITS):0{OTP_DIGITS}d}"
 
 
-def otp_digest(probe_run_id: str, code: str) -> str:
-    """What the probe run stores: never the code itself. Keyed by the run, so a digest
-    reveals nothing across runs."""
-    return hashlib.sha256(f"{probe_run_id}:{code}".encode()).hexdigest()
+def otp_digest(key: bytes, probe_run_id: str, code: str) -> str:
+    """What the probe run stores: never the code itself. An HMAC-SHA256 under the api's server
+    secret (#171): a 6-digit code has only 10⁶ values, so a plain hash would give a database
+    reader the live code. Over the run id too, so a digest reveals nothing across runs."""
+    return hmac.new(key, f"{probe_run_id}:{code}".encode(), hashlib.sha256).hexdigest()
 
 
-def otp_matches(probe_run_id: str, code: str, digest: str) -> bool:
-    return hmac.compare_digest(otp_digest(probe_run_id, code), digest)
+def otp_matches(key: bytes, probe_run_id: str, code: str, digest: str) -> bool:
+    return hmac.compare_digest(otp_digest(key, probe_run_id, code), digest)
 
 
 # ---------------------------------------------------------------------- client signals
