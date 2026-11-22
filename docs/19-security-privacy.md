@@ -14,7 +14,7 @@ the integrity of KB versions and the audit log, and the home server itself.
 | Tampering | Editing KB or audit rows | RBAC; optimistic locking; four-eyes promotion; hash-chained audit; the app role cannot UPDATE/DELETE `audit_log` |
 | Repudiation | "I didn't approve that lien" | Audit entries carry the user id; DD pack shows approvers |
 | Information disclosure | Leaking `ANTHROPIC_API_KEY`, stack traces | Secrets only in k8s Secrets; problem+json without internals; no secrets in logs (redaction filter); `/metrics` not exposed via the tunnel |
-| Denial of service | Hammering Guardian or LLM endpoints | Rate limits (doc 16); LLM daily token budget; bounded job concurrency (worker: 2 concurrent jobs); Cloudflare rate limiting rule on `/api/v1/auth/login` |
+| Denial of service | Hammering Guardian or LLM endpoints | Rate limits per session and per client address, and a per-address sign-in limit (doc 16); LLM daily token budget; bounded job concurrency (worker: 2 default-lane jobs + 1 fast-lane job); Cloudflare rate limiting rule on `/api/v1/auth/login` |
 | Elevation of privilege | VIEWER calling write endpoints; container escape | Permission check in every router dependency (deny by default) with tests per endpoint; containers non-root, read-only root FS, no privilege escalation, all capabilities dropped |
 | Prompt injection | Malicious text in evidence reaching the LLM | Evidence is data inside delimiters; the LLM has no tools; its output is validated; the LLM cannot affect decisions (ADR-0004) |
 | Malicious image or deploy | A collaborator starts a deploy, or pushes an image, that runs on the home server | Deploys need the owner's approval (environment `megatron`, main only); the deploy rolls out only the digest its own run built, after verifying its provenance attestation; the package is linked to the repo with Read only and publishing uses the `main`-restricted `production` secret (doc 23 §3, ADR-0015) |
@@ -64,7 +64,7 @@ draft. This applies even to ADMIN.
   `X-Content-Type-Options: nosniff`; `Referrer-Policy: same-origin`.
 - CORS: none (same origin).
 - Output encoding: React escapes by default. `dangerouslySetInnerHTML` is banned (ESLint rule).
-  DD pack HTML is rendered server-side with Jinja2 autoescape.
+  DD pack HTML is rendered server-side with every value escaped (`html.escape`).
 - Input validation: Pydantic models with explicit bounds (amount ≤ ₹10 crore, string lengths,
   enum values). Mass-assignment is prevented by separate request DTOs.
 
@@ -77,8 +77,8 @@ draft. This applies even to ADMIN.
 | `delphi-deployer` token, cluster CA, Tailscale OIDC credential | GitHub environment `megatron` secrets and variables (doc 23 §3) | Token every 90 days, at once if leaked (doc 23 §7) |
 | `GHCR_PUSH_TOKEN` (classic PAT, `write:packages` only) | GitHub environment `production` secret, usable only from `main` (doc 23 §3) | On PAT expiry; immediately if leaked. No cluster pull credentials are needed (public package, A-05) |
 
-Secrets are never committed. `gitleaks` runs in CI. `.env` files are git-ignored, and
-`.env.example` documents the names.
+Secrets are never committed. `gitleaks` runs in CI. `.env` files are git-ignored. doc 23 §4.1
+lists every setting by name.
 
 ## 6. Privacy posture
 

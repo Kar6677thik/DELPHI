@@ -193,6 +193,26 @@ def test_logs_are_json_lines_with_context_and_redaction() -> None:
     assert entry["ts"].endswith("Z")
 
 
+def test_secrets_inside_text_and_tracebacks_are_masked() -> None:
+    """#127: key names are not enough; a URL's password or an API key inside a message, a
+    value or a traceback is masked too."""
+    stream = io.StringIO()
+    configure_logging("INFO", stream=stream)
+    url = "postgresql://delphi_app:s3cr3t-pw@db:5432/delphi"
+    try:
+        raise RuntimeError(f"cannot connect to {url}")
+    except RuntimeError:
+        get_logger("test").exception(
+            f"db.down {url}", dsn=url, note="key sk-ant-api03-AbC_d-9 leaked", nested=[url]
+        )
+    text = stream.getvalue()
+    assert "s3cr3t-pw" not in text and "sk-ant-api03" not in text
+    entry = json.loads(text.splitlines()[0])
+    assert entry["dsn"] == "postgresql://delphi_app:***@db:5432/delphi"
+    assert entry["note"] == "key *** leaked"
+    assert "postgresql://delphi_app:***@db" in entry["exception"]
+
+
 # ------------------------------------------------------------------ worker shell
 
 

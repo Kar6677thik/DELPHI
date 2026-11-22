@@ -99,6 +99,14 @@ class Settings(BaseSettings):
     # The global API rate limit: a token bucket per session (or address), docs/16 §1.
     rate_limit_per_s: float = Field(default=20.0, gt=0, le=10_000)
     rate_limit_burst: int = Field(default=40, ge=1, le=100_000)
+    # Every request also takes a token from its client address's bucket, session or not, so a
+    # caller cannot escape the limit by sending a new session cookie each time (#127). Higher
+    # than the per-session limit, so several people behind one address are not throttled.
+    rate_limit_address_per_s: float = Field(default=100.0, gt=0, le=10_000)
+    rate_limit_address_burst: int = Field(default=200, ge=1, le=100_000)
+    # Sign-in attempts per client address: each one costs an Argon2 hash (64 MiB), docs/19 §2.
+    login_rate_per_s: float = Field(default=1.0, gt=0, le=1_000)
+    login_rate_burst: int = Field(default=10, ge=1, le=10_000)
     # The public origin (scheme://host) mutating requests must come from (CSRF, docs/19 §4).
     # Unset in development: the request's own origin is used.
     public_origin: str | None = None
