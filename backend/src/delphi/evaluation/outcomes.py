@@ -70,6 +70,10 @@ class PaymentOutcome:
     probes: tuple[ProbeRecord, ...] = ()
     argmax_hypothesis: str | None = None
     dd_pack_complete: bool | None = None  # None: the policy builds no DD pack (B1, B2)
+    # The investigation of a held payment (docs/22 §3): the evidence minutes it took, and the
+    # entropy of the case posterior that evidence removed.
+    evidence_minutes: float = 0.0
+    entropy_reduced_bits: float = 0.0
 
     @property
     def true_hypothesis(self) -> str:

@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 CONFIG_FILE = Path(__file__).resolve().parent / "config.yaml"
 
@@ -20,11 +20,31 @@ class BootstrapConfig(BaseModel):
     seed: int
 
 
+class QueueConfig(BaseModel):
+    """The simulated investigation queue (docs/22 §3)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    investigators: int = Field(gt=0)
+    shift_start_hour: int = Field(ge=0, lt=24)
+    shift_end_hour: int = Field(gt=0, le=24)
+    local_utc_offset_minutes: int = Field(ge=-12 * 60, le=14 * 60)
+    dispose_minutes: float = Field(ge=0)
+    accept_probability: float = Field(ge=0, le=1)
+
+    @model_validator(mode="after")
+    def _shift(self) -> QueueConfig:
+        if self.shift_end_hour <= self.shift_start_hour:
+            raise ValueError("the shift must end after it starts")
+        return self
+
+
 class EvaluationConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     bootstrap: BootstrapConfig
     label_coverage_days: float = Field(gt=0)
+    queue: QueueConfig
 
 
 def load_evaluation_config(path: Path = CONFIG_FILE) -> EvaluationConfig:

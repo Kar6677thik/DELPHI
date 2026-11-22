@@ -9,8 +9,7 @@ Quantiles (hold resolution time, the CI bounds) use the inverted CDF, with no in
 hold the run ends on counts as +∞ (it is still unresolved, the conservative reading), and an
 interpolated quantile between a finite value and +∞ is not defined.
 
-Not here yet: uncertainty reduced per investigator minute (the queue, #124 part 2), and the
-golden-hour recovery ratio, tracing delay and wrongful liens (Chase, #124 part 3).
+Not here yet: the golden-hour recovery ratio, tracing delay and wrongful liens (Chase, #124 part 3).
 """
 
 from __future__ import annotations
@@ -77,6 +76,8 @@ class _Frame:
     attribution_eligible: Bools  # stopped fraud whose true hypothesis is in the KB
     dd_complete: Bools
     dd_reported: Bools
+    evidence_minutes: Floats
+    entropy_reduced: Floats
     probe_row: NDArray[np.intp]  # the payment each probe ran on
     probe_yield: Floats
     probes_by_key: Mapping[str, NDArray[np.intp]]  # the observed probes of each key
@@ -140,6 +141,8 @@ def _frame(
         ),
         dd_complete=bools(lambda o: o.dd_pack_complete is True),
         dd_reported=bools(lambda o: o.dd_pack_complete is not None),
+        evidence_minutes=floats(lambda o: o.evidence_minutes),
+        entropy_reduced=floats(lambda o: o.entropy_reduced_bits),
         probe_row=np.fromiter((i for i, _ in probes), np.intp, len(probes)),
         probe_yield=np.fromiter((p.info_yield_bits or 0.0 for _, p in probes), np.float64),
         probes_by_key={k: np.asarray(v, dtype=np.intp) for k, v in sorted(by_key.items())},
@@ -191,6 +194,9 @@ def _statistics(frame: _Frame, w: Floats) -> dict[str, float | None]:
         "label_coverage_held": _share(w, frame.labelled, frame.coverage_eligible),
         "dd_pack_completeness": _share(w, frame.dd_complete, frame.dd_reported),
         "typology_attribution_accuracy": _share(w, frame.attributed, frame.attribution_eligible),
+        "uncertainty_reduced_bits_per_investigator_minute": _ratio(
+            float((w * frame.entropy_reduced).sum()), float((w * frame.evidence_minutes).sum())
+        ),
     }
     probe_w = w[frame.probe_row]
     for key, at in frame.probes_by_key.items():

@@ -9,7 +9,7 @@ from uuid import UUID, uuid4
 import numpy as np
 import pytest
 
-from delphi.evaluation.config import BootstrapConfig, EvaluationConfig, load_evaluation_config
+from delphi.evaluation.config import BootstrapConfig, load_evaluation_config
 from delphi.evaluation.metrics import evaluate_policy, weighted_quantile
 from delphi.evaluation.outcomes import (
     Decision,
@@ -23,8 +23,8 @@ from delphi.sim.scenarios import ScenarioType
 
 T0 = datetime(2026, 11, 1, 10, 0, tzinfo=UTC)
 KB_V1 = frozenset({"GENUINE", "ATO", "APP_DIGITAL_ARREST", "APP_INVESTMENT", "MULE"})
-CONFIG = EvaluationConfig(
-    bootstrap=BootstrapConfig(replicates=200, level=0.95, seed=7), label_coverage_days=7
+CONFIG = load_evaluation_config().model_copy(
+    update={"bootstrap": BootstrapConfig(replicates=200, level=0.95, seed=7)}
 )
 C1, C2, C3 = UUID(int=1), UUID(int=2), UUID(int=3)
 
@@ -187,6 +187,26 @@ def test_dd_completeness_counts_only_the_payments_with_a_pack() -> None:
         [delphi(True), delphi(True), delphi(False)], [], kb_hypotheses=KB_V1, config=CONFIG
     )
     assert m["dd_pack_completeness"].value == pytest.approx(2 / 3)
+
+
+def test_uncertainty_reduced_per_investigator_minute_pools_the_evidence() -> None:
+    def investigated(minutes: float, bits: float) -> PaymentOutcome:
+        return _payment(
+            C1,
+            ScenarioType.ATO,
+            1_000,
+            Decision.HOLD_FOR_REVIEW,
+            FinalStatus.DECLINED,
+            held_at=T0,
+            resolved_at=T0,
+            evidence_minutes=minutes,
+            entropy_reduced_bits=bits,
+        )
+
+    m = evaluate_policy(
+        [investigated(10.0, 1.0), investigated(2.0, 2.0)], [], kb_hypotheses=KB_V1, config=CONFIG
+    )
+    assert m["uncertainty_reduced_bits_per_investigator_minute"].value == pytest.approx(3 / 12)
 
 
 @pytest.mark.parametrize("q", [0.1, 0.5, 0.9, 1.0])
