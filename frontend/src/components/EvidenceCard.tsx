@@ -51,7 +51,7 @@ export function EvidenceCard({
         <h3 id={titleId} className="font-semibold">
           {humanise(record.source_key)}
         </h3>
-        <span className="rounded bg-slate-800 px-2 py-0.5 text-xs font-medium text-white">
+        <span className="rounded bg-raised px-2 py-0.5 text-xs font-medium text-ink">
           {humanise(record.outcome)}
         </span>
       </header>
