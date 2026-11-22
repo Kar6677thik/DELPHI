@@ -15,7 +15,7 @@ import {
 import type { KbStatus, KbVersionPage, KbVersionView } from '../api/types';
 import { forDark } from '../components/HypothesisBar';
 import { ProblemAlert } from '../components/ProblemAlert';
-import { humanise } from '../lib/format';
+import { humanise, keyText } from '../lib/format';
 
 /**
  * The knowledge base (docs/18 §2 `/kb`, docs/07, part of #119): the rules DELPHI reasons with,
@@ -55,18 +55,6 @@ const STATUS_TONE: Readonly<Record<KbStatus, string>> = {
 };
 
 const DATE = new Intl.DateTimeFormat('en-IN', { dateStyle: 'medium', timeZone: 'UTC' });
-
-const ACRONYMS = new Set(['OTP', 'CRM', 'KYC', 'UPI', 'ATO', 'APP', 'SMS', 'IP']);
-
-/** A KB key as words, keeping its acronyms: OTP_STEP_UP → "OTP step up". */
-export function keyText(key: string): string {
-  return key
-    .split('_')
-    .map((w, i) =>
-      ACRONYMS.has(w) ? w : i === 0 ? w.charAt(0) + w.slice(1).toLowerCase() : w.toLowerCase(),
-    )
-    .join(' ');
-}
 
 function pct(p: number): string {
   if (p > 0 && p < 0.01) return '<1%';

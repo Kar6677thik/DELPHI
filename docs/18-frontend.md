@@ -95,6 +95,10 @@ Hypothesis names and colours come from the session's pinned KB version (`GET /kb
 fetched once per version); the KB content and the candidates are read with field checks, not
 casts, until the api types them (#198). `guardian.session.updated` and `guardian.session.decided` invalidate
 the `['guardian']` queries.
+The session detail also shows the current belief as the Oracle (`BeliefView`, as on the phone's
+live panel) with the posterior bar beneath; where WebGL is missing, the bar alone. In-flight
+rows on `/guardian` carry a live mark; decisions are toned (release green, review amber, holds
+and declines red) and always named in text too.
 
 ## 2a. Design system: "data terminal", dark (#99)
 

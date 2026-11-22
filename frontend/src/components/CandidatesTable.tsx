@@ -1,5 +1,5 @@
 import { MoneyText } from './MoneyText';
-import { humanise } from '../lib/format';
+import { humanise, keyText } from '../lib/format';
 
 /**
  * One planning step's candidates (docs/18 §3, docs/08 §6): source, eligible or why not, cost,
@@ -74,29 +74,31 @@ export function CandidatesTable({
       a.source_key.localeCompare(b.source_key),
   );
   return (
-    <table className="w-full text-left text-sm">
+    <table className="w-full min-w-[640px] text-left text-[14px]">
       <caption className="sr-only">{caption}</caption>
-      <thead className="border-b border-slate-300 text-slate-600">
+      <thead className="border-b border-line text-[12px] text-muted">
         <tr>
-          <th scope="col" className="py-1 pr-3">
+          <th scope="col" className="py-2 pr-4 font-normal">
             Source
           </th>
-          <th scope="col" className="py-1 pr-3">
+          <th scope="col" className="py-2 pr-4 font-normal">
             Eligible
           </th>
-          <th scope="col" className="py-1 pr-3 text-right">
+          <th scope="col" className="py-2 pr-4 text-right font-normal">
             Cost
           </th>
-          <th scope="col" className="py-1 pr-3 text-right">
-            VoI
+          <th scope="col" className="py-2 pr-4 text-right font-normal">
+            <abbr title="Value of information: what the answer is worth" className="no-underline">
+              Value
+            </abbr>
           </th>
-          <th scope="col" className="py-1 pr-3 text-right">
+          <th scope="col" className="py-2 pr-4 text-right font-normal">
             Net value
           </th>
-          <th scope="col" className="py-1 pr-3 text-right">
+          <th scope="col" className="py-2 pr-4 text-right font-normal">
             Settle %
           </th>
-          <th scope="col" className="py-1 pr-3">
+          <th scope="col" className="py-2 pr-4 font-normal">
             Selected
           </th>
         </tr>
@@ -105,29 +107,35 @@ export function CandidatesTable({
         {rows.map((c) => (
           <tr
             key={c.source_key}
-            className={`border-b border-slate-100 ${c.selected ? 'bg-sky-50 font-medium' : ''}`}
+            className={`border-b border-line last:border-b-0 ${
+              c.selected
+                ? 'bg-raised text-ink [&>td:first-child]:shadow-[inset_2px_0_0_var(--color-accent)] [&>td:first-child]:pl-3'
+                : c.eligible
+                  ? 'text-soft'
+                  : 'text-muted'
+            }`}
           >
-            <td className="py-1 pr-3">{sourceNames[c.source_key] ?? humanise(c.source_key)}</td>
-            <td className="py-1 pr-3">
+            <td className="py-2.5 pr-4">{sourceNames[c.source_key] ?? keyText(c.source_key)}</td>
+            <td className="py-2.5 pr-4">
               {c.eligible ? 'Yes' : `No: ${humanise(c.ineligible_reason ?? 'not eligible')}`}
             </td>
-            <td className="py-1 pr-3 text-right">
+            <td className="figure py-2.5 pr-4 text-right">
               <Money paise={c.cost_paise} />
             </td>
-            <td className="py-1 pr-3 text-right">
+            <td className="figure py-2.5 pr-4 text-right">
               <Money paise={c.voi_myopic_paise} />
             </td>
-            <td className="py-1 pr-3 text-right">
+            <td className="figure py-2.5 pr-4 text-right">
               <Money paise={c.net_value_paise} />
             </td>
-            <td className="py-1 pr-3 text-right tabular-nums">
+            <td className="figure py-2.5 pr-4 text-right">
               {c.settle_pct === null || c.settle_pct === undefined
                 ? '—'
                 : `${c.settle_pct.toFixed(0)}%`}
             </td>
-            <td className="py-1 pr-3">
+            <td className="py-2.5 pr-4">
               {c.selected && (
-                <span className="rounded bg-sky-100 px-2 py-0.5 text-sky-900">
+                <span className="rounded-sm border border-accent/50 px-2 py-0.5 text-[12px] text-accent">
                   {selectedBy ?? 'Selected'}
                   {propensity !== null &&
                     propensity !== undefined &&
