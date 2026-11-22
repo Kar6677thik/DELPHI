@@ -155,7 +155,7 @@ opening fields (posterior, prior components, leading hypothesis, amount, SLA and
 | GET `/learning/trace-analytics` | `view` | |
 | POST `/evaluations` | `admin` | `{dataset_id, policies: ["B1","B2","DELPHI"], seed}` → job |
 | GET `/evaluations`, `/evaluations/{id}` | `view` | metrics with CIs |
-| GET `/metrics/summary` | `view` | live KPIs (doc 22 §7) |
+| GET `/metrics/summary` | `view` | live KPIs (doc 22 §7) over `?hours=` (1–720, default 24): `{window_hours, as_of, guardian: {decided, decisions, median_session_seconds, active_probes_per_session, info_yield_bits, held, label_coverage_held, dd_pack_completeness}, cases: {open_cases, open_by_protocol, sla_breaches, disposed, median_hold_resolution_minutes}, golden_hour_ratio, alerts: [{code, message, count}], alerts_not_tracked}`. A figure with nothing to count is null. The open queue and the alerts are as of now |
 
 ### Admin and jobs
 

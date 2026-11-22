@@ -68,6 +68,13 @@ The Overview page shows an alert banner for: job failures in the last hour; jobs
 minutes; LLM fallback rate > 50% over the last 20 calls; `PROBE_YIELD_DEGRADED`; SSE outbox lag
 > 30 s; backup older than 36 h (latest `ops_backup_runs` row).
 
+**Implementation (#126).** `GET /metrics/summary` computes the alerts on request:
+- `JOB_FAILURES`: FAILED jobs that finished in the last hour;
+- `JOBS_QUEUED`: QUEUED jobs whose `run_after` is more than 10 minutes ago;
+- `LLM_FALLBACK`: more than half of the last 20 `llm_calls` rows are template rows while a model provider is in use (template mode alone raises nothing).
+
+The backup age (it needs `ops_backup_runs`), the outbox lag (it needs the publisher's position) and `PROBE_YIELD_DEGRADED` (#121) are listed as `alerts_not_tracked`, so a quiet banner is not read as all-clear.
+
 ## 5. Deployment verification
 
 The deploy workflow polls `GET https://<public host>/api/v1/health` until `version` equals the

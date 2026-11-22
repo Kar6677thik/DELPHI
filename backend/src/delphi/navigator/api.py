@@ -23,6 +23,7 @@ from delphi.navigator.evidence import (
     request_evidence,
     request_simulated_outreach,
 )
+from delphi.navigator.kpis import CaseKpis, case_kpis
 from delphi.navigator.police_alert import (
     AlertAction,
     AlertStatus,
@@ -53,6 +54,7 @@ __all__ = [
     "AlertStatus",
     "CaseCursor",
     "CaseExistsError",
+    "CaseKpis",
     "CaseProtocol",
     "CaseRecord",
     "CaseSort",
@@ -65,6 +67,7 @@ __all__ = [
     "PoliceAlert",
     "Recommendation",
     "act_on_alert",
+    "case_kpis",
     "case_profile",
     "console",
     "current_records",
