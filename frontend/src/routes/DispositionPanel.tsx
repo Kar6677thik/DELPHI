@@ -80,7 +80,8 @@ function isConflict(error: unknown): boolean {
   return error instanceof ApiError && error.status === 412;
 }
 
-const inputClass = 'mt-1 block w-full rounded-md border border-slate-300 px-3 py-2';
+const inputClass =
+  'mt-1 block w-full rounded-md border border-control bg-surface px-3 py-2 text-ink focus-visible:border-accent';
 
 /** docs/09 §2 item 6: decide the case, or show how it was decided. */
 export function DispositionPanel({
@@ -164,7 +165,7 @@ export function DispositionPanel({
       {stale && (
         <div
           role="alert"
-          className="mt-2 rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950"
+          className="mt-2 rounded-md border border-warning bg-warning-bg p-4 text-sm text-warning"
         >
           <p className="font-semibold">This case changed — reload</p>
           {changes.length > 0 ? (
@@ -178,7 +179,7 @@ export function DispositionPanel({
           )}
           <button
             type="button"
-            className="mt-2 rounded-md border border-amber-400 px-3 py-1"
+            className="mt-2 rounded-md border border-warning px-3 py-1"
             onClick={() => {
               setStale(null);
               dispose.reset();
@@ -265,7 +266,7 @@ export function DispositionPanel({
 
             <button
               type="submit"
-              className="rounded-md bg-slate-900 px-4 py-2 text-white disabled:opacity-50"
+              className="rounded-full bg-ink px-4 py-2 font-semibold text-ground hover:bg-soft disabled:opacity-50"
             >
               {dispose.isPending ? 'Deciding…' : 'Decide'}
             </button>

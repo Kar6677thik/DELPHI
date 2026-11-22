@@ -349,14 +349,14 @@ function OutreachForm({
           onChange={(event) => {
             setNote(event.target.value);
           }}
-          className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2"
+          className="mt-1 block w-full rounded-md border border-control bg-surface px-3 py-2 text-ink focus-visible:border-accent"
         />
       </label>
       <div className="flex gap-2">
         <button
           type="submit"
           disabled={!outcome || pending}
-          className="rounded-md bg-slate-900 px-3 py-1 text-white disabled:opacity-50"
+          className="rounded-full bg-ink px-3 py-1 font-semibold text-ground hover:bg-soft disabled:opacity-50"
         >
           Record
         </button>
