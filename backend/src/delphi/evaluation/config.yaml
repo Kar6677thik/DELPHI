@@ -1,0 +1,10 @@
+# Evaluation configuration (docs/22). Every tunable number of the evaluation harness lives here.
+
+bootstrap:                     # docs/22 §1 step 7: 95% cluster-bootstrap CIs over customers
+  replicates: 1000
+  level: 0.95
+  # One seed for every policy, so each replicate resamples the same customers under B1, B2
+  # and DELPHI (paired, like the common random numbers of the stream).
+  seed: 7
+
+label_coverage_days: 7         # docs/12 §4: a label known within 7 days of the decision

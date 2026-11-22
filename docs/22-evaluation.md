@@ -81,6 +81,22 @@ ground truth `APP_COLLECT_REFUND`, counts as fraud), G the genuine ones. "Stoppe
 | Wrongful liens | liens on accounts with `is_mule = false` |
 | Typology attribution accuracy | argmax hypothesis = true hypothesis, among stopped F (KB v1 hypotheses only) |
 
+How the definitions are computed (`delphi.evaluation.metrics`, #124). These settle gaps the table
+leaves open; they don't change any definition:
+
+- **F and G.** F is every payment whose scenario enacts a hypothesis other than GENUINE (doc 14
+  §4). G is the rest. "Any hold/decline" means any decision but RELEASE.
+- **Held payments** (resolution time) are the ones that entered the investigation queue (§3).
+  A hold the run ends on is still unresolved, so it counts as +∞: the conservative reading.
+  Medians and percentiles use the inverted CDF (no interpolation), which stays defined with +∞.
+- **An empty denominator** makes the metric undefined (shown as "n/a"), never 0.
+- **DD completeness** counts only the decisions that build a DD pack (DELPHI's).
+- **CIs:** each replicate draws customers with replacement, and a customer drawn k times weighs
+  each of their payments k. The point estimate uses weight 1. The 95% interval is the
+  inverted-CDF 2.5th and 97.5th percentile of the replicates. Every policy uses the same
+  bootstrap seed, so replicate b resamples the same customers under each policy. The replicate
+  count, level and seed are in `evaluation/config.yaml`.
+
 ## 5. Pre-registered targets (DELPHI vs best baseline)
 
 | Target | Threshold |
