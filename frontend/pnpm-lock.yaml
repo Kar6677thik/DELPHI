@@ -6,6 +6,7 @@ settings:
 
 overrides:
   '@types/three': 0.169.0
+  uuid: 11.1.1
 
 importers:
 
@@ -2373,9 +2374,8 @@ packages:
     resolution: {integrity: sha512-6Z7Ma2aVEWisaL6TvBCy7P8rm2LQoPv6dJ7ecIaIixHcwfbJ0x7mWdbcwlIM5IGQxPZSFYeqRCqlOOeKoJYMkw==}
     engines: {node: '>= 4'}
 
-  uuid@9.0.1:
-    resolution: {integrity: sha512-b+1eJOlsR9K8HJpow9Ok3fiWOWSIcIzXodvv0rQjVoOVNpWMpxf1wZNpt4y9h10odCNrqnYp1OBzRktckBe3sA==}
-    deprecated: uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).
+  uuid@11.1.1:
+    resolution: {integrity: sha512-vIYxrBCC/N/K+Js3qSN88go7kIfNPssr/hHCesKCQNAjmgvYS2oqr69kIufEG+O4+PfezOH4EbIeHCfFov8ZgQ==}
     hasBin: true
 
   vite@8.3.5:
@@ -3196,7 +3196,7 @@ snapshots:
       troika-three-text: 0.49.1(three@0.169.0)
       tunnel-rat: 0.1.2(@types/react@18.3.31)(react@18.3.1)
       utility-types: 3.11.0
-      uuid: 9.0.1
+      uuid: 11.1.1
       zustand: 3.7.2(react@18.3.1)
     optionalDependencies:
       react-dom: 18.3.1(react@18.3.1)
@@ -4625,7 +4625,7 @@ snapshots:
 
   utility-types@3.11.0: {}
 
-  uuid@9.0.1: {}
+  uuid@11.1.1: {}
 
   vite@8.3.5(@types/node@26.6.6)(jiti@2.7.0):
     dependencies:
