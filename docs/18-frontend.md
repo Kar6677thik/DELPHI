@@ -69,6 +69,18 @@ the police alert yet (its own issue). `/cases/:id` follows doc 09 §2 from `GET 
 `evidence.narrative_ready` invalidates the `['cases']` queries, like `case.*`. The console's write
 controls (fetch, the outreach call, the disposition and its 412 handling) follow in part 2.
 
+**The knowledge base, read-only (part of #119):** `/kb` lists `GET /kb/versions` (status, change
+summary, "From vN" lineage) and opens the ACTIVE version, or the one in `?v=`. For it: the
+hypotheses with their descriptions (and the open-world Unexplained), every source grouped as
+passive checks, questions asked of the customer, and investigator evidence, each with its
+**separation** (the equal-weight Jensen–Shannon divergence of its likelihood rows, in bits: how far
+apart the explanations' predicted answers sit). The chosen source shows its description, its
+approved English question, and its likelihood table (outcome × hypothesis, washed in the
+hypothesis colour); choosing an answer shows the belief that answer alone would leave from even
+odds, with each hypothesis's factor against its even share. That is an explainer, not the engine's
+update (which starts from the session's prior). A version with a parent shows `GET …/diff`;
+"Export as YAML" downloads `GET …/export`. Promote and rollback follow with the shadow evaluations.
+
 **M4 Guardian screens (#100):** `/guardian` lists `GET /guardian/sessions` newest first, 50 at a
 time, with "Load more sessions" while `next_cursor` is set: start time (linking to
 `/guardian/:id`), amount (`MoneyText`), the leading hypothesis's display name (from each row's own

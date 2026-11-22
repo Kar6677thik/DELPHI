@@ -31,6 +31,10 @@ export type SessionStatus = Schemas['SessionStatus'];
 export type SessionMode = Schemas['SessionMode'];
 /** `GET /kb/versions`: newest first, without the content. */
 export type KbVersionPage = Schemas['KbVersionPage'];
+/** `GET /kb/versions/{id}/diff`: what changed from the parent. */
+export type KbDiffView = Schemas['KbDiffView'];
+/** A KB version's lifecycle state (docs/11 §5). */
+export type KbStatus = Schemas['KbStatus'];
 /** `GET /cases/{id}`: the case with its console (docs/09 §2, #103) and evidence (#102). */
 export type CaseDetail = Schemas['CaseDetail'];
 /** A row of the console's "next best evidence" (docs/09 §2 item 2). */
