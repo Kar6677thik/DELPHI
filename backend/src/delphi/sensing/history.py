@@ -67,7 +67,7 @@ def load_payment_snapshot(
         initiated_at_us=to_us(as_of),
         device_id=str(row.device_id) if row.device_id else None,
         payee_account_opened_at_us=to_us(row.payee_opened_at),
-        payee_p_mule=config.mule_score_fallback,  # until the mule scorer (#91)
+        payee_p_mule=payee_mule_score(conn, row.payee_account_id, as_of, config),
         session_duration_s=row.session_duration_s,
         remote_access_active=row.remote_access_active,
     )
@@ -135,6 +135,18 @@ def complaints_naming(account_id: UUID, as_of: datetime) -> Select[tuple[datetim
         .where(c.c.counterparty_account_ids.contains([account_id]), c.c.reported_at < as_of)
         .order_by(c.c.reported_at)
     )
+
+
+def payee_mule_score(
+    conn: Connection, account_id: UUID, as_of: datetime, config: FeatureConfig
+) -> float:
+    """The account's cached mule score if it was computed before ``as_of``, else the
+    fallback (docs/13 §3, §6). The offline path applies the same rule (parity)."""
+    s = bank.account_scores
+    score = conn.execute(
+        select(s.c.p_mule).where(s.c.account_id == account_id, s.c.computed_at < as_of)
+    ).scalar_one_or_none()
+    return float(score) if score is not None else config.mule_score_fallback
 
 
 def load_account_snapshot(

@@ -33,6 +33,7 @@ from delphi.sensing.artifacts import (
     artifacts_of_job,
     store_artifact,
 )
+from delphi.sensing.mule_scores import MuleSweepJob
 from delphi.sensing.trainers import (
     NothingToTrainError,
     train_anomaly_artifact,
@@ -158,3 +159,5 @@ def register_sensing_jobs(
     trainers: Mapping[ArtifactKind, Trainer] = DEFAULT_TRAINERS,
 ) -> None:
     registry.register(JobType.TRAIN_SENSING, TrainSensingJob(engine, sessions, clock, trainers))
+    # docs/13 §6: rescore every account into bank.account_scores (one run per slot)
+    registry.register(JobType.MULE_SWEEP, MuleSweepJob(engine, clock))
