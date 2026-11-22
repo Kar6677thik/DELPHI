@@ -72,13 +72,11 @@ def _top(probs: Mapping[str, float] | None, n: int) -> list[dict[str, Any]]:
 
 def _header(session: Session, case: CaseRecord) -> dict[str, Any]:
     version = get_version(session, case.kb_version_id)
-    payment = None
-    if case.subject_payment_id is not None:
-        payment = session.execute(
-            select(bank.payments.c.channel, bank.payments.c.payer_customer_id).where(
-                bank.payments.c.id == case.subject_payment_id
-            )
-        ).one_or_none()
+    payment = (
+        bank.get_payment(session, case.subject_payment_id)
+        if case.subject_payment_id is not None
+        else None
+    )
     customer = payment.payer_customer_id if payment is not None else None
     return {
         "case_id": str(case.id),
