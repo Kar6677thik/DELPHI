@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from delphi.guardian.ddpack import DdPack
+from delphi.guardian.ddpack import DdPack, case_trail
 from delphi.guardian.ddpack import build as build_dd_pack
 from delphi.guardian.ddpack import render_html as render_dd_pack_html
 from delphi.guardian.kpis import GuardianKpis, guardian_kpis
@@ -25,6 +25,7 @@ __all__ = [
     "SessionRow",
     "SessionStatus",
     "build_dd_pack",
+    "case_trail",
     "get_session_row",
     "guardian_kpis",
     "list_sessions",
