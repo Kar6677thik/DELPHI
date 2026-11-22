@@ -57,6 +57,32 @@ monitor (doc 08 §6) and the harness use alike.
 - `CUSTOMER_OUTREACH_CALL` answers come from the response model. They yield `OUTREACH_CONFIRMED`
   labels in every policy that runs it.
 
+How the queue is run (`delphi.evaluation.queue`, #124). These settle gaps above; the numbers are
+in `evaluation/config.yaml`:
+
+- **What enters the queue:** HOLD_FOR_REVIEW and PROTECTIVE_HOLD, at the decision time. A
+  DECLINE is final.
+- **Working time:** a case runs only on shift. Work left at 17:00 continues at 09:00 the next day.
+- **DELPHI's order:**
+  - first `sla_due_at`: the hold time plus `case_sla` (protective 30 min, standard 240 min);
+  - then the larger expected loss: the case's Bayes risk at the hold under `CASE_PAYMENT_HOLD`;
+  - then FIFO.
+  In the COERCION protocol the outreach call comes first, as the console pins it (doc 09 §2).
+- **Where cases start, and where evidence comes from:**
+  - every case opens with the posterior the harness hands it: the session's final posterior for
+    DELPHI, the sensing prior for B1/B2;
+  - evidence outcomes come from the harness's bank and response models, so they are the same
+    under every policy (common random numbers).
+- **The investigator's decision:** DELPHI's investigator overrules the recommendation from the
+  payment's own stream, `keyed_rng(seed, "eval", payment_id, "investigator")`.
+- **Outcomes:**
+  - a RELEASE disposition executes the payment;
+  - CONFIRM_FRAUD declines it;
+  - a case not finished when the run ends stays HELD and unresolved.
+- **Labels:** every disposition gives an `INVESTIGATOR_DISPOSITION` label, and a coercion or
+  denial answer gives an `OUTREACH_CONFIRMED` label. Both are known when the case is disposed,
+  in every policy: the baselines' coverage is limited by their backlog.
+
 ## 4. Metrics (definitions are normative)
 
 Let F be the fraud payments in the eval stream (sim truth; the `UPI_COLLECT_REFUND` scenario,
