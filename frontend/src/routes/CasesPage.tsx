@@ -39,6 +39,16 @@ function useNow(intervalMs: number): number {
   return now;
 }
 
+/**
+ * The recommendation's expected loss in paise (docs/18 §2), which the backend stores from the
+ * moment a case opens (#208). Null for a row without one.
+ */
+export function expectedLoss(item: CaseView): number | null {
+  const decision = item.recommended_decision;
+  const risk = decision ? item.risk_by_decision?.[decision] : undefined;
+  return typeof risk === 'number' && Number.isFinite(risk) ? Math.round(risk) : null;
+}
+
 const SORTS: readonly { value: CaseSort; label: string }[] = [
   { value: 'sla_due_at', label: 'Soonest SLA' },
   { value: 'expected_loss', label: 'Highest expected loss' },
@@ -86,9 +96,7 @@ export function CasesPage() {
         )}
         {cases.isSuccess && cases.data.items.length > 0 && (
           <table className="w-full text-left text-sm">
-            <caption className="sr-only">
-              {CAPTIONS[sort]}
-            </caption>
+            <caption className="sr-only">{CAPTIONS[sort]}</caption>
             <thead className="border-b border-slate-300 text-slate-600">
               <tr>
                 <th scope="col" className="py-2 pr-4">
@@ -106,40 +114,49 @@ export function CasesPage() {
                 <th scope="col" className="py-2 pr-4 text-right">
                   At stake
                 </th>
+                <th scope="col" className="py-2 pr-4 text-right">
+                  Expected loss
+                </th>
                 <th scope="col" className="py-2 pr-4">
                   Status
                 </th>
               </tr>
             </thead>
             <tbody>
-              {cases.data.items.map((item) => (
-                <tr key={item.id} className="border-b border-slate-100">
-                  <td
-                    className={`py-2 pr-4 ${item.sla_breached ? 'font-semibold text-red-700' : ''}`}
-                  >
-                    {slaLabel(item, now)}
-                  </td>
-                  <td className="py-2 pr-4">
-                    <Link to={`/cases/${item.id}`} className="underline">
-                      {item.leading_hypothesis_name}
-                    </Link>
-                  </td>
-                  <td className="py-2 pr-4">{humanise(item.type)}</td>
-                  <td className="py-2 pr-4">
-                    {item.protocol === 'COERCION' ? (
-                      <span className="rounded bg-amber-100 px-2 py-0.5 text-amber-900">
-                        Coercion
-                      </span>
-                    ) : (
-                      'Standard'
-                    )}
-                  </td>
-                  <td className="py-2 pr-4 text-right">
-                    <MoneyText paise={item.amount_at_stake_paise} />
-                  </td>
-                  <td className="py-2 pr-4">{humanise(item.status)}</td>
-                </tr>
-              ))}
+              {cases.data.items.map((item) => {
+                const loss = expectedLoss(item);
+                return (
+                  <tr key={item.id} className="border-b border-slate-100">
+                    <td
+                      className={`py-2 pr-4 ${item.sla_breached ? 'font-semibold text-red-700' : ''}`}
+                    >
+                      {slaLabel(item, now)}
+                    </td>
+                    <td className="py-2 pr-4">
+                      <Link to={`/cases/${item.id}`} className="underline">
+                        {item.leading_hypothesis_name}
+                      </Link>
+                    </td>
+                    <td className="py-2 pr-4">{humanise(item.type)}</td>
+                    <td className="py-2 pr-4">
+                      {item.protocol === 'COERCION' ? (
+                        <span className="rounded bg-amber-100 px-2 py-0.5 text-amber-900">
+                          Coercion
+                        </span>
+                      ) : (
+                        'Standard'
+                      )}
+                    </td>
+                    <td className="py-2 pr-4 text-right">
+                      <MoneyText paise={item.amount_at_stake_paise} />
+                    </td>
+                    <td className="py-2 pr-4 text-right">
+                      {loss === null ? '—' : <MoneyText paise={loss} />}
+                    </td>
+                    <td className="py-2 pr-4">{humanise(item.status)}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}
