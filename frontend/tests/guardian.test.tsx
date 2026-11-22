@@ -294,7 +294,12 @@ describe('Guardian session detail (docs/18 §2 /guardian/:id)', () => {
       '1. Call status: On call unknown number',
       '2. Spell breaker police: Hesitation or app switch',
     ]);
-    expect(await screen.findByText('Coerced victim — digital arrest 71%')).toBeInTheDocument();
+    expect(
+      await within(timeline).findByText('Coerced victim — digital arrest 71%'),
+    ).toBeInTheDocument();
+    // The current belief, on its own card (the Oracle, or the bar where there is no WebGL).
+    const belief = screen.getByRole('region', { name: 'What DELPHI believes' });
+    expect(within(belief).getByText('Coerced victim — digital arrest 71%')).toBeInTheDocument();
     const risk = screen.getByRole('table', { name: 'Expected loss by decision' });
     expect(within(risk).getAllByRole('row')[1]).toHaveTextContent(
       'Protective hold(decision taken)',
