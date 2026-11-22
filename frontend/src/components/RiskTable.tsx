@@ -22,14 +22,14 @@ export function RiskTable({
   const chosen = taken ?? rows[0]?.[0];
   const marker = taken ? '(decision taken)' : '(recommended)';
   return (
-    <table className="text-left text-sm">
+    <table className="w-full text-left text-[14px]">
       <caption className="sr-only">{caption}</caption>
-      <thead className="border-b border-slate-300 text-slate-600">
+      <thead className="border-b border-line text-[12px] text-muted">
         <tr>
-          <th scope="col" className="py-1 pr-6">
+          <th scope="col" className="py-2 pr-6 font-normal">
             Decision
           </th>
-          <th scope="col" className="py-1 pr-3 text-right">
+          <th scope="col" className="py-2 text-right font-normal">
             Expected loss
           </th>
         </tr>
@@ -39,13 +39,19 @@ export function RiskTable({
           <tr
             key={decision}
             aria-current={decision === chosen ? 'true' : undefined}
-            className={`border-b border-slate-100 ${decision === chosen ? 'bg-emerald-50 font-semibold' : ''}`}
+            className={`border-b border-line last:border-b-0 ${
+              decision === chosen
+                ? 'bg-raised text-ink [&>td:first-child]:pl-3 [&>td:first-child]:shadow-[inset_2px_0_0_var(--color-accent)]'
+                : 'text-soft'
+            }`}
           >
-            <td className="py-1 pr-6">
+            <td className="py-2.5 pr-6">
               {decisionText(decision)}
-              {decision === chosen && <span className="ml-2 text-emerald-800">{marker}</span>}
+              {decision === chosen && (
+                <span className="ml-2 text-[12px] text-accent">{marker}</span>
+              )}
             </td>
-            <td className="py-1 pr-3 text-right">
+            <td className="figure py-2.5 pr-3 text-right">
               <MoneyText paise={Math.round(paise)} />
             </td>
           </tr>
