@@ -99,6 +99,14 @@ Ranking is by `net` descending. Candidates with net > 0 are **recommended**. The
 the latencies, ₹5,000 and 0.02 are in `kb/engine.yaml` under `chase:`, so they are versioned
 with the KB.
 
+**Implementation** (`delphi.chase.scoring`, #112): pure functions the chase operation (#113)
+calls with the moves, taint and mule scores it loads. The time-to-80%-out is FIFO over the
+account's money, with the balance it held before the 30-day window leaving first. A credit still
+not 80% out counts with the time it has stayed so far (censored at now, a lower bound). Observed
+times are time-scaled like the fallbacks, as "(all × time_scale)" says. Expected values are
+rounded to the paisa. Ties in `net` are broken by ERV, then by account id, so the ranking is
+stable. The 30 days, the 80% and the 3-credit minimum are the definition above, not tunables.
+
 ## 5. Freezing
 
 1. The investigator selects candidates (default selection: all recommended, capped at
