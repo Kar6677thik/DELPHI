@@ -27,6 +27,14 @@ the session to the case (#94). A retried call for the same session returns the c
 an open case from another session is refused (`409 INVALID_STATE_TRANSITION`). The account-review
 triggers and the console come with M5 (#103, #109).
 
+**The stored recommendation (#208).** The case row keeps `recommended_decision` and
+`risk_by_decision` current from the start, not only at disposition. Opening stores them for the
+initial posterior. Each evidence record stores them for the new posterior, in the same
+transaction as the posterior update. The disposition stores them as before. They are computed as
+the console computes them: the Bayes decision under the case profile's losses, with the
+vulnerable-payer weighting (doc 06 §4). The queue shows the recommended decision's risk as the
+expected loss and can sort by it (doc 16).
+
 ## 2. Case console behaviour (per refresh / after each evidence fetch)
 
 1. **Hypothesis bar** (current posterior) and the recommended decision with `risk_by_decision`.

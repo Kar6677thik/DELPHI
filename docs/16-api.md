@@ -5,7 +5,8 @@ checked into `backend/openapi.json` (regenerate with `uv run delphi openapi`). C
 generated file differs from the committed one (schema-first discipline, EFG §7). Every operation
 documents its error body as a `default` response of `application/problem+json` with the
 `Problem` schema (§1). Frontend types are generated from it with
-`openapi-typescript` into `frontend/src/api/schema.d.ts`, and CI checks that file too.
+`openapi-typescript` into `frontend/src/api/schema.d.ts`, and CI checks that file too. The api also serves the document at `GET /api/v1/openapi.json` without signing in: the same
+file is in this public repository, so it reveals nothing more (#127).
 
 ## 1. Conventions
 
@@ -22,7 +23,7 @@ documents its error body as a `default` response of `application/problem+json` w
 | Concurrency | Mutable aggregates return `ETag: "<version>"`. Mutations need `If-Match`; a mismatch returns `412 VERSION_CONFLICT` |
 | Errors | RFC 9457 `application/problem+json`: `{type, title, status, detail, code, instance, request_id, errors?: [{path, code, message}]}` |
 | Request id | `X-Request-Id` is accepted or generated, and echoed in the response and the logs |
-| Rate limits | Login: 5 failures / 15 min per (username, IP) → `429 RATE_LIMITED`. Global: 20 req/s per session, token bucket with burst 40 (`DELPHI_RATE_LIMIT_PER_S`, `DELPHI_RATE_LIMIT_BURST`) → `429 RATE_LIMITED` with `Retry-After`. Every `/api/` request takes a token except `/health` and `/ready`; a caller without a session is keyed by its client address. The SSE stream is one request. In process memory, like the login throttle (one api replica) |
+| Rate limits | Login: 5 failures / 15 min per (username, IP) → `429 RATE_LIMITED`. Global: 20 req/s per session, token bucket with burst 40 (`DELPHI_RATE_LIMIT_PER_S`, `DELPHI_RATE_LIMIT_BURST`) → `429 RATE_LIMITED` with `Retry-After`. Every `/api/` request takes a token except `/health` and `/ready`; a caller without a session is keyed by its client address. Every request also takes a token from its client address's own bucket, 100 req/s with burst 200 (`DELPHI_RATE_LIMIT_ADDRESS_PER_S`, `DELPHI_RATE_LIMIT_ADDRESS_BURST`), so sending a new session cookie each time does not escape the limit; and `POST /auth/login` takes one from the address's sign-in bucket, 1/s with burst 10 (`DELPHI_LOGIN_RATE_PER_S`, `DELPHI_LOGIN_RATE_BURST`), since each attempt costs an Argon2 hash (#127). The SSE stream is one request. In process memory, like the login throttle (one api replica) |
 
 ### Error codes (stable)
 
@@ -98,10 +99,11 @@ monitor's "OTP would pass" line). Risks are whole paise; probabilities have 6 de
 
 **M4 stub (#97):** `GET /cases` and `GET /cases/{id}` are served; the other case routes come with
 #103. The list filters `status`, `type` and `protocol` and sorts by `sla_due_at` (soonest first)
-or `opened_at` (newest first); `campaign_id`, `sla_breached` filters and the `expected_loss` sort
-come with campaigns and the console. A cursor is tied to its sort order. `CaseView` holds the
+or `opened_at` (newest first), and by `expected_loss` (largest first, #208: the recommended
+decision's risk; a case stored without one sorts last); `campaign_id` and `sla_breached` filters
+come with campaigns. A cursor is tied to its sort order. `CaseView` holds the
 opening fields (posterior, prior components, leading hypothesis, amount, SLA and `sla_breached`,
-`version` with `ETag`); `recommended_decision` and `risk_by_decision` are null until #103.
+`version` with `ETag`); `recommended_decision` and `risk_by_decision` are stored when the case opens and after each evidence record, and again at disposition (#208).
 
 ### Chase
 
@@ -153,7 +155,7 @@ opening fields (posterior, prior components, leading hypothesis, amount, SLA and
 | GET `/learning/trace-analytics` | `view` | |
 | POST `/evaluations` | `admin` | `{dataset_id, policies: ["B1","B2","DELPHI"], seed}` → job |
 | GET `/evaluations`, `/evaluations/{id}` | `view` | metrics with CIs |
-| GET `/metrics/summary` | `view` | live KPIs (doc 22 §7) |
+| GET `/metrics/summary` | `view` | live KPIs (doc 22 §7) over `?hours=` (1–720, default 24): `{window_hours, as_of, guardian: {decided, decisions, median_session_seconds, active_probes_per_session, info_yield_bits, held, label_coverage_held, dd_pack_completeness}, cases: {open_cases, open_by_protocol, sla_breaches, disposed, median_hold_resolution_minutes}, golden_hour_ratio, alerts: [{code, message, count}], alerts_not_tracked}`. A figure with nothing to count is null. The open queue and the alerts are as of now |
 
 ### Admin and jobs
 

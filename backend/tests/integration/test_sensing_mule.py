@@ -7,7 +7,6 @@ and the observed labels only.
 
 from __future__ import annotations
 
-import os
 from collections.abc import Callable
 from datetime import UTC, datetime
 from uuid import uuid4
@@ -123,9 +122,7 @@ def test_the_loaded_splits_train_a_reported_model(
     assert model.report["train"]["mules"] == int(data.train.labels.sum())
 
 
-@pytest.mark.skipif(
-    os.environ.get("DELPHI_RUN_SLOW") != "1", reason="slow: set DELPHI_RUN_SLOW=1 to run"
-)
+@pytest.mark.slow  # the nightly runs `-m slow`; conftest skips it without DELPHI_RUN_SLOW=1
 def test_the_eval_profile_passes_the_gate(
     create_database: Callable[[], str], kb: KnowledgeBase
 ) -> None:

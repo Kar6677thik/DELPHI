@@ -56,6 +56,7 @@ from delphi.navigator.api import (
     record_client_traces,
     request_evidence,
     request_simulated_outreach,
+    sort_value,
     vulnerable_payer,
 )
 from delphi.platform.errors import DelphiError, NotFoundError, ProblemCode
@@ -160,8 +161,9 @@ def _platform(request: Request) -> Platform:
 
 
 def _encode_cursor(sort: CaseSort, record: CaseRecord) -> str:
-    at = record.sla_due_at if sort is CaseSort.SLA_DUE_AT else record.opened_at
-    raw = json.dumps({"s": sort.value, "at": at.isoformat(), "id": str(record.id)})
+    value = sort_value(sort, record)
+    at = value.isoformat() if isinstance(value, datetime) else value
+    raw = json.dumps({"s": sort.value, "at": at, "id": str(record.id)})
     return base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
 
 
@@ -170,6 +172,11 @@ def _decode_cursor(cursor: str, sort: CaseSort) -> CaseCursor:
         raw = json.loads(base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)))
         if raw["s"] != sort.value:
             raise ValueError("the cursor belongs to another sort order")
+        if sort is CaseSort.EXPECTED_LOSS:  # a number (#208)
+            value = raw["at"]
+            if isinstance(value, bool) or not isinstance(value, int | float):
+                raise ValueError("the cursor's expected loss is not a number")
+            return CaseCursor(float(value), UUID(raw["id"]))
         at = datetime.fromisoformat(raw["at"])
         if at.tzinfo is None:
             raise ValueError("the cursor's time has no zone")
@@ -190,7 +197,8 @@ def read_cases(
     limit: Annotated[int, Query(ge=1, le=MAX_LIMIT)] = DEFAULT_LIMIT,
     cursor: Annotated[str | None, Query()] = None,
 ) -> CasePage:
-    """The case queue: soonest SLA first (``sort=sla_due_at``), or newest first."""
+    """The case queue: soonest SLA first (``sort=sla_due_at``), the largest expected loss first
+    (``expected_loss``, #208), or newest first (``opened_at``)."""
     after = _decode_cursor(cursor, sort) if cursor else None
     platform = _platform(request)
     with platform.sessions() as session:
@@ -397,11 +405,16 @@ def read_case(
     return detail
 
 
+# A KB key (a decision, typology, source or outcome): bounded, so a request cannot carry an
+# arbitrarily long string into the audit log and the problem detail (#127).
+KbKey = Annotated[str, Field(min_length=1, max_length=64)]
+
+
 class DispositionRequest(BaseModel):
     """docs/16: `{decision, typology?, confidence (1–5), note?, override_rationale?}`."""
 
-    decision: str
-    typology: str | None = None
+    decision: KbKey
+    typology: KbKey | None = None
     confidence: int = Field(ge=1, le=5)
     note: str | None = Field(default=None, max_length=2000)
     override_rationale: str | None = Field(default=None, max_length=2000)
@@ -466,9 +479,9 @@ class EvidenceRequest(BaseModel):
     """docs/16: `{source_key, refresh?}`; `CUSTOMER_OUTREACH_CALL` also takes the investigator's
     recorded `outcome` and a `note` (docs/09 §3)."""
 
-    source_key: str
+    source_key: KbKey
     refresh: bool = False
-    outcome: str | None = None
+    outcome: KbKey | None = None
     note: str | None = Field(default=None, max_length=2000)
     # docs/09 §3: in simulation/autoplay the worker places the outreach call (202).
     simulate: bool = False

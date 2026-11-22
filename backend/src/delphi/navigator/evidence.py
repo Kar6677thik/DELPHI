@@ -36,7 +36,7 @@ from delphi.engine.belief import update as bayes_update
 from delphi.engine.types import CompiledProfile
 from delphi.kb.model import UNEXPLAINED, KnowledgeBase
 from delphi.kb.store import get_version
-from delphi.navigator.console import belief_vector, case_profile, console
+from delphi.navigator.console import belief_vector, case_profile, console, recommend
 from delphi.navigator.disposition import vulnerable_payer
 from delphi.navigator.evidence_adapters import ADAPTERS, EvidenceSubject
 from delphi.navigator.store import CaseRecord, CaseStatus, get_case
@@ -321,12 +321,20 @@ def request_evidence(
         params={"evidence_record_id": str(record_id)},
     )
     order = [h for h in names if h != UNEXPLAINED] + [UNEXPLAINED]
+    advice = recommend(  # #208: the queue's recommendation follows the posterior
+        profile,
+        posterior_after,
+        amount_paise=case.amount_at_stake_paise,
+        vulnerable=vulnerable_payer(session, case),
+    )
     session.execute(
         update(cases)
         .where(cases.c.id == case_id)
         .values(
             posterior=posterior_after,
             leading_hypothesis=_leading(posterior_after, [h for h in order if h in names]),
+            recommended_decision=advice.decision,
+            risk_by_decision=dict(advice.risk_by_decision),
             status=CaseStatus.IN_PROGRESS.value,
             version=case.version + 1,
         )

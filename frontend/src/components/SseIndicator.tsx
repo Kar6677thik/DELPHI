@@ -7,16 +7,20 @@ const LABEL: Record<StreamStatus, string> = {
 };
 
 const DOT: Record<StreamStatus, string> = {
-  connecting: 'bg-slate-400',
-  connected: 'bg-emerald-600',
-  reconnecting: 'bg-amber-500',
+  connecting: 'bg-muted',
+  connected: 'bg-positive',
+  reconnecting: 'bg-warning',
 };
 
 /** The live-updates state in the header (docs/18 §4). The text carries it, not the colour. */
 export function SseIndicator({ status }: { status: StreamStatus }) {
   return (
-    <span role="status" aria-live="polite" className="flex items-center gap-2 text-sm">
-      <span aria-hidden="true" className={`size-2.5 rounded-full ${DOT[status]}`} />
+    <span
+      role="status"
+      aria-live="polite"
+      className="flex items-center gap-2 text-[13px] text-muted"
+    >
+      <span aria-hidden="true" className={`size-1.5 rounded-full ${DOT[status]}`} />
       <span>
         <span className="sr-only">Live updates: </span>
         {LABEL[status]}

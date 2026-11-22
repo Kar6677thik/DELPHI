@@ -24,6 +24,9 @@ _REPO_DIR = _BACKEND_DIR.parent
 _POSTGRES_SCHEMES = ("postgresql://", "postgresql+psycopg://")
 
 Port = Annotated[int, Field(ge=1, le=65535)]
+MIN_SECRET_KEY_LENGTH = 32
+# dev and test only: a fixed, public key, so local runs need no secret. Never used in `demo`.
+_DEVELOPMENT_SECRET_KEY = b"delphi-development-only-not-a-secret"
 
 
 class Environment(StrEnum):
@@ -96,6 +99,14 @@ class Settings(BaseSettings):
     # The global API rate limit: a token bucket per session (or address), docs/16 §1.
     rate_limit_per_s: float = Field(default=20.0, gt=0, le=10_000)
     rate_limit_burst: int = Field(default=40, ge=1, le=100_000)
+    # Every request also takes a token from its client address's bucket, session or not, so a
+    # caller cannot escape the limit by sending a new session cookie each time (#127). Higher
+    # than the per-session limit, so several people behind one address are not throttled.
+    rate_limit_address_per_s: float = Field(default=100.0, gt=0, le=10_000)
+    rate_limit_address_burst: int = Field(default=200, ge=1, le=100_000)
+    # Sign-in attempts per client address: each one costs an Argon2 hash (64 MiB), docs/19 §2.
+    login_rate_per_s: float = Field(default=1.0, gt=0, le=1_000)
+    login_rate_burst: int = Field(default=10, ge=1, le=10_000)
     # The public origin (scheme://host) mutating requests must come from (CSRF, docs/19 §4).
     # Unset in development: the request's own origin is used.
     public_origin: str | None = None
@@ -113,6 +124,10 @@ class Settings(BaseSettings):
     # The first ADMIN, created on start when no user exists (docs/19 §2, FR-PLT-03).
     bootstrap_admin_username: str | None = None
     bootstrap_admin_password: SecretStr | None = None
+    # The api's server secret (docs/19 §5): it keys the Guardian's OTP digest (HMAC-SHA256,
+    # docs/08 §4), so reading `probe_runs` reveals no live code (#171). Secret `delphi-app`,
+    # api only. Generate with `openssl rand -hex 32`.
+    secret_key: SecretStr | None = Field(default=None, min_length=MIN_SECRET_KEY_LENGTH)
     # Retention (docs/17 §6).
     outbox_retention_h: int = Field(default=24, ge=1, le=24 * 30)
     idempotency_retention_h: int = Field(default=24, ge=1, le=24 * 30)
@@ -159,6 +174,17 @@ class Settings(BaseSettings):
     @property
     def idempotency_retention(self) -> timedelta:
         return timedelta(hours=self.idempotency_retention_h)
+
+    @property
+    def otp_key(self) -> bytes:
+        """The key for the OTP digest. ``demo`` must set ``DELPHI_SECRET_KEY``; dev and test fall
+        back to a fixed development key. Read only where the Guardian is built, so a process
+        that runs no Guardian starts without it."""
+        if self.secret_key is not None:
+            return self.secret_key.get_secret_value().encode()
+        if self.env is Environment.DEMO:
+            raise SettingsError("invalid configuration:\n  DELPHI_SECRET_KEY: required in demo")
+        return _DEVELOPMENT_SECRET_KEY
 
     @property
     def effective_migrate_url(self) -> str:
