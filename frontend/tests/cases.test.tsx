@@ -77,6 +77,26 @@ describe('case queue', () => {
   });
 });
 
+describe('queue order (docs/18 §2)', () => {
+  it('re-sorts on request, soonest SLA first by default', async () => {
+    setMockSession('viewer');
+    const sorts: (string | null)[] = [];
+    server.use(
+      http.get('/api/v1/cases', ({ request }) => {
+        sorts.push(new URL(request.url).searchParams.get('sort'));
+        return HttpResponse.json({ items: [mockCase()], next_cursor: null });
+      }),
+    );
+    const { user } = renderApp('/cases');
+    expect(
+      await screen.findByRole('table', { name: 'Cases, soonest SLA first' }),
+    ).toBeInTheDocument();
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Order' }), 'Newest');
+    expect(await screen.findByRole('table', { name: 'Cases, newest first' })).toBeInTheDocument();
+    expect(sorts).toEqual(['sla_due_at', 'opened_at']);
+  });
+});
+
 describe('slaLabel', () => {
   const now = Date.parse('2026-11-14T10:00:00Z');
 
