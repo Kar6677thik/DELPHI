@@ -62,6 +62,9 @@ def test_a_fetch_classifies_updates_the_posterior_and_records_it(
     stored = get_case(env.sessions(), case.id)
     assert stored is not None
     assert stored.posterior == pytest.approx(card["posterior_after"], abs=1e-6)
+    # #208: the stored recommendation follows the posterior, as the console shows it
+    assert stored.recommended_decision == view["recommended_decision"]
+    assert stored.risk_by_decision == pytest.approx(view["risk_by_decision"], abs=1)
     assert _count(env, select(func.count()).where(audit_log.c.action == "evidence.recorded")) == 1
     assert (
         _count(

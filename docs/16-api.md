@@ -98,10 +98,11 @@ monitor's "OTP would pass" line). Risks are whole paise; probabilities have 6 de
 
 **M4 stub (#97):** `GET /cases` and `GET /cases/{id}` are served; the other case routes come with
 #103. The list filters `status`, `type` and `protocol` and sorts by `sla_due_at` (soonest first)
-or `opened_at` (newest first); `campaign_id`, `sla_breached` filters and the `expected_loss` sort
-come with campaigns and the console. A cursor is tied to its sort order. `CaseView` holds the
+or `opened_at` (newest first), and by `expected_loss` (largest first, #208: the recommended
+decision's risk; a case stored without one sorts last); `campaign_id` and `sla_breached` filters
+come with campaigns. A cursor is tied to its sort order. `CaseView` holds the
 opening fields (posterior, prior components, leading hypothesis, amount, SLA and `sla_breached`,
-`version` with `ETag`); `recommended_decision` and `risk_by_decision` are null until #103.
+`version` with `ETag`); `recommended_decision` and `risk_by_decision` are stored when the case opens and after each evidence record, and again at disposition (#208).
 
 ### Chase
 
