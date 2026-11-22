@@ -29,9 +29,7 @@ from delphi.api.security import Permission, Principal, require
 from delphi.kb.model import UNEXPLAINED
 from delphi.kb.store import get_version
 from delphi.navigator.api import (
-    OUTREACH as OUTREACH_SOURCE,
-)
-from delphi.navigator.api import (
+    MAX_TRACE_BATCH,
     AlertAction,
     AlertStatus,
     CaseCursor,
@@ -58,6 +56,9 @@ from delphi.navigator.api import (
     request_simulated_outreach,
     sort_value,
     vulnerable_payer,
+)
+from delphi.navigator.api import (
+    OUTREACH as OUTREACH_SOURCE,
 )
 from delphi.platform.errors import DelphiError, NotFoundError, ProblemCode
 from delphi.platform.wiring import Platform
@@ -574,10 +575,6 @@ def act_on_police_alert(
         assert acted is not None
         response.headers["ETag"] = f'"{acted.version}"'  # a mutable aggregate carries its ETag
         return _detail(session, acted, platform.clock.now())
-
-
-# A console sends at most one batch per 5 s (docs/09 §5); this bounds one batch.
-MAX_TRACE_BATCH = 100
 
 
 class TracePayload(BaseModel):

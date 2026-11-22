@@ -38,6 +38,10 @@ class TraceType(StrEnum):
     DD_PACK_VIEWED = "DD_PACK_VIEWED"
 
 
+# The most events one `POST /cases/{id}/trace-events` may carry. A console sends at most one
+# batch per 5 s (docs/09 §5), so a real batch holds a handful of views.
+MAX_TRACE_BATCH = 100
+
 # What the console may send: views only. The actions are written by the server.
 CLIENT_TYPES = frozenset(
     {

@@ -49,6 +49,7 @@ from delphi.navigator.store import (
 )
 from delphi.navigator.traces import (
     CLIENT_TYPES,
+    MAX_TRACE_BATCH,
     ClientTrace,
     TraceType,
     list_traces,
@@ -58,6 +59,7 @@ from delphi.navigator.traces import (
 __all__ = [
     "CLIENT_TYPES",
     "HOLD_DECISIONS",
+    "MAX_TRACE_BATCH",
     "OUTREACH",
     "AlertAction",
     "AlertStatus",
