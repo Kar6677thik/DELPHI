@@ -92,7 +92,7 @@ from delphi.probes.api import (
     run_passive_probes,
     serve_question,
 )
-from delphi.sensing.api import with_payer_mule
+from delphi.sensing.api import PriorInputs, with_payer_mule
 from delphi.sim import api as bank
 
 PROFILE = "GUARDIAN_PAYMENT"
@@ -105,18 +105,9 @@ GENUINE = "GENUINE"
 log = get_logger(__name__)
 
 
-@dataclass(frozen=True, slots=True)
-class PriorInputs:
-    """What the sensing layer says about a payment (docs/13 §1)."""
-
-    p_payment: Mapping[str, float]  # the payment model's classes (no MULE, docs/13 §4)
-    anomaly_percentile: float  # q
-    p_mule_payer: float | None  # the payer account's mule score; None without a scorer
-    top_features: tuple[Mapping[str, Any], ...] = ()
-
-
 class PriorPort(Protocol):
-    """The sensing inference (#92). Reads only data from before the payment's initiation."""
+    """The sensing inference (``delphi.sensing.api.SensingInference``, #92). Reads only data
+    from before the payment's initiation."""
 
     def prior_inputs(self, payment: bank.PaymentView) -> PriorInputs: ...
 
