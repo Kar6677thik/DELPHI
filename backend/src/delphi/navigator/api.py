@@ -14,6 +14,9 @@ from delphi.navigator.console import (
     console,
     recommend,
 )
+from delphi.navigator.ddpack import GuardianTrail, InheritedTrail
+from delphi.navigator.ddpack import build as build_case_dd_pack
+from delphi.navigator.ddpack import refresh_complete as refresh_dd_pack_complete
 from delphi.navigator.disposition import Disposition, dispose, vulnerable_payer
 from delphi.navigator.evidence import (
     OUTREACH,
@@ -64,9 +67,12 @@ __all__ = [
     "Disposition",
     "EvidenceRecord",
     "EvidenceRow",
+    "GuardianTrail",
+    "InheritedTrail",
     "PoliceAlert",
     "Recommendation",
     "act_on_alert",
+    "build_case_dd_pack",
     "case_kpis",
     "case_profile",
     "console",
@@ -79,6 +85,7 @@ __all__ = [
     "open_case",
     "open_case_for_payment",
     "recommend",
+    "refresh_dd_pack_complete",
     "request_evidence",
     "request_simulated_outreach",
     "sort_value",

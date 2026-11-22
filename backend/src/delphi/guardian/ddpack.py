@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 from delphi.guardian.views import SessionRow, get_session_row, probe_run_rows
 from delphi.kb.store import get_version
 from delphi.llm.minimise import pseudonym
+from delphi.navigator.api import InheritedTrail
 from delphi.platform.audit import verify_entity
 from delphi.platform.ddpack import (
     NOT_APPLICABLE,
@@ -241,4 +242,22 @@ def _build(session: Session, row: SessionRow) -> DdPack:
     )
 
 
-__all__ = ["NOT_APPLICABLE", "DdPack", "Section", "build", "render_html"]
+def case_trail(session: Session, session_id: UUID) -> InheritedTrail | None:
+    """What a case opened by this session inherits for its own DD pack (docs/09 §7): the
+    session pack's prior, observations, guardrails and audit check (sections 2, 3, 4 and 8).
+    None when there is no such session."""
+    row = get_session_row(session, session_id)
+    if row is None:
+        return None
+    by_number = {section.number: section for section in _build(session, row).sections}
+    timeline = by_number[3].content
+    return InheritedTrail(
+        prior=by_number[2].content,
+        timeline=timeline if isinstance(timeline, list) else [],
+        guardrails=by_number[4].content,
+        audit=by_number[8].content,
+        audit_note=by_number[8].note,
+    )
+
+
+__all__ = ["NOT_APPLICABLE", "DdPack", "Section", "build", "case_trail", "render_html"]
