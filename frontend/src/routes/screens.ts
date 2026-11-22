@@ -22,7 +22,7 @@ export const SCREENS: readonly Screen[] = [
   { path: '/chase/:id', title: 'Chase', permission: 'view' },
   { path: '/scout', title: 'Typology Scout', permission: 'view', nav: 'Scout' },
   { path: '/scout/drafts/:id', title: 'Typology draft editor', permission: 'view' },
-  { path: '/kb', title: 'KB versions', permission: 'view', nav: 'KB' },
+  { path: '/kb', title: 'Knowledge base', permission: 'view', nav: 'KB' },
   { path: '/kb/questions', title: 'Question bank review', permission: 'view' },
   { path: '/learning', title: 'Learning', permission: 'view', nav: 'Learning' },
   { path: '/evaluation', title: 'Evaluation', permission: 'view', nav: 'Evaluation' },
