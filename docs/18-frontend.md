@@ -49,9 +49,9 @@ and error states. `case.opened` and `case.updated` invalidate the `['cases']` qu
 campaign arrive with the console and campaigns (#103, M5).
 
 **M5 case queue and Navigator console (#105):** `/cases` gains an order control (soonest SLA or
-newest, `GET /cases?sort=`). The expected-loss column waits for the backend to store an open
-case's recommendation and risks (today they are stored only at disposition, so an open case's
-row has neither); the campaign column arrives with campaigns (#107). The console does not show
+newest, `GET /cases?sort=`). The expected-loss column can now be filled: the backend stores an
+open case's recommendation and risks from the moment it opens (#208), and `GET /cases` sorts by
+`expected_loss`; the campaign column arrives with campaigns (#107). The console does not show
 the police alert yet (its own issue). `/cases/:id` follows doc 09 §2 from `GET /cases/{id}`:
 - the posterior `HypothesisBar` and the `RiskTable`;
 - the "Evidence sufficient — recommend {decision} (expected loss ₹X)" banner while
