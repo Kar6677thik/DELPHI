@@ -167,6 +167,7 @@ def test_a_batch_with_any_bad_event_is_refused_whole(
         [{"type": "SOMETHING", "at": at}],
         [{"type": "CASE_VIEWED", "at": at, "payload": {"note": "free text"}}],
         [],
+        [{"type": "CASE_VIEWED", "at": "2026-11-22T10:00:00"}],  # no time zone
     ):
         assert _post(client, case.id, events).status_code == 422
     assert _post(client, uuid4(), [ok]).status_code == 404

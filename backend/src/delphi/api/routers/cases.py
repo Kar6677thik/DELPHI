@@ -20,7 +20,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Query, Request, Response
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import AwareDatetime, BaseModel, Field
 from sqlalchemy.orm import Session
 
 from delphi.api.idempotency import IdempotencyKey, RawBody, run_idempotent
@@ -594,7 +594,7 @@ class TraceEventIn(BaseModel):
 
     type: TraceType
     payload: TracePayload = Field(default_factory=TracePayload)
-    at: datetime
+    at: AwareDatetime  # docs/16: times are UTC (ADR-0014); a zone-less time is a 422
 
 
 class TraceBatch(BaseModel):
