@@ -89,6 +89,8 @@ stable (< 10% growth over the run).
   #83.)
 - E2E passes on PRs to `main`.
 - No high/critical vulnerabilities from pip-audit/pnpm audit/Trivy without a documented waiver
-  in `security/waivers.yaml` (each waiver expires within 30 days).
+  in `security/waivers.yaml` (each waiver expires within 30 days; a Trivy waiver also goes in
+  `.trivyignore`). gitleaks scans the whole history, bandit the backend code, and dependency
+  review the dependencies a PR adds (`ci.yml`, #127).
 - Flaky tests are fixed or quarantined with an issue within 48 h. Retrying until green is not
   allowed (EFG §23 #31).

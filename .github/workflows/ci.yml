@@ -1,6 +1,6 @@
-# CI (docs/23 §3): backend, frontend, contract and e2e jobs. Secret and image scanning arrive
-# with the security review (#127). The commit-policy check is in policy.yml. This workflow never
-# writes to the repository.
+# CI (docs/23 §3): backend, frontend, contract, e2e and the security scanners (docs/19 §5,
+# docs/21 §6, #127). The commit-policy check is in policy.yml. This workflow never writes to the
+# repository.
 name: ci
 
 # Runs once per PR update (not also on the branch push, which doubled every run), and from
@@ -144,3 +144,59 @@ jobs:
       - name: Stop the stack
         if: always()
         run: docker compose down --volumes
+
+  # Secrets in the history, vulnerable Python dependencies and risky Python code (docs/19 §5).
+  # pnpm audit runs in the frontend job. Tools run from images and packages pinned exactly.
+  security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # gitleaks reads every commit
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          working-directory: backend
+      - name: Secrets (gitleaks 8.28.0, the whole history)
+        run: >-
+          docker run --rm --volume "$PWD:/repo"
+          ghcr.io/gitleaks/gitleaks:v8.28.0@sha256:cdbb7c955abce02001a9f6c9f602fb195b7fadc1e812065883f695d1eeaba854
+          git /repo --redact --no-banner --exit-code 1
+      - name: Python dependencies (pip-audit 2.9.0, runtime only)
+        working-directory: backend
+        run: |
+          uv export --frozen --no-dev --no-hashes --no-emit-project > "$RUNNER_TEMP/requirements.txt"
+          uvx pip-audit==2.9.0 --requirement "$RUNNER_TEMP/requirements.txt" --strict --progress-spinner off
+      - name: Python code (bandit 1.8.6, settings in pyproject.toml)
+        working-directory: backend
+        run: uvx bandit[toml]==1.8.6 --configfile pyproject.toml --recursive src --quiet
+
+  # The production image, built but never pushed, scanned for HIGH and CRITICAL vulnerabilities
+  # that have a fix (docs/21 §6). A waiver goes in security/waivers.yaml, then .trivyignore.
+  image-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build the image (not pushed)
+        run: docker build --tag delphi:scan .
+      - name: Scan (Trivy 0.65.0)
+        run: >-
+          docker run --rm --volume /var/run/docker.sock:/var/run/docker.sock
+          --volume "$PWD:/src" --workdir /src
+          aquasec/trivy:0.65.0@sha256:a22415a38938a56c379387a8163fcb0ce38b10ace73e593475d3658d578b2436
+          image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1
+          --ignorefile .trivyignore --no-progress delphi:scan
+
+  # New dependencies a PR adds, checked against the GitHub advisory database.
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/dependency-review-action@bbc44d14a204704ccc493733616cd1e93a0321ec # v5.0.1
+        with:
+          fail-on-severity: high
