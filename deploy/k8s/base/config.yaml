@@ -12,6 +12,10 @@ data:
   DELPHI_CLIENT_IP_HEADER: CF-Connecting-IP
   # The `eval` dataset needs ~3.8 GiB, more than this node can spare (docs/22 §1).
   DELPHI_DATASET_PROFILES: test,demo
+  # The demo runs the simulator's jobs, such as the simulated outreach call (docs/09 §3). Not a
+  # secret: the api reads it to accept a simulated call without ever holding the sim URL, and
+  # the worker (which has that URL) runs them (docs/23 §4.1).
+  DELPHI_SIMULATION_ENABLED: "true"
 ---
 # Run once, on Postgres's first start (empty data directory): create the two LOGIN roles the
 # app uses (docs/17 §2). Passwords come from the container's environment (Secret
