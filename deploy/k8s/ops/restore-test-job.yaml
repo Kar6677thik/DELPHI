@@ -1,0 +1,122 @@
+# The restore drill (docs/23 §8, #128): restore the latest backup into a temporary database,
+# check it with `delphi verify-restore`, then drop it. The live database is never touched.
+#
+# Run as the operator, with __IMAGE__ set to the api's current image (the same release that wrote
+# the data), for example:
+#   IMAGE=$(kubectl -n delphi get deploy delphi-api -o jsonpath='{.spec.template.spec.containers[0].image}')
+#   sed "s|__IMAGE__|$IMAGE|" deploy/k8s/ops/restore-test-job.yaml | kubectl apply -f -
+#   kubectl -n delphi wait --for=condition=complete job/delphi-restore-test --timeout=30m
+#   kubectl -n delphi logs job/delphi-restore-test --all-containers
+#   kubectl -n delphi delete job delphi-restore-test
+#
+# Steps, in order (init containers run one after another; any failure stops the Job):
+# 1. restore (postgres image): drop any earlier delphi_restore_test, create it, pg_restore the
+#    newest dump from the backups PVC into it, and print how long the restore took;
+# 2. verify (DELPHI image): `delphi verify-restore` against delphi_restore_test (migrations at
+#    head, exactly one ACTIVE KB, the audit chain verifies, users exist, row counts);
+# 3. drop (postgres image): drop delphi_restore_test.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: delphi-restore-test
+  namespace: delphi
+  labels: { app.kubernetes.io/name: delphi, app.kubernetes.io/component: restore-test }
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 1800 # the drill's budget: a restore within 30 minutes (NFR-11)
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: delphi
+        app.kubernetes.io/component: restore-test
+        delphi.io/db-client: "true"
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        fsGroup: 999 # the backups PVC is written by the backup CronJob as postgres (999)
+        seccompProfile: { type: RuntimeDefault }
+      initContainers:
+        - name: restore
+          image: postgres:16@sha256:5db6dac2ef5dcff512f4f00a009c3c332b9f2f28f24277175bf3e4a3d02ef83a
+          envFrom:
+            - secretRef: { name: delphi-postgres }
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              export PGPASSWORD="$POSTGRES_PASSWORD"
+              db="-h delphi-postgres -p 5432 -U ${POSTGRES_USER:-postgres}"
+              # A new pod's NetworkPolicy rules arrive a few seconds after it starts (#181).
+              for i in $(seq 1 30); do pg_isready $db -d postgres -t 2 && break; sleep 2; done
+              dump=$(ls -1t /backups/delphi-*.dump | head -n 1)
+              echo "restoring $(basename "$dump") ($(du -h "$dump" | cut -f1))"
+              start=$(date +%s)
+              psql $db -d postgres -v ON_ERROR_STOP=1 -c 'DROP DATABASE IF EXISTS delphi_restore_test' \
+                -c 'CREATE DATABASE delphi_restore_test'
+              pg_restore $db -d delphi_restore_test --exit-on-error "$dump"
+              echo "restore took $(( $(date +%s) - start )) s"
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { cpu: "1", memory: 512Mi }
+          securityContext:
+            runAsUser: 999
+            runAsGroup: 999
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: backups, mountPath: /backups, readOnly: true }
+            - { name: tmp, mountPath: /tmp }
+        - name: verify
+          image: __IMAGE__
+          envFrom:
+            - configMapRef: { name: delphi-config }
+            - secretRef: { name: delphi-postgres }
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              export DELPHI_DATABASE_URL="postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@delphi-postgres:5432/delphi_restore_test"
+              exec delphi verify-restore
+          resources:
+            requests: { cpu: 50m, memory: 256Mi }
+            limits: { cpu: "1", memory: 768Mi }
+          securityContext:
+            runAsUser: 10001
+            runAsGroup: 10001
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      containers:
+        - name: drop
+          image: postgres:16@sha256:5db6dac2ef5dcff512f4f00a009c3c332b9f2f28f24277175bf3e4a3d02ef83a
+          envFrom:
+            - secretRef: { name: delphi-postgres }
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              export PGPASSWORD="$POSTGRES_PASSWORD"
+              psql -h delphi-postgres -p 5432 -U "${POSTGRES_USER:-postgres}" -d postgres \
+                -v ON_ERROR_STOP=1 -c 'DROP DATABASE delphi_restore_test'
+              echo "dropped delphi_restore_test"
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { cpu: 200m, memory: 128Mi }
+          securityContext:
+            runAsUser: 999
+            runAsGroup: 999
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: backups
+          persistentVolumeClaim: { claimName: delphi-backups, readOnly: true }
+        - { name: tmp, emptyDir: { sizeLimit: 64Mi } }

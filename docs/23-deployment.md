@@ -400,10 +400,14 @@ and the run summary shows its digest.
 - **The backups live on the same disk as the database**, so they protect against mistakes, not
   against losing the disk. An off-host copy is the owner's decision (not in scope).
 - **Restore drill** (M9, then monthly), to prove backups work (EFG §34):
-  1. As the operator, apply `deploy/k8s/ops/restore-test-job.yaml`. The Job restores the latest
-     dump into a temporary database `delphi_restore_test`.
-  2. A second container runs `verify-restore`, which checks table counts, that exactly one
-     ACTIVE KB exists, and that the audit chain verifies. Then it drops the database.
+  1. As the operator, apply `deploy/k8s/ops/restore-test-job.yaml` with `__IMAGE__` set to the
+     api's current image (the file's header has the commands). The Job restores the latest dump
+     into a temporary database `delphi_restore_test`, and prints how long the restore took.
+  2. A second container runs `delphi verify-restore`. It checks that the migrations are at
+     head, that exactly one ACTIVE KB exists, that the audit chain verifies and that there are
+     users, and it prints every table's row count as one JSON line. Then a third container drops
+     the database. A failed check stops the Job, which leaves the database for inspection; the
+     next run drops it first.
   3. Record the result in `docs/reports/restore-drill-<date>.md`.
 - **Disaster recovery:** re-run the bootstrap (§6) on a new node, then restore the latest dump
   instead of seeding. `delphi seed --if-empty` skips a non-empty database.
