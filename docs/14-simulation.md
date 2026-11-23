@@ -574,6 +574,12 @@ payment.
 golden hour, SLA timers) is multiplied by `demo_time_scale` = 1/30. The UI shows durations in
 "sim minutes" = real seconds × 30 / 60.
 
+
+**Bounded delivery** (2026-11-22 incident): `LABEL_DELIVERY` delivers at most 50 batches of 1,000
+labels per run, one transaction per batch, with `statement_timeout` 30 s and `work_mem` 16 MB. A
+run that finds another holding the delivery lock skips. A backlog (a fresh seed, or labels due
+while the worker was down) is cleared over several runs.
+
 ## 9. Simulated external systems
 
 | System | Behaviour |
