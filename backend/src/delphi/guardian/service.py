@@ -30,18 +30,14 @@ from sqlalchemy import Connection, distinct, func, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from delphi.engine.belief import kl_bits
-from delphi.engine.belief import update as bayes_update
 from delphi.engine.compile import compile_profile
 from delphi.engine.exploration import session_seed
 from delphi.engine.planner import (
     SessionFacts,
-    initial_budgets,
-    plan_next,
     static_ineligibility,
 )
-from delphi.engine.prior import build_prior, is_fast_path, open_mass
-from delphi.engine.risk import decide, loss_matrix, risk_by_decision, voi_myopic
-from delphi.engine.types import CompiledProfile, Phase, PlanResult, StopReason
+from delphi.engine.risk import loss_matrix, risk_by_decision, voi_myopic
+from delphi.engine.types import CompiledProfile, Phase, PlanResult
 from delphi.guardian import ddpack
 from delphi.guardian.active import (
     STEP_UPS,
@@ -57,6 +53,15 @@ from delphi.guardian.active import (
     response_latency_s,
     timed_out_observation,
     ui_for,
+)
+from delphi.guardian.procedure import (
+    PriorInputs,
+    final_decision,
+    observe,
+    plan_step,
+    session_prior,
+    stop_reason,
+    takes_fast_path,
 )
 from delphi.guardian.store import (
     GuardianSessionRecord,
@@ -92,7 +97,6 @@ from delphi.probes.api import (
     run_passive_probes,
     serve_question,
 )
-from delphi.sensing.api import with_payer_mule
 from delphi.sim import api as bank
 
 PROFILE = "GUARDIAN_PAYMENT"
@@ -103,16 +107,6 @@ DONE = frozenset({SessionStatus.DECIDED, SessionStatus.CANCELLED_BY_CUSTOMER})
 GENUINE = "GENUINE"
 
 log = get_logger(__name__)
-
-
-@dataclass(frozen=True, slots=True)
-class PriorInputs:
-    """What the sensing layer says about a payment (docs/13 §1)."""
-
-    p_payment: Mapping[str, float]  # the payment model's classes (no MULE, docs/13 §4)
-    anomaly_percentile: float  # q
-    p_mule_payer: float | None  # the payer account's mule score; None without a scorer
-    top_features: tuple[Mapping[str, Any], ...] = ()
 
 
 class PriorPort(Protocol):
@@ -258,13 +252,9 @@ class GuardianService:
 
     def _build_prior(self, s: Session, ctx: _Context) -> GuardianSessionRecord:
         inputs = self._prior.prior_inputs(ctx.payment)
-        p_model = with_payer_mule(inputs.p_payment, inputs.p_mule_payer)
-        q = float(inputs.anomaly_percentile)
         profile = ctx.profile
-        prior = build_prior(profile, p_model, q)
-        u = open_mass(q, profile.open_mass_base, profile.open_mass_slope)
-        kb_only = [h for h in profile.hypotheses if h not in p_model and h != UNEXPLAINED]
-        shares = {h: profile.open_mass_shares.get(h, 0.0) for h in kb_only}
+        built = session_prior(profile, inputs)
+        prior = built.prior
         risks = risk_by_decision(prior, ctx.losses())
         prior_probs = ctx.as_dict(prior)
         # B1/B2's verdicts for the monitor (docs/08 §6, FR-GDN-12): B2 from this same prior.
@@ -279,23 +269,15 @@ class GuardianService:
             ctx.record,
             baseline_decisions=baselines,
             prior=prior_probs,
-            p_model=dict(p_model),
-            anomaly_percentile=q,
-            open_mass=u,
-            open_mass_shares=shares,
+            p_model=built.p_model,
+            anomaly_percentile=built.anomaly_percentile,
+            open_mass=built.open_mass,
+            open_mass_shares=built.open_mass_shares,
             top_features=[dict(f) for f in inputs.top_features],
             posterior=ctx.as_dict(prior),
             risk_by_decision=_risks(profile, risks),
         )
-        fast = ctx.version.kb.config.engine.fast_path
-        if is_fast_path(
-            float(p_model.get(GENUINE, 0.0)),
-            float(ctx.payment.amount_paise),
-            q,
-            min_p_genuine=fast.min_p_genuine,
-            max_amount_inr=fast.max_amount_inr,
-            max_anomaly_percentile=fast.max_anomaly_percentile,
-        ):
+        if takes_fast_path(ctx.version.kb, built, ctx.payment.amount_paise):
             return self._decide(s, self._load(s, ctx.record.id), prior, TerminalReason.FAST_PATH)
         return _reload(s, ctx.record.id)
 
@@ -366,7 +348,7 @@ class GuardianService:
                     "completed_at": self._clock.now(),
                 }
                 if result.status is PassiveStatus.OK and result.outcome is not None:
-                    after = bayes_update(belief, src.likelihood[src.outcomes.index(result.outcome)])
+                    after = observe(ctx.profile, belief, src.key, result.outcome)
                     values |= {
                         "status": ProbeRunStatus.COMPLETED.value,
                         "outcome": result.outcome,
@@ -431,28 +413,19 @@ class GuardianService:
             runs = list_probe_runs(s, session_id)
             ran = tuple(r.probe_key for r in runs)
             active = sum(1 for r in runs if r.mode is ProbeMode.ACTIVE)
-            plan = plan_next(
+            plan = plan_step(
                 ctx.profile,
                 ctx.belief,
-                amount_paise=float(ctx.payment.amount_paise),
+                amount_paise=ctx.payment.amount_paise,
                 vulnerable=ctx.vulnerable,
-                phase=Phase.GUARDIAN_ACTIVE,
-                observed=frozenset(ran),
                 facts=self._facts(s, ctx),
-                budgets=initial_budgets(ctx.profile, ran),
-                # One stream per planning step, derived from the session's seed (docs/06 §10),
-                # so a resumed or replayed session draws the same numbers.
-                rng=(
-                    np.random.default_rng([ctx.record.rng_seed, active]) if self._explore else None
-                ),
+                ran=ran,
+                active=active,
+                rng_seed=ctx.record.rng_seed,
+                explore=self._explore,
             )
             if plan.is_stop:
-                reason = (
-                    TerminalReason.STOP
-                    if plan.stop_reason is StopReason.NO_POSITIVE_VALUE
-                    else TerminalReason.BUDGET_EXHAUSTED
-                )
-                decided = self._decide(s, ctx, ctx.belief, reason, plan=plan)
+                decided = self._decide(s, ctx, ctx.belief, stop_reason(plan), plan=plan)
                 outcome.append(Decided(decided))
                 return decided
             src = ctx.profile.sources[plan.action]
@@ -707,9 +680,8 @@ class GuardianService:
         raw: Mapping[str, Any],
         outcome: str,
     ) -> GuardianSessionRecord:
-        src = ctx.profile.sources[_run_key(s, probe_run_id)]
         before = ctx.belief
-        after = bayes_update(before, src.likelihood[src.outcomes.index(outcome)])
+        after = observe(ctx.profile, before, _run_key(s, probe_run_id), outcome)
         s.execute(
             update(probe_runs)
             .where(probe_runs.c.id == probe_run_id)
@@ -779,11 +751,13 @@ class GuardianService:
         """Step 9: d*(posterior) (or the fail-safe's decision), the payment's status, a case for
         a hold, the Scout flag, the audit entry and the event."""
         kb = ctx.version.kb
+        risks: dict[str, float] | None
         if decision is None:
-            idx, _ = decide(belief, ctx.losses())
-            decision = ctx.profile.decisions[idx]
-            risks: dict[str, float] | None = _risks(
-                ctx.profile, risk_by_decision(belief, ctx.losses())
+            decision, risks = final_decision(
+                ctx.profile,
+                belief,
+                amount_paise=ctx.payment.amount_paise,
+                vulnerable=ctx.vulnerable,
             )
         else:
             risks = ctx.stored_risks
