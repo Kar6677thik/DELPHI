@@ -77,6 +77,24 @@ changed (status, leading hypothesis, recommendation, evidence count, disposition
 form until "Reload". `evidence.narrative_ready` invalidates the `['cases']` queries, like
 `case.*`.
 
+**Console view events and the DD pack page (#264):** the console sends the investigator's view
+events (doc 09 §5) through `api/traces.ts`. It queues them and sends at most one batch per 5 s to
+`POST /cases/{id}/trace-events` (at most 100 events per batch), plus whatever is left when the
+console unmounts. A failed send is dropped: analytics never block the console. The events:
+- `CASE_VIEWED` once when the console opens;
+- `EVIDENCE_VIEWED` and `WCMM_VIEWED` the first time an evidence card or "What would change my
+  mind" is at least half on screen (`IntersectionObserver`; without it, when shown). Each counts
+  once per page;
+- `NARRATIVE_EXPANDED` each time the investigator opens one of a narrative's citations, for the
+  narrative's record.
+
+The console links to `/cases/:id/dd-pack`. That page reads `GET /cases/{id}/dd-pack` with field
+checks, which records `DD_PACK_VIEWED` on the server. It shows "Complete" or "Incomplete", then
+the nine sections in order: each with "Required" or "Optional" ("· missing" for an empty required
+one), its note, and its content as tables, lists and text, or "Not applicable". "Print or save as
+PDF" prints the page, with the app's navigation and the page's buttons left out of print. "Open
+the printable page" opens the server's HTML version.
+
 **The knowledge base, read-only (part of #119):** `/kb` lists `GET /kb/versions` (status, change
 summary, "From vN" lineage) and opens the ACTIVE version, or the one in `?v=`. For it: the
 hypotheses with their descriptions (and the open-world Unexplained), every source grouped as
