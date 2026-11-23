@@ -18,6 +18,7 @@ import pytest
 from sqlalchemy import Engine, func, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
+from delphi.guardian import procedure as procedure_module
 from delphi.guardian import service as service_module
 from delphi.guardian.service import Decided, GuardianService, NextProbe, PriorInputs
 from delphi.guardian.store import (
@@ -446,7 +447,8 @@ def test_an_engine_error_while_planning_rolls_back_and_holds(
     def broken(*_args: object, **_kw: object) -> None:
         raise FloatingPointError("injected")
 
-    monkeypatch.setattr(service_module, "plan_next", broken)
+    # The planner runs in the pure procedure the service calls (#123).
+    monkeypatch.setattr(procedure_module, "plan_next", broken)
     result = svc.plan(started.id)
     assert isinstance(result, Decided)
     assert result.session.terminal_reason is TerminalReason.ENGINE_ERROR

@@ -162,7 +162,8 @@ def test_concurrent_workers_never_claim_the_same_job(
 def test_a_crashed_job_is_claimed_again_after_its_lease(
     sessions: sessionmaker[Session], clock: FixedClock, queue: JobQueue
 ) -> None:
-    """FR-PLT-07 acceptance: the worker dies mid-job; after `locked_until` another takes it."""
+    """FR-PLT-07 acceptance: the worker dies mid-job; after `locked_until` and the retry
+    backoff (30 s · 2^(attempt − 1)), another takes it."""
     job_id = add(sessions, clock, "crash")
     crashed = queue.claim("dead-worker", DEMO)
     assert crashed is not None
@@ -170,6 +171,8 @@ def test_a_crashed_job_is_claimed_again_after_its_lease(
     clock.advance(timedelta(seconds=59))
     assert queue.claim("w2", DEMO) is None  # still leased
     clock.advance(timedelta(seconds=2))
+    assert queue.claim("w2", DEMO) is None  # lease over, but backing off (30 s)
+    clock.advance(timedelta(seconds=30))
     again = queue.claim("w2", DEMO)
     assert again is not None and again.id == job_id and again.attempts == 2
 
@@ -179,6 +182,23 @@ def test_a_crashed_job_is_claimed_again_after_its_lease(
     row = status_of(sessions, job_id)
     assert row["status"] == "SUCCEEDED" and row["result"] == {"done": True}
     assert row["progress"] == 1.0 and row["locked_by"] is None
+
+
+def test_a_job_that_keeps_crashing_backs_off_longer_each_time(
+    sessions: sessionmaker[Session], clock: FixedClock, queue: JobQueue
+) -> None:
+    """A job whose attempt takes the database down is not re-claimed straight into the crash
+    (the LABEL_DELIVERY OOM loop, 2026-11-22)."""
+    add(sessions, clock, "crashy")
+    assert queue.claim("w1", DEMO) is not None
+    clock.advance(timedelta(seconds=60 + 30 + 1))  # lease, then 30 s
+    second = queue.claim("w2", DEMO)
+    assert second is not None and second.attempts == 2
+    clock.advance(timedelta(seconds=60 + 59))  # lease, then 59 of the 60 s backoff
+    assert queue.claim("w3", DEMO) is None
+    clock.advance(timedelta(seconds=2))
+    third = queue.claim("w3", DEMO)
+    assert third is not None and third.attempts == 3
 
 
 def test_a_job_whose_worker_dies_on_the_last_attempt_is_failed(
