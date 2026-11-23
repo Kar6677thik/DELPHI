@@ -166,3 +166,39 @@ def unexplained_sessions(
         )
         for r in conn.execute(query.order_by(gs.decided_at, gs.id))
     ]
+
+
+def attributed_sessions(
+    conn: Connection | Session, *, since: datetime | None = None
+) -> list[UnexplainedSession]:
+    """Decided sessions attributed to a known typology (the posterior's argmax is neither
+    GENUINE nor UNEXPLAINED, and the session is not flagged unexplained): the Scout's reference
+    set (docs/11 §2)."""
+    gs = guardian_sessions.c
+    query = select(gs.id, gs.payment_id, gs.decided_at, gs.posterior).where(
+        gs.unexplained.is_(False), gs.decided_at.is_not(None), gs.posterior.is_not(None)
+    )
+    if since is not None:
+        query = query.where(gs.decided_at >= since)
+    out = []
+    for r in conn.execute(query.order_by(gs.decided_at, gs.id)):
+        posterior = dict(r.posterior)
+        if posterior and max(posterior, key=posterior.__getitem__) not in (
+            "GENUINE",
+            "UNEXPLAINED",
+        ):
+            out.append(
+                UnexplainedSession(
+                    r.id, r.payment_id, r.decided_at, float(posterior.get("UNEXPLAINED", 0.0))
+                )
+            )
+    return out
+
+
+def observed_outcomes(conn: Connection | Session, session_id: UUID) -> dict[str, str]:
+    """The session's completed probe outcomes, source → outcome (docs/11 §2)."""
+    pr = probe_runs.c
+    rows = conn.execute(
+        select(pr.probe_key, pr.outcome).where(pr.session_id == session_id, pr.outcome.is_not(None))
+    )
+    return {r.probe_key: r.outcome for r in rows}

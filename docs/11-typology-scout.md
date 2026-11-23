@@ -64,7 +64,20 @@ missing from an item sits at its training mean (z = 0).
 - **Leaving the queue:** an item leaves when an FDE engineer dismisses it
   (`scout_queue_dismissals`, one row per item, audited), or when it is a member of a cluster
   whose typology draft is PROMOTED. Members are stored as `{subject_type, subject_id}` refs.
-- **Still to come:** the `RUN_SCOUT` job, the auto-trigger and each cluster's size and time span.
+- **The run** (`delphi.scout.run`): `RUN_SCOUT` (`POST /scout/runs`, or `SCOUT_AUTO_TRIGGER`
+  once `auto_trigger_new_items` items have entered since the last run) loads the queue items of
+  the last `lookback_days`.
+  - The reference set is that period's sessions attributed to a known typology: not flagged
+    unexplained, with an argmax that is neither GENUINE nor UNEXPLAINED.
+  - Each item's outcomes are a session's completed probe runs or a case's current evidence
+    records. Its features are the doc 13 §3 payment features (none for an account review).
+  - Each cluster is stored with its size, members and time span (`first_at`/`last_at`, next to
+    its features), plus a CANDIDATE `typology_drafts` row. The draft's spec holds the suggested
+    name, the draft likelihood rows and the outcome profile.
+- **Gap fills:**
+  - z-scores use the run's own items, because the sensing artifacts store no feature means.
+  - F3 stage indicators are empty until the event → stage mapping is specified (A-07 names only
+    the stages).
 
 ## 3. FDE drafting (`DRAFT`)
 

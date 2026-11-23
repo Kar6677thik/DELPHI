@@ -55,6 +55,7 @@ from delphi.platform.settings import Settings, SettingsError, libpq_url, load_se
 from delphi.platform.wiring import Platform, build_platform
 from delphi.platform.worker import build_registry, install_stop_handlers, run_worker
 from delphi.probes.registry import CLASSIFIER_NAMES
+from delphi.scout.jobs import register_scout_jobs
 from delphi.sensing.jobs import register_sensing_jobs
 from delphi.sim.api import PROFILES, dataset_exists, request_dataset
 from delphi.sim.dataset import generate_dataset
@@ -214,6 +215,7 @@ def worker_registry(
         settings.llm_daily_token_budget,
     )
     register_navigator_jobs(registry, sessions=platform.sessions, llm=llm, trail=case_trail)
+    register_scout_jobs(registry, sessions=platform.sessions, clock=platform.clock)
     if settings.simulation_enabled and settings.sim_database_url is None:
         # The api accepts simulated calls on this flag; a worker without the simulator's pool
         # would leave them queued for ever (docs/09 §3).

@@ -3,5 +3,15 @@
 from __future__ import annotations
 
 from delphi.scout.queue import QueueItem, SubjectType, dismiss, queue_items
+from delphi.scout.run import run_scout
+from delphi.scout.tables import scout_clusters, typology_drafts
 
-__all__ = ["QueueItem", "SubjectType", "dismiss", "queue_items"]
+__all__ = [
+    "QueueItem",
+    "SubjectType",
+    "dismiss",
+    "queue_items",
+    "run_scout",
+    "scout_clusters",
+    "typology_drafts",
+]

@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import Connection, select
 from sqlalchemy.orm import Session
 
 from delphi.platform.clock import Clock
@@ -16,6 +16,9 @@ from delphi.platform.errors import DelphiError, InvalidStateTransitionError, Pro
 from delphi.platform.jobs import Enqueued, JobRecord, JobStatus, JobType, enqueue, list_jobs
 from delphi.platform.tables import jobs
 from delphi.sensing.artifacts import ArtifactKind, StoredArtifact, active_artifacts
+from delphi.sensing.config import load_sensing_config
+from delphi.sensing.features import build_payment_features
+from delphi.sensing.history import load_payment_snapshot
 from delphi.sensing.mule_scores import MuleScores
 from delphi.sensing.prior import with_payer_mule
 from delphi.sim.api import current_dataset
@@ -28,6 +31,7 @@ __all__ = [
     "active_artifacts",
     "initialisation",
     "request_training",
+    "scout_features",
     "with_payer_mule",
 ]
 
@@ -99,3 +103,16 @@ def initialisation(session: Session) -> Initialisation:
         active=active_artifacts(session),
         seed_job=latest[0] if latest else None,
     )
+
+
+def scout_features(conn: Connection, payment_id: UUID) -> dict[str, float] | None:
+    """docs/13 §3's payment features marked ``scout`` (all of them), as of the payment's
+    initiation, for the Scout (docs/11 §2). The channel one-hot is left out: the Scout encodes the
+    channel itself. ``None`` for a payment the bank cannot build features for."""
+    config = load_sensing_config().features
+    try:
+        payment, history = load_payment_snapshot(conn, payment_id, config)
+    except LookupError:
+        return None
+    features = build_payment_features(payment, history, config)
+    return {k: v for k, v in features.items() if not k.startswith("channel_")}
