@@ -1,7 +1,9 @@
 """The sensing facade for the api and the CLI (docs/04 §4.1 rule 3): asking for a retrain
 (`POST /admin/sensing/train`, docs/13 §7), reading the ACTIVE artifacts, and whether the
-dataset and the models are ready (`GET /status`, docs/20 §3), and building the Guardian's
-``p_model`` with the payer's mule score (``with_payer_mule``, docs/06 §11)."""
+dataset and the models are ready (`GET /status`, docs/20 §3), the online inference
+(``SensingInference``: the Guardian's ``PriorPort`` and ``p_mule(account)``, docs/13 §1, §7), and
+building the Guardian's ``p_model`` with the payer's mule score (``with_payer_mule``,
+docs/06 §11)."""
 
 from __future__ import annotations
 
@@ -16,6 +18,7 @@ from delphi.platform.errors import DelphiError, InvalidStateTransitionError, Pro
 from delphi.platform.jobs import Enqueued, JobRecord, JobStatus, JobType, enqueue, list_jobs
 from delphi.platform.tables import jobs
 from delphi.sensing.artifacts import ArtifactKind, StoredArtifact, active_artifacts
+from delphi.sensing.inference import PriorInputs, SensingInference
 from delphi.sensing.mule_scores import MuleScores
 from delphi.sensing.prior import with_payer_mule
 from delphi.sim.api import current_dataset
@@ -24,6 +27,8 @@ __all__ = [
     "ArtifactKind",
     "Initialisation",
     "MuleScores",
+    "PriorInputs",
+    "SensingInference",
     "StoredArtifact",
     "active_artifacts",
     "initialisation",

@@ -285,6 +285,22 @@ the artifact belong to `TRAIN_SENSING` (#88). Gaps the text above leaves open, f
   On `test`, seed plus training take about 5 s.
 - The model is loaded at api/worker start and on an `artifact.activated` event. Inference
   p95 ≤ 20 ms per payment (NFR-03).
+- **Implementation** (#92): `delphi.sensing.api.SensingInference` is the Guardian's
+  `PriorPort` (`prior_inputs(payment) → PriorInputs`: `p_payment`, `q`, the payer's `p_mule`,
+  the top 5 `pred_contrib` entries `{feature, value, contribution}` for the most probable
+  class) and serves `p_mule(account, as_of)` (`MuleScores`, §6) to its other consumers. It
+  builds the features with `build_payment_features` on the `delphi.sensing.history` snapshot
+  as of the payment's initiation (§2), as `delphi_app`. Loaded models are cached by artifact
+  id; each call reads the ACTIVE ids (one small query) and loads a blob only when an id
+  changed, so an activation by any process, which publishes `artifact.activated`, is served
+  from the next call without a restart; `refresh()` loads them at start. Without an ACTIVE
+  PRIOR or ANOMALY artifact it raises `NOT_INITIALISED` (503); without an ACTIVE MULE
+  artifact the payer's `p_mule` is left out (doc 06 §11). The payer's score is the sweep's
+  cached one when the bank had it before the payment (§6), else scored on demand. `q` is
+  computed by `FlatForest`, which walks the isolation forest's trees as flat arrays and gives
+  `score_samples`' value (a unit test checks it): `score_samples` on one row takes ~20 ms for
+  200 trees. The p95 is measured by the benchmark-marked `test_inference_p95` on `test`; the
+  largest parts are the snapshot's ~8 PostgreSQL round trips and `pred_contrib` (~8 ms).
 - **Retraining with a promoted typology:** if the ACTIVE KB has typologies that are not model
   classes and have ≥ 50 labels, the retrain adds them as classes. The KB does not change: class
   membership is read from the active artifact (doc 06 §11).

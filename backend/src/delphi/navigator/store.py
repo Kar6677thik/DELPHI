@@ -25,6 +25,7 @@ from delphi.kb.store import get_version
 from delphi.navigator.console import case_profile, recommend
 from delphi.navigator.police_alert import draft_alert
 from delphi.navigator.tables import cases
+from delphi.navigator.traces import TraceType, record_trace
 from delphi.platform.audit import ActorType, record
 from delphi.platform.clock import Clock
 from delphi.platform.errors import DelphiError, ProblemCode
@@ -256,6 +257,14 @@ def open_case(
         entity_type="case",
         entity_id=str(case_id),
         payload=payload,
+    )
+    record_trace(  # docs/09 §5: the engine opened it, so no user
+        session,
+        case_id=case_id,
+        user_id=None,
+        type=TraceType.CASE_OPENED,
+        at=now,
+        payload={"protocol": protocol.value, "decision": decision},
     )
     if protocol is CaseProtocol.COERCION:  # docs/09 §6 item 2: drafted, never sent by itself
         draft_alert(session, clock, case_id=case_id, payment_id=payment_id)
