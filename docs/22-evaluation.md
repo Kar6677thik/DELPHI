@@ -44,6 +44,17 @@ not depend on the number of workers (per-customer RNG streams).
     counts as not stopped.
   - A hold is HELD from the decision time until the queue (§3, #124) settles it.
 - **Output:** one `PaymentOutcome` per stream payment (`delphi.evaluation.outcomes`).
+- **Sensing** (`delphi.evaluation.sensing`, step 2): the prior and anomaly models are trained
+  in memory through `TRAIN_SENSING`'s own `prior_data` core.
+  - Labels: the history's labels due by its end, mapped as delivered (doc 14 §7).
+  - Frames: the dataset's rows (`sensing.offline.frames_from_records`).
+  - Every stream payment is scored once, as of its initiation; the scores are the same for every
+    policy. There is no mule scorer, so MULE is KB-only (doc 06 §11).
+- **Asking the customer:** a policy asks through the replay's `ask(probe)`. The outcome comes from
+  the payment's own stream, `customer_rng(seed, payment, probe)`, so an OTP asked by B2 is the
+  same draw as `otp_would_pass`.
+- **B2:** `r = 1 − p0(GENUINE)` from the Guardian's `session_prior`, with `score_policy`'s bands.
+  The OTP band records one OTP_STEP_UP probe (friction = the KB source's cost).
 
 ## 2. Policies
 
