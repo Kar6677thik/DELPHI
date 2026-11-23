@@ -115,6 +115,85 @@ class AnomalyModel:
         )
 
 
+_LEAF = -1  # sklearn's TREE_LEAF child index
+
+
+def _average_path_length(n: NDArray[np.float64]) -> NDArray[np.float64]:
+    """c(n), the average path length of an unsuccessful BST search (as sklearn computes it)."""
+    n = np.asarray(n, dtype=np.float64)
+    result = np.zeros_like(n)
+    result[n == 2.0] = 1.0  # noqa: PLR2004 - c(2) = 1 by definition
+    big = n > 2.0  # noqa: PLR2004
+    result[big] = 2.0 * (np.log(n[big] - 1.0) + np.euler_gamma) - 2.0 * (n[big] - 1.0) / n[big]
+    return result
+
+
+@dataclass(frozen=True, slots=True, eq=False)
+class FlatForest:
+    """The forest's trees as flat arrays, to score one payment in well under a millisecond
+    (``score_samples`` walks the trees one Python call at a time: ~20 ms for 200 trees, over
+    the inference budget, docs/13 §7). It gives what ``AnomalyModel.score`` gives: all trees
+    are walked together, each node comparing the float32 feature against its threshold as
+    sklearn does, and a leaf adds its depth plus c(samples in the leaf)."""
+
+    roots: NDArray[np.int64]
+    left: NDArray[np.int64]  # global node index, _LEAF at a leaf
+    right: NDArray[np.int64]
+    feature: NDArray[np.int64]  # the column in the model's feature list
+    threshold: NDArray[np.float64]
+    leaf_depth: NDArray[np.float64]  # depth + c(n_node_samples), at leaves
+    denominator: float  # n_trees × c(max_samples)
+
+    @classmethod
+    def of(cls, forest: IsolationForest) -> FlatForest:
+        roots, left, right, feature, threshold, leaf_depth = [], [], [], [], [], []
+        offset = 0
+        for tree, columns in zip(forest.estimators_, forest.estimators_features_, strict=True):
+            t = tree.tree_
+            depth = np.zeros(t.node_count, dtype=np.float64)
+            for node in range(t.node_count):  # children always follow their parent
+                for child in (t.children_left[node], t.children_right[node]):
+                    if child != _LEAF:
+                        depth[child] = depth[node] + 1.0
+            is_leaf = t.children_left == _LEAF
+            roots.append(offset)
+            left.append(np.where(is_leaf, _LEAF, t.children_left + offset))
+            right.append(np.where(is_leaf, _LEAF, t.children_right + offset))
+            feature.append(np.where(is_leaf, 0, np.asarray(columns)[np.maximum(t.feature, 0)]))
+            threshold.append(t.threshold)
+            n_samples = np.asarray(t.n_node_samples, dtype=np.float64)
+            leaf_depth.append(depth + _average_path_length(n_samples))
+            offset += t.node_count
+        max_samples = np.array([forest.max_samples_], dtype=np.float64)
+        return cls(
+            roots=np.asarray(roots, dtype=np.int64),
+            left=np.concatenate(left).astype(np.int64),
+            right=np.concatenate(right).astype(np.int64),
+            feature=np.concatenate(feature).astype(np.int64),
+            threshold=np.concatenate(threshold).astype(np.float64),
+            leaf_depth=np.concatenate(leaf_depth),
+            denominator=float(len(forest.estimators_) * _average_path_length(max_samples)[0]),
+        )
+
+    def score(self, row: NDArray[np.float64]) -> float:
+        """The anomaly score of one feature row (columns in the model's feature list)."""
+        x = np.asarray(row, dtype=np.float32).astype(np.float64)
+        node = self.roots.copy()
+        while True:
+            inner = self.left[node] != _LEAF
+            if not inner.any():
+                break
+            at = node[inner]
+            go_left = x[self.feature[at]] <= self.threshold[at]
+            node[inner] = np.where(go_left, self.left[at], self.right[at])
+        depths = 0.0
+        for d in self.leaf_depth[node].tolist():  # tree by tree, in sklearn's order
+            depths += d
+        if self.denominator == 0:
+            return 1.0
+        return float(2.0 ** (-depths / self.denominator))
+
+
 def _check_feature_list(feature_list: Sequence[str]) -> None:
     if not feature_list:
         raise AnomalyInputError("the feature list is empty")
