@@ -91,7 +91,7 @@ function Console({
   return (
     <TraceContext.Provider value={traces.track}>
       <div className="mt-4 space-y-8">
-        <dl className="grid grid-cols-2 gap-4 text-sm md:grid-cols-5">
+        <dl className="grid grid-cols-2 gap-4 text-sm md:grid-cols-6">
           <Field label="Type">{humanise(detail.type)}</Field>
           <Field label="Protocol">
             {detail.protocol === 'COERCION' ? (
@@ -107,6 +107,12 @@ function Console({
             <span aria-live="polite">{humanise(detail.status)}</span>
           </Field>
           <Field label="SLA">{detail.sla_breached ? 'SLA breached' : 'Within SLA'}</Field>
+          <Field label="DD pack">
+            <Link to={`/cases/${detail.id}/dd-pack`} className="underline">
+              Open the DD pack
+            </Link>{' '}
+            ({detail.dd_pack_complete ? 'complete' : 'incomplete'})
+          </Field>
         </dl>
 
         <section aria-labelledby="belief-title">
