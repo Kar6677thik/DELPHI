@@ -55,6 +55,18 @@ not depend on the number of workers (per-customer RNG streams).
   same draw as `otp_would_pass`.
 - **B2:** `r = 1 − p0(GENUINE)` from the Guardian's `session_prior`, with `score_policy`'s bands.
   The OTP band records one OTP_STEP_UP probe (friction = the KB source's cost).
+- **DELPHI** (`delphi.evaluation.delphi_policy`) runs the Guardian's own `run_session` (doc 08
+  §2). The prior comes from the harness's sensing outputs.
+  - **Passive probes:** classified by the live classifiers from the view's bank-visible facts:
+    telemetry, device, registry, the payee's earlier released or executed payments, and the payee's
+    phone FRI category. The mule score is doc 13 §6's fallback.
+  - **Active probes:** answered through `ask`.
+  - **Guardrails:** channel, call-status consent, servable questions (customer's language or
+    English), and the fairness cap counted per run.
+  - **Variants:** `DELPHI-myopic` plans with lookahead depth 1; `DELPHI-no-active` stops after
+    the passive probes.
+  - **Probe records:** passive friction is 0, active friction is the source's cost, and the yield
+    is the KL in bits.
 
 ## 2. Policies
 

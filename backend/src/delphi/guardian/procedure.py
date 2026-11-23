@@ -173,10 +173,12 @@ def run_session(
     answer: Callable[[str], str | None],
     rng_seed: int,
     explore: bool = True,
+    active: bool = True,
 ) -> SessionResult:
     """docs/08 §2 steps 2–9 for a caller with every answer to hand: the prior (and the fast
     path), the passive outcomes in KB source order (None: the adapter failed, no update), then
-    plan, ask and update until STOP, then decide."""
+    plan, ask and update until STOP, then decide. ``active=False`` stops after the passive
+    probes (the docs/22 §2 DELPHI-no-active ablation)."""
     prior = session_prior(profile, inputs)
     belief = prior.prior
     steps: list[ProbeStep] = []
@@ -194,7 +196,9 @@ def run_session(
         after = belief if outcome is None else observe(profile, belief, key, outcome)
         steps.append(ProbeStep(key, False, outcome, belief, after))
         belief = after
-    active = 0
+    if not active:  # passive probes only (the docs/22 §2 ablation)
+        return end(TerminalReason.STOP)
+    asked = 0
     while True:
         plan = plan_step(
             profile,
@@ -203,7 +207,7 @@ def run_session(
             vulnerable=vulnerable,
             facts=facts,
             ran=tuple(s.probe_key for s in steps),
-            active=active,
+            active=asked,
             rng_seed=rng_seed,
             explore=explore,
         )
@@ -213,4 +217,4 @@ def run_session(
         after = belief if outcome is None else observe(profile, belief, plan.action, outcome)
         steps.append(ProbeStep(plan.action, True, outcome, belief, after, plan))
         belief = after
-        active += 1
+        asked += 1
