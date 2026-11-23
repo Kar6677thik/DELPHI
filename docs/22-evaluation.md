@@ -29,6 +29,22 @@ Runtime target: ≤ 30 minutes for `eval` on the home server (4 cores), ≤ 2 mi
 Engine work is parallelised across customers with `multiprocessing` (4 workers). Results must
 not depend on the number of workers (per-customer RNG streams).
 
+**Implementation (#123).**
+- **Stream** (`delphi.evaluation.stream`): the window's sessions in initiation order (ties by
+  payment id), each with its session telemetry. Every customer draw comes from
+  `keyed_rng(seed, "eval", payment_id, what…)`, including "would the OTP pass"
+  (`otp_would_pass`, the same draw for B2, DELPHI and the coercion-catch metric).
+- **Replay** (`delphi.evaluation.replay`): a discrete-event loop on a `VirtualClock` over the
+  stream's payments and the window's scheduled transfers (salaries, mule forwarding).
+  - A transfer at the same instant as a payment is booked first.
+  - Each policy has its own `BankState`, starting from the history's end: balances, pairs already
+    paid, saved payees, devices first seen and registry listings.
+  - A policy is shown a `PolicyView` of bank-visible fields only, and returns its decision.
+  - A release executes when the payer can fund it. An unfunded release moves no money but still
+    counts as not stopped.
+  - A hold is HELD from the decision time until the queue (§3, #124) settles it.
+- **Output:** one `PaymentOutcome` per stream payment (`delphi.evaluation.outcomes`).
+
 ## 2. Policies
 
 | ID | Name | Rule |
