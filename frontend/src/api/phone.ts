@@ -1,15 +1,17 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 
 import { apiFetch, getJson } from './client';
+import type { components } from './schema';
 import type { GuardianSessionView } from './types';
 
 /*
- * The customer channel of the mock phone (docs/08 §4, docs/16 "Guardian").
+ * The customer channel of the mock phone (docs/08 §4, docs/16 "Guardian", #98).
  *
- * These endpoints arrive with the Guardian API (#98), so they are not in backend/openapi.json
- * yet and their types are written here from docs/08 §4 and docs/16. When #98 lands they move to
- * the generated types (`pnpm gen:api`) and this block goes (#99 part 2).
+ * The requests and the personas use the generated types (`pnpm gen:api`). The phone stream's
+ * events are not in the OpenAPI document (an SSE body has no schema there), so their types are
+ * written here from docs/08 §4 and docs/16.
  */
+type Schemas = components['schemas'];
 
 /** A probe's screen type (docs/08 §4). */
 export type ProbeUi = 'QUESTION' | 'OTP' | 'BIOMETRIC' | 'COOLING_OFF';
@@ -25,7 +27,8 @@ export interface ProbeRequest {
   probe_run_id: string;
   probe_key: string;
   ui: ProbeUi;
-  language: string;
+  /** The question's language; `null` for the screens fixed in code (OTP, biometric, wait). */
+  language: string | null;
   variant_id?: string | null;
   text?: string | null;
   options?: readonly ProbeOption[];
@@ -46,10 +49,15 @@ export interface AttemptResult {
   attempts_remaining: number;
 }
 
-/** `session.decided`: the session's decision, which the phone turns into its last screen. */
+/**
+ * `session.decided`: the session ended. `decision` is `null` when the customer cancelled
+ * (`status` CANCELLED_BY_CUSTOMER); the phone turns it into its last screen.
+ */
 export interface SessionDecided {
   session_id: string;
-  decision: string;
+  status?: string;
+  decision: string | null;
+  terminal_reason?: string | null;
 }
 
 export type PhoneEvent =
@@ -80,43 +88,19 @@ export type ProbeAnswer =
   | { cooling_off: CoolingOffAnswer };
 
 /** What the phone measured while the screen was up (docs/08 §4, `client_signals`). */
-export interface ClientSignals {
-  shown_at_ms: number;
-  answered_at_ms: number;
-  visibility_hidden_count: number;
-  paste_count: number;
-}
+export type ClientSignals = Schemas['ClientSignalsIn'];
 
-export interface PersonaAccount {
-  id: string;
-  label: string;
-  balance_paise: number;
-}
-
-export interface PersonaPayee {
-  account_id: string;
-  label: string;
-  /** e.g. "Saved 2 years ago", "New today": what the customer's app shows under the name. */
-  note?: string | null;
-}
-
-export interface PersonaDevice {
-  id: string;
-  label: string;
-}
-
+export type PersonaAccount = Schemas['PersonaAccountView'];
+export type PersonaPayee = Schemas['PersonaPayeeView'];
+export type PersonaDevice = Schemas['PersonaDeviceView'];
 /** `GET /phone/personas`: the demo's customers with their accounts, payees and devices. */
-export interface Persona {
-  customer_id: string;
-  name: string;
-  language: string;
-  vulnerable: boolean;
-  accounts: readonly PersonaAccount[];
-  payees: readonly PersonaPayee[];
-  devices: readonly PersonaDevice[];
-}
+export type Persona = Schemas['PersonaView'];
 
-export const CHANNELS = ['UPI_PUSH', 'IMPS', 'NEFT'] as const;
+export const CHANNELS = [
+  'UPI_PUSH',
+  'IMPS',
+  'NEFT',
+] as const satisfies readonly Schemas['PaymentIn']['channel'][];
 export type PayChannel = (typeof CHANNELS)[number];
 
 /** How the customer's app names each channel. */
@@ -142,14 +126,18 @@ export function usePersonas() {
   return useQuery({
     queryKey: [...PHONE_QUERY_KEY, 'personas'],
     queryFn: () => getJson<readonly Persona[]>('/phone/personas'),
-    retry: false, // a 404 before #98 is final; say so rather than spin
+    retry: false,
   });
 }
 
 async function postForJson<T>(path: string, body: unknown): Promise<T> {
   const response = await apiFetch(path, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      // docs/16 §1: required here; a retried request with the same key is answered once.
+      'Idempotency-Key': crypto.randomUUID(),
+    },
     body: JSON.stringify(body),
   });
   return (await response.json()) as T;
@@ -158,10 +146,12 @@ async function postForJson<T>(path: string, body: unknown): Promise<T> {
 /** Pay: `POST /guardian/sessions` starts the Guardian on the payment (docs/16). */
 export function useStartPayment() {
   return useMutation({
-    mutationFn: (payment: PaymentDraft) =>
-      postForJson<GuardianSessionView>('/guardian/sessions', {
-        payment: { ...payment, telemetry: {} },
-      }),
+    mutationFn: (payment: PaymentDraft) => {
+      // No telemetry yet: a browser cannot see the phone's call state, so the telemetry probes
+      // record ERROR and do not update (docs/08 §2 step 4).
+      const body: Schemas['StartSessionRequest'] = { payment };
+      return postForJson<GuardianSessionView>('/guardian/sessions', body);
+    },
   });
 }
 
@@ -173,11 +163,17 @@ export function useAnswerProbe() {
       probeRunId: string;
       answer: ProbeAnswer;
       signals: ClientSignals;
-    }) =>
-      postForJson<GuardianSessionView>(
+    }) => {
+      const body: Schemas['ProbeResponseRequest'] = {
+        probe_run_id: args.probeRunId,
+        answer: args.answer,
+        client_signals: args.signals,
+      };
+      return postForJson<Schemas['ProbeResponseView']>(
         `/guardian/sessions/${encodeURIComponent(args.sessionId)}/probe-responses`,
-        { probe_run_id: args.probeRunId, answer: args.answer, client_signals: args.signals },
-      ),
+        body,
+      );
+    },
   });
 }
 

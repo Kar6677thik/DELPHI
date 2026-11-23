@@ -166,6 +166,21 @@ Every interaction appends a `trace_events` row: `CASE_OPENED`, `CASE_VIEWED`,
 time since opened), `DD_PACK_VIEWED`. The frontend sends view events through
 `POST /cases/{id}/trace-events` (batched, at most 1 request per 5 s).
 
+**Implementation** (#108): `delphi.navigator.traces`, table `trace_events` (migration 0015). The
+server writes the actions in the action's own transaction:
+- `CASE_OPENED` (`open_case`; no user, `{protocol, decision}`);
+- `EVIDENCE_REQUESTED` (`request_evidence`, a new record only, not an idempotent replay;
+  `{source_key, evidence_record_id, rank_shown, net_value_shown_paise, settle_pct_shown,
+  refresh}`, ranked as the console showed it);
+- `DISPOSITION` (`dispose`; `{decision, typology, confidence, is_override,
+  seconds_since_opened}`).
+
+`DD_PACK_VIEWED` is recorded when `GET /cases/{id}/dd-pack` is read, for the viewer, with
+`{format, complete}`. The console may send only the four view
+events. `EVIDENCE_VIEWED` and `NARRATIVE_EXPANDED` name an evidence record of the case, and no
+other field is stored from a browser. A batch with one bad event is refused whole, and times are
+kept between the case's opening and now, since a browser's clock may be off.
+
 Trace analytics shown on the Learning page (doc 12 §6):
 
 - **Agreement rate**: share of evidence requests where the investigator chose the top-ranked
@@ -270,7 +285,7 @@ The case's sections:
 `cases.dd_pack_complete` is recomputed after a disposition (in its transaction) and whenever a
 narrative is written, which can complete section 6 after the decision. The recomputation runs in
 a savepoint: a failure is logged, leaves the flag as it was and never blocks the change. The flag
-is derived, so it does not bump the case's version. `DD_PACK_VIEWED` follows with the trace events
+is derived, so it does not bump the case's version. Reading it records `DD_PACK_VIEWED`
 (§5).
 
 ## 8. Campaigns

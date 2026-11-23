@@ -13,7 +13,9 @@ from uuid import UUID
 import pytest
 from sqlalchemy import select
 
+from delphi.engine import SessionFacts, compile_profile
 from delphi.guardian.active import ClientSignals, Ui
+from delphi.guardian.api import PriorInputs, run_session
 from delphi.guardian.service import Decided, GuardianService, IssuedProbe, NextProbe
 from delphi.guardian.store import (
     ProbeMode,
@@ -24,10 +26,12 @@ from delphi.guardian.store import (
     add_probe_run,
 )
 from delphi.guardian.tables import guardian_sessions, probe_runs
+from delphi.kb.loader import load_and_validate
 from delphi.navigator.api import get_case
 from delphi.platform.errors import DelphiError, ProblemCode
+from delphi.probes.registry import CLASSIFIER_NAMES
 
-from .test_guardian_service import CLEAN, GENUINE, UNSURE, Env, FixedPrior, make_env
+from .test_guardian_service import CLEAN, GENUINE, INR, KB_DIR, UNSURE, Env, FixedPrior, make_env
 
 
 @pytest.fixture
@@ -404,4 +408,49 @@ def test_the_cooling_off_window_does_not_count_towards_the_session_age(env: Env)
     step = svc.plan(session_id)
     assert not (
         isinstance(step, Decided) and step.session.terminal_reason is TerminalReason.SESSION_TIMEOUT
+    )
+
+
+def test_run_session_replays_the_live_session_step_for_step(env: Env) -> None:
+    """#123: the harness's ``run_session`` and the live service run the same procedure. Given
+    the live session's prior inputs, passive outcomes and the outcomes its answers were
+    classified as, it asks the same probes, ends the same way and holds the same posterior."""
+    prior = story_prior(KAMALA_PRIOR)
+    svc = env.service(prior, KAMALA_PASSIVE, explore=False)
+    payment = env.payment(480_000)
+    asked, decided = drive(env, svc, payment, KAMALA_ANSWERS)
+    with env.owner.connect() as conn:
+        runs = conn.execute(
+            select(probe_runs.c.probe_key, probe_runs.c.mode, probe_runs.c.outcome)
+            .where(probe_runs.c.session_id == decided.session.id)
+            .order_by(probe_runs.c.seq)
+        ).all()
+        rng_seed = conn.execute(
+            select(guardian_sessions.c.rng_seed).where(guardian_sessions.c.id == decided.session.id)
+        ).scalar_one()
+    outcomes = {r.probe_key: r.outcome for r in runs if r.mode == "ACTIVE"}
+    kb = load_and_validate(KB_DIR, CLASSIFIER_NAMES)
+    profile = compile_profile(kb, "GUARDIAN_PAYMENT")
+    result = run_session(
+        profile,
+        kb,
+        PriorInputs(prior.p_payment, prior.q, prior.p_mule),
+        amount_paise=480_000 * INR,
+        vulnerable=False,
+        facts=SessionFacts(
+            channel="UPI_PUSH",
+            consents=frozenset({"call_status"}),
+            servable_question_probes=frozenset(kb.question_bank),
+        ),
+        passive={r.probe_key: r.outcome for r in runs if r.mode == "PASSIVE"},
+        answer=outcomes.__getitem__,
+        rng_seed=rng_seed,
+        explore=False,
+    )
+    assert [s.probe_key for s in result.steps if s.active] == asked
+    assert result.decision == decided.session.decision
+    assert result.terminal_reason.value == decided.session.terminal_reason
+    live = posterior(decided.session.id, env)
+    assert dict(zip(profile.hypotheses, result.posterior, strict=True)) == pytest.approx(
+        live, abs=1e-9
     )
