@@ -57,6 +57,7 @@ from delphi.navigator.traces import (
     TraceType,
     list_traces,
     record_client_traces,
+    record_trace,
 )
 
 __all__ = [
@@ -100,6 +101,7 @@ __all__ = [
     "open_case_for_payment",
     "recommend",
     "record_client_traces",
+    "record_trace",
     "refresh_dd_pack_complete",
     "request_evidence",
     "request_simulated_outreach",

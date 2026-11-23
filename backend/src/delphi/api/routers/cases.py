@@ -55,6 +55,7 @@ from delphi.navigator.api import (
     get_case,
     list_cases,
     record_client_traces,
+    record_trace,
     refresh_dd_pack_complete,
     request_evidence,
     request_simulated_outreach,
@@ -641,12 +642,14 @@ def post_trace_events(
 def read_case_dd_pack(
     case_id: UUID,
     request: Request,
-    _principal: Annotated[Principal, Depends(require(Permission.VIEW))],
+    principal: Annotated[Principal, Depends(require(Permission.VIEW))],
     format: Annotated[DdPackFormat, Query()] = DdPackFormat.JSON,
 ) -> Any:
     """The case's due-diligence pack (docs/09 §7, FR-NAV-11): JSON, or a printable HTML page.
-    Computed on read, so it is authoritative over the stored ``dd_pack_complete``."""
-    with _platform(request).sessions() as session:
+    Computed on read, so it is authoritative over the stored ``dd_pack_complete``. Reading it
+    records a ``DD_PACK_VIEWED`` trace event for the viewer (docs/09 §5)."""
+    platform = _platform(request)
+    with platform.sessions.begin() as session:
         record = get_case(session, case_id)
         if record is None:
             raise NotFoundError("No case with this id.")
@@ -656,6 +659,14 @@ def read_case_dd_pack(
             else None
         )
         pack = build_case_dd_pack(session, case_id, inherited)
+        record_trace(
+            session,
+            case_id=case_id,
+            user_id=principal.user_id,
+            type=TraceType.DD_PACK_VIEWED,
+            at=platform.clock.now(),
+            payload={"format": format.value, "complete": pack.complete},
+        )
     if format is DdPackFormat.HTML:
         return HTMLResponse(render_dd_pack_html(pack))
     return pack.as_json()
