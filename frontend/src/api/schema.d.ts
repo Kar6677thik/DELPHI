@@ -459,6 +459,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/cases/{case_id}/trace-events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Trace Events
+         * @description The console's view events, batched (docs/09 §5, FR-NAV-08): CASE_VIEWED,
+         *     EVIDENCE_VIEWED, NARRATIVE_EXPANDED and WCMM_VIEWED. The server records the actions itself,
+         *     so any other type is 422, as is an evidence-record event naming a record of another case;
+         *     the whole batch is then refused. 404 for an unknown case.
+         */
+        post: operations["post_trace_events_api_v1_cases__case_id__trace_events_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/cases/{case_id}/dd-pack": {
         parameters: {
             query?: never;
@@ -469,7 +492,8 @@ export interface paths {
         /**
          * Read Case Dd Pack
          * @description The case's due-diligence pack (docs/09 §7, FR-NAV-11): JSON, or a printable HTML page.
-         *     Computed on read, so it is authoritative over the stored ``dd_pack_complete``.
+         *     Computed on read, so it is authoritative over the stored ``dd_pack_complete``. Reading it
+         *     records a ``DD_PACK_VIEWED`` trace event for the viewer (docs/09 §5).
          */
         get: operations["read_case_dd_pack_api_v1_cases__case_id__dd_pack_get"];
         put?: never;
@@ -1489,6 +1513,40 @@ export interface components {
             /** Models Below Gate */
             models_below_gate: components["schemas"]["ArtifactKind"][];
         };
+        /** TraceBatch */
+        TraceBatch: {
+            /** Events */
+            events: components["schemas"]["TraceEventIn"][];
+        };
+        /** TraceBatchResult */
+        TraceBatchResult: {
+            /** Recorded */
+            recorded: number;
+        };
+        /** TraceEventIn */
+        TraceEventIn: {
+            type: components["schemas"]["TraceType"];
+            payload?: components["schemas"]["TracePayload"];
+            /**
+             * At
+             * Format: date-time
+             */
+            at: string;
+        };
+        /**
+         * TracePayload
+         * @description What a view event may carry: the evidence record it is about, for EVIDENCE_VIEWED and
+         *     NARRATIVE_EXPANDED. Nothing else is stored from a browser.
+         */
+        TracePayload: {
+            /** Evidence Record Id */
+            evidence_record_id?: string | null;
+        };
+        /**
+         * TraceType
+         * @enum {string}
+         */
+        TraceType: "CASE_OPENED" | "CASE_VIEWED" | "EVIDENCE_REQUESTED" | "EVIDENCE_VIEWED" | "NARRATIVE_EXPANDED" | "WCMM_VIEWED" | "DISPOSITION" | "DD_PACK_VIEWED";
         /**
          * UpdateUser
          * @description Only the fields present change.
@@ -2334,6 +2392,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CaseDetail"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    post_trace_events_api_v1_cases__case_id__trace_events_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TraceBatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TraceBatchResult"];
                 };
             };
             /** @description An RFC 9457 problem (docs/16 §1) */
