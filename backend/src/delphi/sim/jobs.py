@@ -41,6 +41,7 @@ from delphi.sim.personas import manifest_json
 from delphi.sim.response_models import ResponseModels, load_config, load_response_models
 from delphi.sim.scenarios import ScenarioType
 from delphi.sim.stats import StatsReport, dataset_stats
+from delphi.sim.tick import HeldPaise, SimTickJob
 from delphi.sim.truth import payment_truth, persona_manifests, scenario_instances
 from delphi.sim.writer import write_dataset
 
@@ -287,8 +288,10 @@ def register_sim_jobs(
     kb: KnowledgeBase,
     allowed_profiles: frozenset[str] | None = None,
     record_outreach: OutreachRecorder | None = None,
+    held: HeldPaise | None = None,
 ) -> None:
-    """Add the simulator's handlers. ``sim_engine`` connects as ``delphi_sim``.
+    """Add the simulator's handlers. ``sim_engine`` connects as ``delphi_sim``. ``held`` (the
+    placed liens per account, Chase's) turns on ``SIM_TICK``'s live mule movement (#114).
     ``record_outreach`` stores a simulated outreach answer as evidence (the Navigator's)."""
     registry.register(
         JobType.GENERATE_DATASET,
@@ -304,6 +307,8 @@ def register_sim_jobs(
     registry.register(
         JobType.LABEL_DELIVERY, LabelDeliveryJob(sim_engine=sim_engine, clock=clock, kb=kb)
     )
+    if held is not None:
+        registry.register(JobType.SIM_TICK, SimTickJob(sim_engine, clock, held))
     if record_outreach is not None:
         registry.register(
             JobType.SIM_OUTREACH_CALL,

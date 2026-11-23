@@ -107,9 +107,9 @@ def test_the_operation_closes_after_the_golden_hour_with_nothing_pending(
     job = ChaseRetraceJob(env.sessions, env.clock, lambda _s: lambda _t: None)
     ctx: Any = JobContext.__new__(JobContext)
     env.clock.advance(timedelta(minutes=90))  # the golden hour is over, the ticket is pending
-    assert job(ctx) == {"acknowledged": 0, "expired": 0, "closed": 0}
+    assert job(ctx) == {"acknowledged": 0, "expired": 0, "closed": 0, "retraced": 1}
     env.clock.advance(timedelta(hours=3))
-    assert job(ctx) == {"acknowledged": 0, "expired": 1, "closed": 1}
+    assert job(ctx) == {"acknowledged": 0, "expired": 1, "closed": 1, "retraced": 0}
     with env.owner.connect() as conn:
         status = conn.execute(
             select(chase_operations.c.status).where(chase_operations.c.id == UUID(view["id"]))

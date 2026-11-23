@@ -20,7 +20,7 @@ two; re-tracing open operations (step 5) joins it with the live mule movement (#
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any
 from uuid import UUID
@@ -28,6 +28,7 @@ from uuid import UUID
 from sqlalchemy import exists, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
+from delphi.chase.operations import CandidateSource, TracedOnly, retrace_due
 from delphi.chase.tables import cfcfrms_tickets, chase_operations, liens
 from delphi.kb.store import get_version
 from delphi.platform.audit import ActorType, record
@@ -229,12 +230,14 @@ def release_lien(
 
 @dataclass(frozen=True, slots=True)
 class ChaseRetraceJob:
-    """``CHASE_RETRACE`` (docs/04 §5.4): settle due tickets, then close due operations."""
+    """``CHASE_RETRACE`` (docs/04 §5.4): settle due tickets, close due operations, then
+    re-trace the open ones whose interval has passed (#114)."""
 
     sessions: sessionmaker[Session]
     clock: Clock
     ack_delay: Callable[[Session], AckDelay | None]
     demo_time: bool = False
+    candidates: CandidateSource = field(default_factory=TracedOnly)
 
     def __call__(self, ctx: JobContext) -> Mapping[str, Any] | None:
         with self.sessions.begin() as session:
@@ -245,6 +248,7 @@ class ChaseRetraceJob:
                     session, self.clock, ack_delay=delay, demo_time=self.demo_time
                 )
             counts["closed"] = close_due_operations(session, self.clock)
+            counts["retraced"] = retrace_due(session, self.clock, self.candidates)
         return counts
 
 

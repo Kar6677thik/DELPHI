@@ -154,6 +154,14 @@ stable. The 30 days, the 80% and the 3-credit minimum are the definition above, 
   `POST …/close` closes one by hand, and `POST …/liens/{id}/release` releases a PLACED lien with a
   reason.
 - **Time:** all latencies run in real time until the DEMO time mode is wired.
+- **Re-trace and live movement (#114):**
+  - `CHASE_RETRACE` re-traces each OPEN operation once `retrace_interval_min` has passed since its
+    last trace (`retrace_due`). New candidates are added, existing ones are refreshed, and liens
+    are untouched.
+  - The re-trace refreshes the operation's `metrics` (§6, `chase.metrics`).
+  - `SIM_TICK` step 1 (`sim.tick`, registered when `DELPHI_SIMULATION_ENABLED`) executes the
+    ring's due transfers. A mule moves only what its balance holds beyond its PLACED liens (doc 14
+    §9), so a liened amount stays put.
 - **Bank effect:** the bank does not yet hold liened money back from later debits; that is #114's
   live movement.
 

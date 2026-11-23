@@ -19,16 +19,18 @@ live mule movement's (#114).
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Protocol
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import Connection, func, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from delphi.chase.ledger import CASH_OUT_CHANNEL, load_trace_inputs, visible_until
+from delphi.chase.metrics import LienFacts, operation_metrics
 from delphi.chase.tables import cfcfrms_tickets, chase_candidates, chase_operations, liens
 from delphi.chase.tracer import TraceResult, trace
 from delphi.kb.model import KnowledgeBase
@@ -357,3 +359,97 @@ def approve_liens(
         .values(version=op.version + 1)
     )
     return created
+
+
+def placed_lien_totals(conn: Connection, account_ids: Iterable[UUID]) -> dict[UUID, int]:
+    """Each account's liened amount: the sum of its PLACED liens (the simulator honours them,
+    docs/14 §9)."""
+    ids = list(account_ids)
+    if not ids:
+        return {}
+    lien = liens.c
+    rows = conn.execute(
+        select(lien.account_id, func.sum(lien.amount_paise))
+        .where(lien.account_id.in_(ids), lien.status == "PLACED")
+        .group_by(lien.account_id)
+    )
+    return {r[0]: int(r[1]) for r in rows}
+
+
+def _metrics(session: Session, op: Any) -> dict[str, Any]:
+    k, lien = chase_candidates.c, liens.c
+    rows = session.execute(
+        select(lien.amount_paise, lien.status, lien.placed_at, k.taint_paise)
+        .join(chase_candidates, k.id == lien.candidate_id)
+        .where(lien.operation_id == op.id)
+    ).all()
+    return dict(
+        operation_metrics(
+            reported_at=op.reported_at,
+            golden_hour_ends_at=op.golden_hour_ends_at,
+            reported_loss_paise=op.reported_loss_paise,
+            liens=[LienFacts(int(r[0]), r[1], r[2], int(r[3])) for r in rows],
+        )
+    )
+
+
+def retrace_due(session: Session, clock: Clock, source: CandidateSource) -> int:
+    """docs/10 §5 step 5: re-trace every OPEN operation last traced ``retrace_interval_min``
+    ago or more. New candidates appear, existing ones get their taint, balance and score now;
+    liens are not changed. The operation's metrics are refreshed. Returns how many re-traced."""
+    now = clock.now()
+    ops = session.execute(
+        select(chase_operations)
+        .where(chase_operations.c.status == "OPEN")
+        .with_for_update(skip_locked=True)
+    ).all()
+    done = 0
+    for op in ops:
+        version = get_version(session, op.kb_version_id)
+        assert version is not None
+        kb = version.kb
+        if now - op.last_traced_at < timedelta(minutes=kb.config.chase.retrace_interval_min):
+            continue
+        sources, moves = load_trace_inputs(
+            session.connection(),
+            list(op.source_payment_ids),
+            until=visible_until(now, kb.config.chase.visibility_lag_min.demo),
+        )
+        traced = trace(
+            sources,
+            moves,
+            min_trace_paise=round(kb.config.chase.min_trace_inr * PAISE_PER_INR),
+            cash_out_channel=CASH_OUT_CHANNEL,
+        )
+        for n, c in enumerate(source.candidates(session, kb, traced, now)):
+            values = {
+                "hop": c.hop,
+                "taint_paise": c.taint_paise,
+                "balance_paise": c.balance_paise,
+                "p_present": c.p_present,
+                "p_mule": c.p_mule,
+                "erv_paise": c.erv_paise,
+                "wrongful_cost_paise": c.wrongful_cost_paise,
+                "net_paise": c.net_paise,
+                "rank": c.rank,
+                "recommended": c.recommended,
+                "traced_at": now,
+            }
+            session.execute(
+                pg_insert(chase_candidates)
+                .values(
+                    id=uuid7(unix_ms=int(now.timestamp() * 1000) + n + 1),
+                    operation_id=op.id,
+                    account_id=c.account_id,
+                    **values,
+                )
+                .on_conflict_do_update(index_elements=["operation_id", "account_id"], set_=values)
+            )
+        session.execute(
+            update(chase_operations)
+            .where(chase_operations.c.id == op.id)
+            .values(last_traced_at=now, metrics=_metrics(session, op), version=op.version + 1)
+        )
+        publish(session, EventType.CHASE_UPDATED, str(op.id), {"operation_id": str(op.id)})
+        done += 1
+    return done
