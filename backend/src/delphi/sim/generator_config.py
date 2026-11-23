@@ -116,6 +116,13 @@ class NewPersonPayeeConfig(_Frozen):
     early_share: Probability = 0.0
     early_lead_days: Range
 
+    @property
+    def sessions_per_day(self) -> float:
+        """Expected genuine sessions a day from this stream: a first payment and its follow-ups
+        (uniform over the whole numbers in the range) every ``mean_days``."""
+        more = self.follow_up_payments
+        return (1.0 + (int(more.min) + int(more.max)) / 2.0) / self.mean_days
+
 
 class NewMerchantPayeeConfig(NewPersonPayeeConfig):
     """#166: first-time scan-and-pay at an everyday shop."""
