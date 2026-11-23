@@ -37,6 +37,7 @@ from delphi.llm.service import LlmService, primary_provider
 from delphi.navigator.api import OUTREACH as OUTREACH_SOURCE
 from delphi.navigator.api import request_evidence
 from delphi.navigator.jobs import register_navigator_jobs
+from delphi.navigator.reviews import SweepLimits
 from delphi.platform.accounts import BootstrapError, ensure_bootstrap_admin
 from delphi.platform.audit import verify as audit_verify
 from delphi.platform.clock import SystemClock
@@ -265,6 +266,7 @@ def worker_registry(
         trail=case_trail,
         clock=platform.clock,
         p_mule_fallback=load_sensing_config().features.mule_score_fallback,
+        review_limits=SweepLimits.of(settings),
     )
     if settings.simulation_enabled and settings.sim_database_url is None:
         # The api accepts simulated calls on this flag; a worker without the simulator's pool

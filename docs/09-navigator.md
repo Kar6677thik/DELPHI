@@ -30,7 +30,13 @@ triggers and the console come with M5 (#103, #109).
 **Implementation (complaints trigger, #109).** `COMPLAINT_SWEEP` (every minute, doc 04 §5.4) runs
 `delphi.navigator.reviews.open_complaint_reviews` under the ACTIVE KB:
 - It finds the home-bank (`DLPH`) accounts named in `counterparty_account_ids` by complaints
-  reported by now.
+  reported in the last `DELPHI_REVIEW_COMPLAINT_LOOKBACK_DAYS` (proposed 30; an older complaint
+  opens no review), in SQL, oldest complaint first, with `NOT EXISTS` against the account's
+  reviews and a `LIMIT`.
+- It is bounded, as `LABEL_DELIVERY` is (#263): one transaction per batch of
+  `DELPHI_REVIEW_SWEEP_BATCH` reviews (25), each under a 30 s statement timeout and 16 MB
+  `work_mem`, and at most `DELPHI_REVIEW_SWEEP_MAX_PER_RUN` reviews (100) per run; the next run
+  carries on. A run that finds another one sweeping (advisory lock 50) skips.
 - It opens an ACCOUNT_REVIEW case (STANDARD, `account_review_sla_minutes`) for each, unless the
   account has an open review or a review opened after its latest complaint. So it is idempotent
   per account, and a disposed review reopens only for a newer complaint.

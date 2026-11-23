@@ -13,6 +13,13 @@ anomaly percentile of its own, so q = 0 and the open mass is the profile's base.
 ``COMPLAINT_SWEEP`` runs this every minute (docs/04 §5.4). It is idempotent per account: a case
 is opened only for complaints reported after the account's latest review was opened, so a
 disposed review is not reopened by the complaint that opened it.
+
+It is bounded (the 2026-11-22 incident, #263): the candidates are chosen in SQL, oldest
+complaint first, with ``NOT EXISTS`` against the account's reviews and a ``LIMIT``; only
+complaints reported in the last ``review_complaint_lookback_days`` count; each batch of
+``review_sweep_batch`` reviews commits on its own, under a statement timeout and a small
+``work_mem``; and a run stops after ``review_sweep_max_per_run`` reviews, for the next run to carry
+on. A run that finds another one sweeping (the advisory lock) skips.
 """
 
 from __future__ import annotations
@@ -23,7 +30,8 @@ from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import BigInteger, func, select
+from sqlalchemy import BigInteger, column, exists, func, or_, select, text, true
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -47,7 +55,9 @@ from delphi.platform.errors import DelphiError, ProblemCode
 from delphi.platform.events import EventType, publish
 from delphi.platform.ids import uuid7
 from delphi.platform.jobs import JobContext
+from delphi.platform.locks import ACCOUNT_REVIEW_SWEEP_LOCK_KEY
 from delphi.platform.logging import get_logger
+from delphi.platform.settings import Settings
 from delphi.sim import api as bank
 
 log = get_logger(__name__)
@@ -58,6 +68,26 @@ GENUINE = "GENUINE"
 EXECUTED = "EXECUTED"
 CREDITS_WINDOW = timedelta(days=7)  # docs/02: an account's amount at stake is its 7-day credits
 NO_ANOMALY = 0.0  # docs/06 §11: no account anomaly model, so the open mass is the base
+# Limits for each sweep transaction (docs/23: postgres runs in 1 GiB), as LABEL_DELIVERY's.
+STATEMENT_TIMEOUT = "30s"
+WORK_MEM = "16MB"
+
+
+@dataclass(frozen=True, slots=True)
+class SweepLimits:
+    """How much one sweep does (settings ``review_*``)."""
+
+    batch: int  # reviews opened per transaction
+    max_per_run: int  # reviews opened per run
+    complaint_lookback: timedelta  # only complaints reported this recently open a review
+
+    @staticmethod
+    def of(settings: Settings) -> SweepLimits:
+        return SweepLimits(
+            batch=settings.review_sweep_batch,
+            max_per_run=settings.review_sweep_max_per_run,
+            complaint_lookback=timedelta(days=settings.review_complaint_lookback_days),
+        )
 
 
 def open_review_for_account(session: Session, account_id: UUID) -> CaseRecord | None:
@@ -177,62 +207,61 @@ def open_account_review(
     return opened
 
 
-def complained_accounts(session: Session, now: datetime) -> dict[UUID, datetime]:
-    """Home-bank accounts named as counterparty by a complaint known by ``now``, with the
-    latest such complaint's time."""
-    c = bank.complaints.c
-    latest: dict[UUID, datetime] = {}
-    for named, reported_at in session.execute(
-        select(c.counterparty_account_ids, c.reported_at).where(c.reported_at <= now)
-    ):
-        for account_id in named:
-            if account_id not in latest or reported_at > latest[account_id]:
-                latest[account_id] = reported_at
-    if not latest:
-        return {}
-    a = bank.accounts.c
-    home = set(
-        session.execute(
-            select(a.id).where(a.id.in_(list(latest)), a.bank_code == bank.HOME_BANK)
-        ).scalars()
+def complaint_candidates(
+    session: Session, now: datetime, *, since: datetime, limit: int
+) -> list[tuple[UUID, datetime]]:
+    """Home-bank accounts named by a complaint reported in ``(since, now]`` that has no review
+    since (none open, none opened at or after the complaint), oldest complaint first, at most
+    ``limit`` (account, complaint time) pairs, each account once."""
+    c, a, k = bank.complaints.c, bank.accounts.c, cases.c
+    named = (
+        func.unnest(c.counterparty_account_ids)
+        .table_valued(column("account_id", PG_UUID(as_uuid=True)))
+        .render_derived(name="named")
+        .lateral()
     )
-    return {k: v for k, v in latest.items() if k in home}
-
-
-def latest_review_opened(session: Session) -> Mapping[UUID, datetime]:
-    k = cases.c
+    account_id = named.c.account_id
+    reviewed = exists().where(
+        k.subject_account_id == account_id,
+        k.type == CaseType.ACCOUNT_REVIEW.value,
+        or_(k.status != CaseStatus.DISPOSED.value, k.opened_at >= c.reported_at),
+    )
     rows = session.execute(
-        select(k.subject_account_id, func.max(k.opened_at))
-        .where(k.type == CaseType.ACCOUNT_REVIEW.value)
-        .group_by(k.subject_account_id)
+        select(account_id, c.reported_at)
+        .select_from(bank.complaints.join(named, true()).join(bank.accounts, a.id == account_id))
+        .where(
+            a.bank_code == bank.HOME_BANK,
+            c.reported_at > since,
+            c.reported_at <= now,
+            ~reviewed,
+        )
+        .order_by(c.reported_at, c.id, account_id)
+        .limit(limit)
     ).all()
-    return {r[0]: r[1] for r in rows}
+    seen: dict[UUID, datetime] = {}
+    for named_id, reported_at in rows:
+        seen.setdefault(named_id, reported_at)
+    return list(seen.items())
 
 
-def open_complaint_reviews(
+def open_with_trigger(
     session: Session,
     clock: Clock,
+    account_id: UUID,
+    trigger: str,
     *,
     kb_version_id: int,
     p_mule_fallback: float,
-    demo_time: bool = False,
-) -> list[CaseRecord]:
-    """docs/09 §1: open a review for each home-bank account a complaint names, unless it has an
-    open review, or a review opened after the latest complaint naming it."""
-    now = clock.now()
-    reviewed = latest_review_opened(session)
-    opened: list[CaseRecord] = []
-    for account_id, complained_at in sorted(complained_accounts(session, now).items()):
-        last = reviewed.get(account_id)
-        if last is not None and last >= complained_at:
-            continue
-        if open_review_for_account(session, account_id) is not None:
-            continue
-        p_mule = stored_p_mule(session, account_id)
-        source = "account_scores"
-        if p_mule is None:
-            log.warning("navigator.p_mule_fallback", account_id=str(account_id))
-            p_mule, source = p_mule_fallback, "fallback"
+    demo_time: bool,
+) -> CaseRecord | None:
+    """Open the account's review with its first evidence record, the ``trigger`` probe; None if
+    a review is already open (a concurrent open won)."""
+    p_mule = stored_p_mule(session, account_id)
+    source = "account_scores"
+    if p_mule is None:
+        log.warning("navigator.p_mule_fallback", account_id=str(account_id))
+        p_mule, source = p_mule_fallback, "fallback"
+    try:
         case = open_account_review(
             session,
             clock,
@@ -242,34 +271,88 @@ def open_complaint_reviews(
             p_mule_source=source,
             demo_time=demo_time,
         )
-        request_evidence(
-            session, clock, case.id, LINKED_COMPLAINTS, requested_by=None, on_open=True
+    except CaseExistsError:
+        return None
+    request_evidence(session, clock, case.id, trigger, requested_by=None, on_open=True)
+    refreshed = get_case(session, case.id)
+    assert refreshed is not None
+    return refreshed
+
+
+def open_complaint_reviews(
+    session: Session,
+    clock: Clock,
+    *,
+    kb_version_id: int,
+    p_mule_fallback: float,
+    since: datetime,
+    limit: int,
+    demo_time: bool = False,
+) -> list[CaseRecord]:
+    """docs/09 §1: open up to ``limit`` reviews, one for each home-bank account a complaint
+    reported after ``since`` names, unless it has an open review, or a review opened after the
+    latest such complaint. In the caller's transaction."""
+    now = clock.now()
+    opened: list[CaseRecord] = []
+    for account_id, _reported_at in complaint_candidates(session, now, since=since, limit=limit):
+        case = open_with_trigger(
+            session,
+            clock,
+            account_id,
+            LINKED_COMPLAINTS,
+            kb_version_id=kb_version_id,
+            p_mule_fallback=p_mule_fallback,
+            demo_time=demo_time,
         )
-        refreshed = get_case(session, case.id)
-        assert refreshed is not None
-        opened.append(refreshed)
+        if case is not None:
+            opened.append(case)
     return opened
+
+
+def begin_sweep_batch(session: Session) -> bool:
+    """Bound this transaction and take the sweep lock; False if another run holds it."""
+    session.execute(text(f"SET LOCAL statement_timeout = '{STATEMENT_TIMEOUT}'"))
+    session.execute(text(f"SET LOCAL work_mem = '{WORK_MEM}'"))
+    return bool(
+        session.execute(
+            select(func.pg_try_advisory_xact_lock(ACCOUNT_REVIEW_SWEEP_LOCK_KEY))
+        ).scalar_one()
+    )
 
 
 @dataclass(frozen=True, slots=True)
 class ComplaintSweepJob:
-    """``COMPLAINT_SWEEP`` (every minute, docs/04 §5.4)."""
+    """``COMPLAINT_SWEEP`` (every minute, docs/04 §5.4): one transaction per batch, at most
+    ``limits.max_per_run`` reviews per run."""
 
     sessions: sessionmaker[Session]
     clock: Clock
     p_mule_fallback: float
     demo_time: bool
+    limits: SweepLimits
 
     def __call__(self, ctx: JobContext) -> Mapping[str, Any] | None:
-        with self.sessions.begin() as session:
-            active = active_version(session)
-            if active is None:
-                return {"opened": 0, "reason": "no ACTIVE KB version"}
-            opened = open_complaint_reviews(
-                session,
-                self.clock,
-                kb_version_id=active.id,
-                p_mule_fallback=self.p_mule_fallback,
-                demo_time=self.demo_time,
-            )
-        return {"opened": len(opened)}
+        opened = 0
+        since = self.clock.now() - self.limits.complaint_lookback
+        while opened < self.limits.max_per_run:
+            with self.sessions.begin() as session:
+                if not begin_sweep_batch(session):
+                    return {"opened": opened, "skipped": "busy"}
+                active = active_version(session)
+                if active is None:
+                    return {"opened": opened, "reason": "no ACTIVE KB version"}
+                batch = open_complaint_reviews(
+                    session,
+                    self.clock,
+                    kb_version_id=active.id,
+                    p_mule_fallback=self.p_mule_fallback,
+                    since=since,
+                    limit=min(self.limits.batch, self.limits.max_per_run - opened),
+                    demo_time=self.demo_time,
+                )
+            opened += len(batch)
+            if not batch:
+                return {"opened": opened, "more": False}
+            if not ctx.report(opened / self.limits.max_per_run):
+                break
+        return {"opened": opened, "more": True}
