@@ -131,6 +131,11 @@ class Settings(BaseSettings):
     # Retention (docs/17 §6).
     outbox_retention_h: int = Field(default=24, ge=1, le=24 * 30)
     idempotency_retention_h: int = Field(default=24, ge=1, le=24 * 30)
+    # Probe-yield drift, PROBE_YIELD_DEGRADED (docs/12 §5).
+    yield_recent_days: int = Field(default=7, ge=1, le=90)
+    yield_baseline_days: int = Field(default=28, ge=1, le=365)
+    yield_drift_ratio: float = Field(default=0.7, gt=0, lt=1)
+    yield_min_recent_count: int = Field(default=30, ge=1)
 
     http_host: str = "0.0.0.0"  # nosec B104: binds inside the pod only (docs/23 §4)
     http_port: Port = 8000

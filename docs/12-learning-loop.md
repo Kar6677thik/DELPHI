@@ -98,6 +98,12 @@ the 7-day count ≥ 30. Alerts appear on the Learning page and in the metrics en
 (`delphi_probe_yield_degraded{source}`). The FDE response (rotate variants, re-elicit) is manual.
 The simulator can inject coaching adaptation (doc 14 §5.3), so the detector can be demonstrated.
 
+**Implementation (#121).** `delphi.learning.drift` is pure: `daily_yields` gives the
+`probe_yield_daily` rows, and `drift_alerts` raises `PROBE_YIELD_DEGRADED` per source and day.
+- The 7-day and 28-day means are weighted by observations.
+- The 28 days end where the 7 begin.
+- The numbers are settings (`DELPHI_YIELD_*`, doc 23 §4).
+
 ## 6. Investigator trace analytics
 
 Doc 09 §5 metrics are computed by the `RUN_LEARNING` job and on page load (cached 60 s).
