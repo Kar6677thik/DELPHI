@@ -1,13 +1,19 @@
 """CFCFRMS tickets, lien release and closing operations (docs/10 §5 steps 4, 6, 7; docs/05 §6;
 docs/14 §9; #113).
 
-``process_tickets`` settles every ticket still SENT_SIMULATED:
+``process_tickets`` settles the tickets still SENT_SIMULATED, oldest sent first, at most
+``limit`` per call (bounded after #263; the next ``CHASE_RETRACE`` run carries on):
 - **Acknowledged** once the simulated CFCFRMS latency has passed (``AckDelay``: docs/14 §9,
   ``delphi.sim.external.cfcfrms_ack_delay``, one stream per ticket; 10% never acknowledge).
   The external bank then honours the lien for min(the approved amount, the balance at that
   moment): PLACED, or FAILED_FUNDS_MOVED at 0.
 - **Expired** once ``ticket_expiry_min`` has passed without an acknowledgement: the lien is
-  FAILED_NO_RESPONSE.
+  FAILED_NO_RESPONSE. Expiry needs no simulator: with no dataset seeded (no ``AckDelay``),
+  tickets still expire.
+
+A ticket also settles after its operation was closed by hand: the external bank acts on the
+request it was sent, so a lien it places stays under periodic review and is released with
+``release_lien`` (docs/10 §5).
 
 ``close_due_operations`` closes an OPEN operation once its golden hour has ended and no ticket is
 still SENT_SIMULATED (step 7). ``close_operation`` is the manual close, at any time, and
@@ -22,6 +28,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import timedelta
+from functools import cache
 from typing import Any
 from uuid import UUID
 
@@ -63,9 +70,15 @@ def _lien_event(session: Session, lien_id: UUID, operation_id: UUID, status: str
 
 
 def process_tickets(
-    session: Session, clock: Clock, *, ack_delay: AckDelay, demo_time: bool = False
+    session: Session,
+    clock: Clock,
+    *,
+    ack_delay: AckDelay | None,
+    limit: int,
+    demo_time: bool = False,
 ) -> Mapping[str, int]:
-    """Acknowledge or expire the tickets that are due. Returns the counts."""
+    """Acknowledge or expire the due tickets among the ``limit`` oldest SENT ones (``ack_delay``
+    None: none is acknowledged, but they still expire). Returns the counts."""
     now = clock.now()
     t, lien = cfcfrms_tickets.c, liens.c
     rows = session.execute(
@@ -82,7 +95,8 @@ def process_tickets(
         .join(chase_operations, chase_operations.c.id == lien.operation_id)
         .where(t.status == SENT)
         .order_by(t.sent_at, t.id)
-        .with_for_update(of=cfcfrms_tickets)
+        .limit(limit)
+        .with_for_update(of=cfcfrms_tickets, skip_locked=True)
     ).all()
     counts = {"acknowledged": 0, "expired": 0}
     kbs: dict[int, Any] = {}
@@ -93,7 +107,7 @@ def process_tickets(
             kbs[row.kb_version_id] = version.kb
         kb = kbs[row.kb_version_id]
         scale = _scale(demo_time, kb)
-        delay = ack_delay(str(row.id))
+        delay = ack_delay(str(row.id)) if ack_delay is not None else None
         if delay is not None and row.sent_at + delay * scale <= now:
             amount = max(min(int(row.amount_paise), _balance(session, row.account_id)), 0)
             placed = amount > 0
@@ -234,16 +248,20 @@ class ChaseRetraceJob:
     sessions: sessionmaker[Session]
     clock: Clock
     ack_delay: Callable[[Session], AckDelay | None]
+    tickets_per_run: int
     demo_time: bool = False
 
     def __call__(self, ctx: JobContext) -> Mapping[str, Any] | None:
         with self.sessions.begin() as session:
-            delay = self.ack_delay(session)
-            counts: dict[str, Any] = {}
-            if delay is not None:
-                counts |= process_tickets(
-                    session, self.clock, ack_delay=delay, demo_time=self.demo_time
+            counts: dict[str, Any] = dict(
+                process_tickets(
+                    session,
+                    self.clock,
+                    ack_delay=self.ack_delay(session),
+                    limit=self.tickets_per_run,
+                    demo_time=self.demo_time,
                 )
+            )
             counts["closed"] = close_due_operations(session, self.clock)
         return counts
 
@@ -253,8 +271,14 @@ def simulated_ack_delay(session: Session) -> AckDelay | None:
     dataset = bank.current_dataset(session)
     if dataset is None:
         return None
-    config = bank.load_generator_config()
+    config = _generator_config()
     return lambda ticket_id: bank.cfcfrms_ack_delay(config, dataset.seed, ticket_id)
+
+
+@cache
+def _generator_config() -> bank.GeneratorConfig:
+    """Parsed once per process, not every 20 s (the file is part of the release)."""
+    return bank.load_generator_config()
 
 
 __all__ = [

@@ -1628,6 +1628,10 @@ export interface components {
             placed_at: string | null;
             /** Review Due At */
             review_due_at: string | null;
+            /** Released At */
+            released_at: string | null;
+            /** Release Reason */
+            release_reason: string | null;
         };
         /** LoginRequest */
         LoginRequest: {

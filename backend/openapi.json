@@ -4752,6 +4752,29 @@
               }
             ],
             "title": "Review Due At"
+          },
+          "released_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Released At"
+          },
+          "release_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Release Reason"
           }
         },
         "type": "object",
@@ -4767,7 +4790,9 @@
           "approved_by",
           "approved_at",
           "placed_at",
-          "review_due_at"
+          "review_due_at",
+          "released_at",
+          "release_reason"
         ],
         "title": "LienView"
       },

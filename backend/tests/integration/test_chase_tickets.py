@@ -37,7 +37,7 @@ def _ticketed(client: TestClient, env: Env) -> tuple[dict[str, Any], UUID, str]:
 
 def _settle(env: Env, delay: timedelta | None) -> dict[str, int]:  # noqa: F811
     with env.sessions.begin() as s:
-        return dict(process_tickets(s, env.clock, ack_delay=lambda _t: delay))
+        return dict(process_tickets(s, env.clock, ack_delay=lambda _t: delay, limit=200))
 
 
 def _lien(client: TestClient, op_id: str) -> dict[str, Any]:
@@ -104,7 +104,7 @@ def test_the_operation_closes_after_the_golden_hour_with_nothing_pending(
 ) -> None:
     client, _ = writer
     view, _external, _ticket = _ticketed(client, env)
-    job = ChaseRetraceJob(env.sessions, env.clock, lambda _s: lambda _t: None)
+    job = ChaseRetraceJob(env.sessions, env.clock, lambda _s: lambda _t: None, tickets_per_run=200)
     ctx: Any = JobContext.__new__(JobContext)
     env.clock.advance(timedelta(minutes=90))  # the golden hour is over, the ticket is pending
     assert job(ctx) == {"acknowledged": 0, "expired": 0, "closed": 0}
@@ -132,7 +132,10 @@ def test_release_and_manual_close(
     path = f"/chase/operations/{op['id']}/liens/{lien['id']}/release"
     released = _post(client, path, {"reason": "Customer documents explain the credit."})
     assert released.status_code == 200, released.text
-    assert released.json()["liens"][0]["status"] == "RELEASED"
+    released_lien = released.json()["liens"][0]
+    assert released_lien["status"] == "RELEASED"
+    assert released_lien["release_reason"] == "Customer documents explain the credit."
+    assert released_lien["released_at"] is not None
     assert _post(client, path, {"reason": "again"}).status_code == 409
     closed = _post(client, f"/chase/operations/{op['id']}/close", {})
     assert closed.status_code == 200 and closed.json()["status"] == "CLOSED"
@@ -148,3 +151,25 @@ def test_the_simulated_cfcfrms_needs_a_seeded_bank(env: Env) -> None:  # noqa: F
         assert simulated_ack_delay(s) is None
     with env.owner.begin() as conn:
         assert conn.execute(text("SELECT count(*) FROM delphi.datasets")).scalar_one() == 0
+
+
+def test_tickets_expire_with_no_seeded_dataset_a_capped_batch_at_a_time(
+    env: Env,  # noqa: F811
+    writer: tuple[TestClient, Principal],  # noqa: F811
+) -> None:
+    """No dataset, so no simulated CFCFRMS: nothing is acknowledged, but tickets still expire,
+    at most ``tickets_per_run`` per run, the oldest sent first."""
+    client, _ = writer
+    first, _e1, first_ticket = _ticketed(client, env)
+    env.clock.advance(timedelta(minutes=1))
+    _second, _e2, second_ticket = _ticketed(client, env)
+    job = ChaseRetraceJob(env.sessions, env.clock, simulated_ack_delay, tickets_per_run=1)
+    ctx: Any = JobContext.__new__(JobContext)
+    env.clock.advance(timedelta(hours=4))  # both past ticket_expiry_min
+    assert job(ctx)["expired"] == 1
+    with env.owner.connect() as conn:
+        statuses = dict(conn.execute(select(cfcfrms_tickets.c.id, cfcfrms_tickets.c.status)).all())
+    assert statuses == {UUID(first_ticket): "EXPIRED", UUID(second_ticket): "SENT_SIMULATED"}
+    assert job(ctx)["expired"] == 1
+    assert job(ctx)["expired"] == 0
+    assert _lien(client, first["id"])["status"] == "FAILED_NO_RESPONSE"

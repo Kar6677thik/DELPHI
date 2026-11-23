@@ -128,6 +128,8 @@ class Settings(BaseSettings):
     # docs/08 §4), so reading `probe_runs` reveals no live code (#171). Secret `delphi-app`,
     # api only. Generate with `openssl rand -hex 32`.
     secret_key: SecretStr | None = Field(default=None, min_length=MIN_SECRET_KEY_LENGTH)
+    # CFCFRMS tickets CHASE_RETRACE settles per run, oldest sent first (docs/10 §5, #263).
+    chase_tickets_per_run: int = Field(default=200, ge=1, le=10_000)
     # Retention (docs/17 §6).
     outbox_retention_h: int = Field(default=24, ge=1, le=24 * 30)
     idempotency_retention_h: int = Field(default=24, ge=1, le=24 * 30)

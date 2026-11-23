@@ -213,8 +213,8 @@ A type is scheduled only once its handler is registered:
 
 | Type | Interval | Does |
 |---|---|---|
-| `SIM_TICK` | 10 s real (only when `DELPHI_TIME_MODE=DEMO`) | doc 14 §8: due mule transfers, background payments, ticket acks/expiry |
-| `CHASE_RETRACE` | `retrace_interval_min` time-scaled, floor 20 s | re-trace open operations; auto-close (doc 10 §5) |
+| `SIM_TICK` | 10 s real (only when `DELPHI_TIME_MODE=DEMO`) | doc 14 §8: due mule transfers, background payments |
+| `CHASE_RETRACE` | `retrace_interval_min` time-scaled, floor 20 s | settle due CFCFRMS tickets (acknowledge or expire; at most `DELPHI_CHASE_TICKETS_PER_RUN`, oldest sent first); re-trace open operations; auto-close (doc 10 §5) |
 | `MULE_SWEEP` | `mule_sweep_interval_min` time-scaled | recompute `account_scores`; open ACCOUNT_REVIEW cases (doc 09 §1, from M5) |
 | `SESSION_TIMEOUT_SWEEP` | 30 s | resolve sessions past their timeouts whose owner process is gone |
 | `SCOUT_AUTO_TRIGGER` | 5 min | enqueue `RUN_SCOUT` if ≥ `auto_trigger_new_items` new queue items |

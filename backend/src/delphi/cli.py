@@ -251,7 +251,12 @@ def worker_registry(
     register_sensing_jobs(
         registry, engine=platform.engine, sessions=platform.sessions, clock=platform.clock
     )
-    register_chase_jobs(registry, sessions=platform.sessions, clock=platform.clock)
+    register_chase_jobs(
+        registry,
+        sessions=platform.sessions,
+        clock=platform.clock,
+        tickets_per_run=platform.settings.chase_tickets_per_run,
+    )
     settings = platform.settings
     llm = LlmService(
         platform.sessions,
