@@ -16,7 +16,6 @@ from delphi.guardian.phone import (
     live_guardian,
 )
 from delphi.guardian.procedure import (
-    PriorInputs,
     ProbeStep,
     SessionPrior,
     SessionResult,
@@ -38,6 +37,7 @@ from delphi.guardian.views import (
     list_sessions,
     probe_run_rows,
 )
+from delphi.sensing.api import PriorInputs
 
 __all__ = [
     "PHONE_EVENT_TYPES",
