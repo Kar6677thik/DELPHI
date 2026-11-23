@@ -172,3 +172,22 @@ def test_a_batch_with_any_bad_event_is_refused_whole(
         assert _post(client, case.id, events).status_code == 422
     assert _post(client, uuid4(), [ok]).status_code == 404
     assert _count(env) == before
+
+
+def test_reading_the_dd_pack_records_who_viewed_it(
+    env: Env,  # noqa: F811
+    writer: tuple[TestClient, Principal],  # noqa: F811
+) -> None:
+    """docs/09 §5: DD_PACK_VIEWED, with the format read and whether the pack was complete."""
+    client, principal = writer
+    case = _held_case(env)
+    assert client.get(f"/api/v1/cases/{case.id}/dd-pack").status_code == 200
+    html = client.get(f"/api/v1/cases/{case.id}/dd-pack?format=html")
+    assert html.status_code == 200 and "Due-diligence pack: Case" in html.text
+    viewed = [t for t in _traces(env, case) if t["type"] == "DD_PACK_VIEWED"]
+    assert [t["payload"] for t in viewed] == [
+        {"format": "json", "complete": False},  # an open case is never complete
+        {"format": "html", "complete": False},
+    ]
+    assert all(t["user_id"] == principal.user_id for t in viewed)
+    assert client.get(f"/api/v1/cases/{uuid4()}/dd-pack").status_code == 404
