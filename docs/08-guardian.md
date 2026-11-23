@@ -60,7 +60,20 @@ runner registers (`expect`s) a run before asking, so a fast answer is never lost
 nobody expects are dropped. The
 synchronous service steps run in threads, so the event loop never blocks on the database. An
 unexpected error in a task ends the session through the fail-safe. A cancelled task (shutdown)
-just stops, and its session is resumed next time.
+just stops, and its session is resumed next time. The runner's optional `on_finished` hears about
+every session that ends in it (decided, cancelled, fail-safe, or the fast path at `submit`); a
+failure there is logged and never changes the session.
+
+**The api's runner slot** (`delphi.guardian.phone.LiveGuardian`, #98) is
+`app.state.guardian_runner`: the service, an API `SessionRunner`, its `AnswerBoard`, and the
+mock phone's channel (`PhoneChannel` over an in-process `PhoneHub`). `ask` sends
+`probe.requested` (and `otp.sms`) to the payer's phone stream and `on_finished` sends
+`session.decided` (doc 16 §3). The phone's probe-responses handler calls `respond`, then
+signals the board; a wrong OTP goes to the phone as `probe.attempt_result`. A cancel signals the
+waiting run, so the task stops at once. The phone answers and cancels only sessions with
+`runner` API. While the slot is empty the write endpoints answer 503 `NOT_INITIALISED`; #95 fills
+it at start-up (with the real `PriorPort` and `resume_all`), and the app's shutdown stops its
+tasks.
 
 **Implementation** (`delphi.guardian.service.GuardianService`, #94). One method per step, each in
 its own transaction:
