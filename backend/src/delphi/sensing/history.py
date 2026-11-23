@@ -100,15 +100,19 @@ def load_payment_snapshot(
         .where(bank.login_events.c.customer_id == customer_id, bank.login_events.c.at < as_of)
         .order_by(bank.login_events.c.at, bank.login_events.c.id)
     ).all()
-    limits = conn.execute(
-        select(bank.crm_events.c.at)
-        .where(
-            bank.crm_events.c.customer_id == customer_id,
-            bank.crm_events.c.type.in_(config.limit_increase_event_types),
-            bank.crm_events.c.at < as_of,
-        )
-        .order_by(bank.crm_events.c.at)
-    ).all()
+    limits = (
+        conn.execute(
+            select(bank.crm_events.c.at)
+            .where(
+                bank.crm_events.c.customer_id == customer_id,
+                bank.crm_events.c.type.in_(config.limit_increase_event_types),
+                bank.crm_events.c.at < as_of,
+            )
+            .order_by(bank.crm_events.c.at)
+        ).all()
+        if config.limit_increase_event_types  # none configured yet: skip the round trip
+        else []
+    )
 
     history = CustomerHistory(
         customer_id=str(customer_id),
@@ -142,11 +146,18 @@ def payee_mule_score(
 ) -> float:
     """The account's cached mule score if it was computed before ``as_of``, else the
     fallback (docs/13 §3, §6). The offline path applies the same rule (parity)."""
+    score = cached_mule_score(conn, account_id, as_of)
+    return score if score is not None else config.mule_score_fallback
+
+
+def cached_mule_score(conn: Connection, account_id: UUID, as_of: datetime) -> float | None:
+    """The account's score in ``bank.account_scores`` if it was computed before ``as_of``: a
+    score the bank did not have yet must not leak into an earlier decision (docs/13 §6)."""
     s = bank.account_scores
     score = conn.execute(
         select(s.c.p_mule).where(s.c.account_id == account_id, s.c.computed_at < as_of)
     ).scalar_one_or_none()
-    return float(score) if score is not None else config.mule_score_fallback
+    return float(score) if score is not None else None
 
 
 def load_account_snapshot(
