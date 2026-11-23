@@ -216,15 +216,28 @@ class JobQueue:
     def claim(self, worker_id: str, types: frozenset[JobType]) -> Job | None:
         """Take the oldest due job of one of ``types``: a QUEUED job whose ``run_after`` has
         passed, or a RUNNING job whose lease has expired (its worker died) and that has
-        attempts left. Returns None when there is nothing to do."""
+        attempts left. Returns None when there is nothing to do.
+
+        An expired lease gets the same exponential backoff as a recorded failure, counted from
+        the lease's end: a job whose attempt took the database (or the worker) down is not
+        re-claimed straight into the same crash."""
         if not types:
             return None
         now = self.clock.now()
+        backoff = func.make_interval(
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            self.config.retry_backoff.total_seconds() * func.power(2, jobs.c.attempts - 1),
+        )
         due = or_(
             and_(jobs.c.status == JobStatus.QUEUED.value, jobs.c.run_after <= now),
             and_(
                 jobs.c.status == JobStatus.RUNNING.value,
-                jobs.c.locked_until < now,
+                jobs.c.locked_until + backoff < now,
                 jobs.c.attempts < jobs.c.max_attempts,
             ),
         )

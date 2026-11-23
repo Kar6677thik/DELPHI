@@ -20,6 +20,9 @@ updates:
     ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
+      # Bumped by hand with the Playwright image pinned in ci.yml (the e2e job): the test
+      # library must match the browsers in that image.
+      - dependency-name: "@playwright/test"
     groups:
       javascript:
         patterns: ["*"]

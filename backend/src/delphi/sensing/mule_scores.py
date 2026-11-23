@@ -32,7 +32,7 @@ from delphi.platform.logging import get_logger
 from delphi.sensing.artifacts import ArtifactKind, StoredArtifact, active_artifacts, load_blob
 from delphi.sensing.config import SensingConfig, load_sensing_config
 from delphi.sensing.features import ACCOUNT_FEATURES, build_account_features, to_us
-from delphi.sensing.history import load_account_snapshot
+from delphi.sensing.history import cached_mule_score, load_account_snapshot
 from delphi.sensing.mule import MuleModel
 from delphi.sensing.offline import OfflineAccountHistories, load_bank_frames
 from delphi.sim import api as bank
@@ -142,12 +142,9 @@ class MuleScores:
         fallback = self.settings.features.mule_score_fallback
         try:
             with self.engine.begin() as conn:
-                s = bank.account_scores
-                cached = conn.execute(
-                    select(s.c.p_mule).where(s.c.account_id == account_id, s.c.computed_at < as_of)
-                ).scalar_one_or_none()
+                cached = cached_mule_score(conn, account_id, as_of)
                 if cached is not None:
-                    return float(cached)
+                    return cached
                 model = self._active(conn)
                 if model is None:
                     log.warning(
@@ -157,6 +154,7 @@ class MuleScores:
                 snapshot = load_account_snapshot(conn, account_id, as_of, self.settings.accounts)
                 features = build_account_features(snapshot, to_us(as_of), self.settings.accounts)
                 p = model.p_mule({f: features[f] for f in ACCOUNT_FEATURES})
+                s = bank.account_scores
                 if not conn.execute(
                     select(s.c.account_id).where(s.c.account_id == account_id)
                 ).first():

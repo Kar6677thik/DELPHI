@@ -225,6 +225,13 @@ def active_artifacts(conn: Connection | Session) -> dict[ArtifactKind, StoredArt
     return {ArtifactKind(r.kind): StoredArtifact.of(r) for r in rows}
 
 
+def active_artifact_ids(conn: Connection | Session) -> dict[ArtifactKind, UUID]:
+    """The id of each kind's ACTIVE artifact: the cheap check an inference cache runs per call."""
+    a = model_artifacts.c
+    rows = conn.execute(select(a.kind, a.id).where(a.status == ArtifactStatus.ACTIVE.value)).all()
+    return {ArtifactKind(r.kind): r.id for r in rows}
+
+
 def artifacts_of_job(
     conn: Connection | Session, job_id: UUID
 ) -> dict[ArtifactKind, StoredArtifact]:
