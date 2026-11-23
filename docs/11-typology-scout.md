@@ -27,8 +27,8 @@ queue since the last run.
 allow_single_cluster=True)` on the queue items from the last 30 days. A queue holding one
 pattern (the Scout's main case: in S-4, collect-refund scams dominate the queue) is one cluster,
 not all noise. With a single cluster, HDBSCAN keeps only its densest members unless
-`cluster_selection_epsilon` is set; **proposed** (#197, awaiting approval as a KB v1 change):
-`scout.cluster_selection_epsilon: 1.0`, below the √2 distance of one differing outcome, so a
+`cluster_selection_epsilon` is set: `scout.cluster_selection_epsilon` (1.0, a KB model default,
+approved on #117), below the √2 distance of one differing outcome, so a
 pattern keeps all its members while a pattern that differs in one answer stays separate. Points
 labelled noise stay in the queue.
 
@@ -55,9 +55,16 @@ column with no difference beyond float noise is left out; with no known-typology
 compare against there are no distinguishing features),
 `outcome_profile`, `draft_likelihoods` (ESS capped at `elicitation.default_ess`) and
 `template_name`, composed by `scout()`. Its numbers are the KB's `scout:` section. A feature
-missing from an item sits at its training mean (z = 0). The queue rules, the `RUN_SCOUT` job and
-its tables follow, together with each cluster's `size` and time span (which need the items'
-timestamps from the queue).
+missing from an item sits at its training mean (z = 0).
+
+**The queue** (`delphi.scout.queue`, #117):
+- **Items:** decided Guardian sessions with the `unexplained` flag, and disposed ACCOUNT_REVIEW
+  cases whose posterior at disposition is ≥ `unexplained_routing_threshold`. A PAYMENT_HOLD case
+  is not a second item, because its session already is.
+- **Leaving the queue:** an item leaves when an FDE engineer dismisses it
+  (`scout_queue_dismissals`, one row per item, audited), or when it is a member of a cluster
+  whose typology draft is PROMOTED. Members are stored as `{subject_type, subject_id}` refs.
+- **Still to come:** the `RUN_SCOUT` job, the auto-trigger and each cluster's size and time span.
 
 ## 3. FDE drafting (`DRAFT`)
 

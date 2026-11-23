@@ -28,6 +28,7 @@ from delphi.api.routers import (
     kb,
     metrics,
     platform,
+    scout,
     sensing,
     status,
 )
@@ -96,6 +97,7 @@ def create_app(resources: Platform, *, event_hub: EventHub | None = None) -> Fas
     app.include_router(sensing.router)
     app.include_router(cases.router)
     app.include_router(chase.router)
+    app.include_router(scout.router)
     app.include_router(guardian.router)
     app.include_router(metrics.router)
     # Last: the SPA catch-all must not shadow any API route.

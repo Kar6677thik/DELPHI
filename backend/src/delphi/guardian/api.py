@@ -11,9 +11,11 @@ from delphi.guardian.views import (
     SessionCursor,
     SessionFilter,
     SessionRow,
+    UnexplainedSession,
     get_session_row,
     list_sessions,
     probe_run_rows,
+    unexplained_sessions,
 )
 
 __all__ = [
@@ -24,6 +26,7 @@ __all__ = [
     "SessionMode",
     "SessionRow",
     "SessionStatus",
+    "UnexplainedSession",
     "build_dd_pack",
     "case_trail",
     "get_session_row",
@@ -31,4 +34,5 @@ __all__ = [
     "list_sessions",
     "probe_run_rows",
     "render_dd_pack_html",
+    "unexplained_sessions",
 ]

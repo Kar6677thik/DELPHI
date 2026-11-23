@@ -9,7 +9,15 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    StringConstraints,
+    model_serializer,
+    model_validator,
+)
 
 UPPER_SNAKE = r"^[A-Z][A-Z0-9]*(_[A-Z0-9]+)*$"
 Key = Annotated[str, StringConstraints(pattern=UPPER_SNAKE)]
@@ -282,6 +290,19 @@ class ScoutSection(_Frozen):
     auto_trigger_new_items: int
     shadow_min_sessions: int
     shadow_min_sessions_demo: int
+    # docs/11 §2 (#197, approved on #117): HDBSCAN's cluster_selection_epsilon, below the √2
+    # distance of one differing outcome. A model default, so the stored KB v1 keeps its hash;
+    # later KB versions may set it.
+    cluster_selection_epsilon: float = Field(default=1.0, ge=0)
+
+    @model_serializer(mode="wrap")
+    def _keep_v1_hash(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        """Leave the default out of the canonical content unless a KB version sets it, so a
+        stored version without the key keeps its SHA-256 (docs/07 §1)."""
+        data: dict[str, Any] = handler(self)
+        if "cluster_selection_epsilon" not in self.model_fields_set:
+            data.pop("cluster_selection_epsilon", None)
+        return data
 
 
 class TimeSection(_Frozen):

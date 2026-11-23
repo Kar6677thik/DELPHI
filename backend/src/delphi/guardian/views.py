@@ -138,3 +138,31 @@ def probe_run_rows(conn: Connection | Session, session_id: UUID) -> list[Any]:
     return list(
         conn.execute(select(probe_runs).where(pr.session_id == session_id).order_by(pr.seq))
     )
+
+
+@dataclass(frozen=True, slots=True)
+class UnexplainedSession:
+    """A decided session flagged unexplained (docs/11 §1), for the Scout's queue."""
+
+    id: UUID
+    payment_id: UUID
+    decided_at: datetime
+    p_unexplained: float
+
+
+def unexplained_sessions(
+    conn: Connection | Session, *, since: datetime | None = None
+) -> list[UnexplainedSession]:
+    """Decided sessions whose terminal posterior was flagged unexplained, oldest first."""
+    gs = guardian_sessions.c
+    query = select(gs.id, gs.payment_id, gs.decided_at, gs.posterior).where(
+        gs.unexplained.is_(True), gs.decided_at.is_not(None)
+    )
+    if since is not None:
+        query = query.where(gs.decided_at >= since)
+    return [
+        UnexplainedSession(
+            r.id, r.payment_id, r.decided_at, float(r.posterior.get("UNEXPLAINED", 0))
+        )
+        for r in conn.execute(query.order_by(gs.decided_at, gs.id))
+    ]

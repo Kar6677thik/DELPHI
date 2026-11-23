@@ -43,11 +43,13 @@ from delphi.navigator.store import (
     CaseSort,
     CaseStatus,
     CaseType,
+    UnexplainedReview,
     get_case,
     list_cases,
     open_case,
     open_case_for_payment,
     sort_value,
+    unexplained_reviews,
 )
 
 __all__ = [
@@ -71,6 +73,7 @@ __all__ = [
     "InheritedTrail",
     "PoliceAlert",
     "Recommendation",
+    "UnexplainedReview",
     "act_on_alert",
     "build_case_dd_pack",
     "case_kpis",
@@ -89,5 +92,6 @@ __all__ = [
     "request_evidence",
     "request_simulated_outreach",
     "sort_value",
+    "unexplained_reviews",
     "vulnerable_payer",
 ]

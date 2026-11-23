@@ -178,6 +178,8 @@ typology_drafts(id, cluster_id null, status, revision int, spec jsonb, last_edit
                 editors uuid[] (every user who ever saved a revision),
                 backtest_report jsonb null, backtested_revision null, shadow_kb_version_id null,
                 approved_by null, rejected_reason null, created_at, updated_at, version)
+scout_queue_dismissals(subject_type (GUARDIAN_SESSION|CASE), subject_id, reason, dismissed_by,
+                       dismissed_at, primary key(subject_type, subject_id))   -- #117, docs/11 §1
 shadow_evaluations(id bigint identity, kb_version_id, subject_type, subject_id, posterior jsonb,
                    decision, would_select_first null, agrees bool, at)
 
