@@ -1,5 +1,6 @@
-"""SQLAlchemy Core descriptions of ``delphi.cases`` (migration 0012) and
-``delphi.evidence_records`` (0013, docs/17). The migrations are the source of truth for
+"""SQLAlchemy Core descriptions of ``delphi.cases`` (migration 0012),
+``delphi.evidence_records`` (0013), ``delphi.police_alert_drafts`` (0014) and
+``delphi.trace_events`` (0015, docs/17). The migrations are the source of truth for
 constraints; a test compares these columns with the migrated schema."""
 
 from __future__ import annotations
@@ -94,4 +95,15 @@ police_alert_drafts = Table(
     Column("acted_by", UUID(as_uuid=True)),
     _ts("acted_at", nullable=True),
     _ts("created_at"),
+)
+
+trace_events = Table(
+    "trace_events",
+    metadata,
+    Column("id", BigInteger, primary_key=True),  # GENERATED ALWAYS AS IDENTITY
+    Column("case_id", UUID(as_uuid=True), nullable=False),
+    Column("user_id", UUID(as_uuid=True)),
+    Column("type", Text, nullable=False),
+    Column("payload", JSONB, nullable=False),
+    _ts("at"),
 )

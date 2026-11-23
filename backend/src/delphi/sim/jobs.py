@@ -34,7 +34,13 @@ from delphi.platform.locks import DATASET_WRITE_LOCK_KEY
 from delphi.sim import bank
 from delphi.sim.catalog import READY, datasets
 from delphi.sim.dataset import generate_dataset
-from delphi.sim.delivery import deliver_labels
+from delphi.sim.delivery import (
+    BATCHES_PER_RUN,
+    deliver_batch,
+    deliver_labels,
+    limit_transaction,
+    lock_delivery,
+)
 from delphi.sim.external import outreach_answer
 from delphi.sim.generator_config import GeneratorConfig, history_end, load_generator_config
 from delphi.sim.personas import manifest_json
@@ -219,12 +225,24 @@ class LabelDeliveryJob:
     kb: KnowledgeBase
 
     def __call__(self, ctx: JobContext) -> Mapping[str, Any] | None:
+        """One bounded transaction per batch, so memory and WAL stay small and a crash loses at
+        most one batch. If another run holds the lock, this one has nothing to do. After
+        ``BATCHES_PER_RUN`` batches it stops; the next run carries on."""
         now = self.clock.now()
-        with self.sim_engine.begin() as conn:
-            delivered = deliver_labels(
-                conn, until=now, active_hypotheses=_active_hypotheses(conn, self.kb), now=now
-            )
-        return {"delivered": delivered, "until": now.isoformat()}
+        delivered = 0
+        for batches in range(BATCHES_PER_RUN):
+            with self.sim_engine.begin() as conn:
+                limit_transaction(conn)
+                if not lock_delivery(conn, wait=False):
+                    return {"delivered": delivered, "until": now.isoformat(), "skipped": "busy"}
+                active = _active_hypotheses(conn, self.kb)
+                batch = deliver_batch(conn, until=now, active_hypotheses=active, now=now)
+            delivered += batch.recorded
+            if batch.marked == 0:
+                return {"delivered": delivered, "until": now.isoformat(), "more": False}
+            if not ctx.report((batches + 1) / BATCHES_PER_RUN):
+                break
+        return {"delivered": delivered, "until": now.isoformat(), "more": True}
 
 
 OutreachRecorder = Callable[[UUID, str], None]
