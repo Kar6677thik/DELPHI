@@ -19,13 +19,15 @@ from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Query, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import AwareDatetime, BaseModel, Field
 from sqlalchemy.orm import Session
 
 from delphi.api.idempotency import IdempotencyKey, RawBody, run_idempotent
 from delphi.api.routers import API_PREFIX
+from delphi.api.routers.guardian import DdPackFormat
 from delphi.api.security import Permission, Principal, require
+from delphi.guardian.api import case_trail
 from delphi.kb.model import UNEXPLAINED
 from delphi.kb.store import get_version
 from delphi.navigator.api import (
@@ -44,6 +46,7 @@ from delphi.navigator.api import (
     EvidenceRecord,
     TraceType,
     act_on_alert,
+    build_case_dd_pack,
     case_profile,
     console,
     current_records,
@@ -52,6 +55,7 @@ from delphi.navigator.api import (
     get_case,
     list_cases,
     record_client_traces,
+    refresh_dd_pack_complete,
     request_evidence,
     request_simulated_outreach,
     sort_value,
@@ -60,6 +64,7 @@ from delphi.navigator.api import (
 from delphi.navigator.api import (
     OUTREACH as OUTREACH_SOURCE,
 )
+from delphi.platform.ddpack import render_html as render_dd_pack_html
 from delphi.platform.errors import DelphiError, NotFoundError, ProblemCode
 from delphi.platform.wiring import Platform
 
@@ -468,6 +473,8 @@ def dispose_case(
             expected_version=expected,
             user_id=principal.user_id,
         )
+        refresh_dd_pack_complete(session, case_id, case_trail)  # docs/09 §7: on every change
+        record = get_case(session, case_id) or record
         return HTTPStatus.OK, _detail(session, record, platform.clock.now()).model_dump(mode="json")
 
     reply = run_idempotent(request, raw, principal, key, run)
@@ -624,3 +631,31 @@ def post_trace_events(
     with platform.sessions.begin() as session:
         recorded = record_client_traces(session, platform.clock, case_id, principal.user_id, events)
     return TraceBatchResult(recorded=recorded)
+
+
+@router.get(
+    "/cases/{case_id}/dd-pack",
+    response_model=None,
+    responses={200: {"content": {"text/html": {}}}},
+)
+def read_case_dd_pack(
+    case_id: UUID,
+    request: Request,
+    _principal: Annotated[Principal, Depends(require(Permission.VIEW))],
+    format: Annotated[DdPackFormat, Query()] = DdPackFormat.JSON,
+) -> Any:
+    """The case's due-diligence pack (docs/09 §7, FR-NAV-11): JSON, or a printable HTML page.
+    Computed on read, so it is authoritative over the stored ``dd_pack_complete``."""
+    with _platform(request).sessions() as session:
+        record = get_case(session, case_id)
+        if record is None:
+            raise NotFoundError("No case with this id.")
+        inherited = (
+            case_trail(session, record.guardian_session_id)
+            if record.guardian_session_id is not None
+            else None
+        )
+        pack = build_case_dd_pack(session, case_id, inherited)
+    if format is DdPackFormat.HTML:
+        return HTMLResponse(render_dd_pack_html(pack))
+    return pack.as_json()

@@ -256,6 +256,37 @@ leaves it false and never blocks the decision. The last planning step (the one t
 has no probe run: its candidates are kept in the `guardian.session.decided` audit entry and
 appear in sections 3 and 4.
 
+**Implementation, case pack** (#108): `delphi.navigator.ddpack`, served by
+`GET /cases/{id}/dd-pack`. The pack's shape (sections, the completeness rule, the printable page)
+is `delphi.platform.ddpack`, shared with the Guardian session's pack. The Navigator may not import
+Guardian, so a case's inherited trail (the session pack's sections 2, 3, 4 and 8) is passed in by
+the api and the worker from `guardian.api.case_trail`.
+
+The case's sections:
+1. Header: the case, its subject, amount, channel, the customer's pseudonym, vulnerability and
+   the KB version with its hash.
+2. Prior: the session's prior section, or for a case without a session what `prior_components`
+   stored (no feature contributions).
+3. Timeline: the session's steps (origin `GUARDIAN`), then the case's current evidence records
+   (origin `NAVIGATOR`), with rank and net value at request, facts, outcome and posterior before
+   and after.
+4. Guardrails: the session's, required only when the case has Guardian-originated steps.
+5. Decisions: the engine's recommendation and risks, and the disposition with user, time,
+   confidence, typology and any override rationale. It is empty until the case is DISPOSED.
+6. Narratives: every current record's narrative, labelled "AI-written summary" or "Template
+   summary", with its citations resolved to the cited records' sources. It is empty while any
+   narrative is still being written. A case decided without evidence says "No evidence was
+   fetched for this case."
+7. Liens and tickets: not applicable until the chase (M6).
+8. Audit: the case's chain check, plus the session's.
+9. Method note.
+
+`cases.dd_pack_complete` is recomputed after a disposition (in its transaction) and whenever a
+narrative is written, which can complete section 6 after the decision. The recomputation runs in
+a savepoint: a failure is logged, leaves the flag as it was and never blocks the change. The flag
+is derived, so it does not bump the case's version. `DD_PACK_VIEWED` follows with the trace events
+(§5).
+
 ## 8. Campaigns
 
 Rules are in doc 05 §5. The campaign list is sorted by `rank_score` and shows the

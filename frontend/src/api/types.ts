@@ -43,9 +43,29 @@ export type EvidenceRow = Schemas['EvidenceRowView'];
 export type EvidenceRecord = Schemas['EvidenceRecordView'];
 /** "What would change my mind" (docs/06 §12). */
 export type Flip = Schemas['FlipView'];
+/** `POST /cases/{id}/evidence-requests`. */
+export type EvidenceRequest = Schemas['EvidenceRequest'];
+/** `POST /cases/{id}/disposition`. */
+export type DispositionRequest = Schemas['DispositionRequest'];
 /** The case queue's orders. */
 export type CaseSort = Schemas['CaseSort'];
 /** `GET /metrics/summary`: the Overview's live KPIs and alerts (docs/22 §7, docs/20 §4). */
 export type MetricsSummary = Schemas['MetricsSummary'];
 /** `GET /status`: whether the demo is seeded and its models trained (docs/16, docs/20 §3). */
 export type StatusView = Schemas['StatusView'];
+/** `GET /jobs/{id}` and the rows of `GET /jobs` (docs/16 §2 "Admin and jobs"). */
+export type JobView = Schemas['JobView'];
+/** `GET /jobs`: one keyset page, newest first. */
+export type JobPage = Schemas['JobPage'];
+export type JobStatus = Schemas['JobStatus'];
+export type JobType = Schemas['JobType'];
+/** `GET /admin/audit/verify`: whether the audit hash chain is intact (docs/17 §4). */
+export type AuditVerifyView = Schemas['AuditVerifyView'];
+/** `POST /admin/datasets`. */
+export type DatasetRequest = Schemas['DatasetRequest'];
+/** `GET /admin/users` rows; `version` is the ETag a change sends as `If-Match`. */
+export type UserView = Schemas['UserView'];
+/** `POST /admin/users`. */
+export type CreateUser = Schemas['CreateUser'];
+/** `PATCH /admin/users/{id}`: only the fields present change. */
+export type UpdateUser = Schemas['UpdateUser'];

@@ -3,7 +3,7 @@ import { http, HttpResponse } from 'msw';
 import { describe, expect, it } from 'vitest';
 
 import { afterAnswer, parseKb, separation } from '../src/api/kb';
-import { keyText } from '../src/routes/KbPage';
+import { keyText } from '../src/lib/format';
 import { setMockSession } from './mocks/handlers';
 import { server } from './mocks/node';
 import { renderApp } from './renderApp';

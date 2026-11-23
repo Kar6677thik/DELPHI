@@ -57,17 +57,25 @@ the police alert yet (its own issue). `/cases/:id` follows doc 09 §2 from `GET 
 - the "Evidence sufficient — recommend {decision} (expected loss ₹X)" banner while
   `evidence_sufficient` and not disposed;
 - the next-best-evidence rows in the server's order, with the "Protocol" badge, minutes, "X% of
-  remaining uncertainty" and net value;
+  remaining uncertainty" and net value. "Fetch" posts the evidence request; the outreach call
+  opens a form for its outcome (the KB source's `outcomes`) and note;
 - "What would change my mind";
 - one `EvidenceCard` per record, whose narrative is labelled "AI-written summary" (`LLM`) or
   "Template summary". Its `[record_id]` citations render as chips that scroll to, focus and
   highlight that record's fact table (a citation to a record not on the page is plain text).
   Facts named `*_paise` show as ₹ and `*_share` as a percentage;
 - loading and error states; a disposed case shows "(decision taken)" in the risk table and
-  neither the banner nor the next-best evidence.
+  neither the banner nor the next-best evidence;
+- the disposition panel. Its decisions are the keys of `risk_by_decision`. CONFIRM_FRAUD names
+  a typology (the case's fraud hypotheses, most likely first, then FRAUD_OTHER). Confidence is
+  1–5, and an override needs a rationale of at least 20 characters.
 
-`evidence.narrative_ready` invalidates the `['cases']` queries, like `case.*`. The console's write
-controls (fetch, the outreach call, the disposition and its 412 handling) follow in part 2.
+Without `case:write`, the fetch buttons are disabled and the disposition form is replaced by a
+note. Every POST sends a fresh `Idempotency-Key`; the disposition sends the ETag the console was
+showing as `If-Match`. On 412 the panel shows "This case changed — reload" with the fields that
+changed (status, leading hypothesis, recommendation, evidence count, disposition), and locks the
+form until "Reload". `evidence.narrative_ready` invalidates the `['cases']` queries, like
+`case.*`.
 
 **The knowledge base, read-only (part of #119):** `/kb` lists `GET /kb/versions` (status, change
 summary, "From vN" lineage) and opens the ACTIVE version, or the one in `?v=`. For it: the
@@ -80,6 +88,22 @@ hypothesis colour); choosing an answer shows the belief that answer alone would 
 odds, with each hypothesis's factor against its even share. That is an explainer, not the engine's
 update (which starts from the session's prior). A version with a parent shows `GET …/diff`;
 "Export as YAML" downloads `GET …/export`. Promote and rollback follow with the shadow evaluations.
+
+**Admin (#231):** `/admin` opens with one readiness line, then a strip from `GET /status`: the
+dataset (with the seeding progress while it is made) and each sensing model's ACTIVE version,
+marked "below its gate" when it is in `models_below_gate`. "Set up the demo" queues a dataset
+(`POST /admin/datasets`, the profile chosen) and a retraining (`POST /admin/sensing/train`,
+disabled without a dataset), each with a fresh `Idempotency-Key`; a 409 shows as a problem alert.
+"Audit chain" runs `GET /admin/audit/verify` only on a click, because it reads every entry: it shows
+"Intact" with the entries checked, or "Broken" with the first bad entry. "Jobs" lists `GET /jobs`
+newest first, filtered by status and type, 25 more at a time: type, status (a live mark while
+running), progress, tries, when it was queued, how long it took, and the error; a FAILED job has
+"Retry" (`POST /jobs/{id}/retry`). `job.updated` invalidates the `['admin']` queries. "Users"
+lists `GET /admin/users` (the signed-in admin marked "you"): a role select, "Disable" / "Enable"
+(never offered on your own row) and "Reset password" each send `PATCH /admin/users/{id}` with the
+row's `version` as `If-Match`; a 412 or the last-admin 409 shows as a problem alert and the list is
+re-read. "Add a user" posts `POST /admin/users` (username pattern, display name, a password of at
+least 12 characters, role). The demo story runner and demo reset come with their endpoints.
 
 **M4 Guardian screens (#100):** `/guardian` lists `GET /guardian/sessions` newest first, 50 at a
 time, with "Load more sessions" while `next_cursor` is set: start time (linking to
@@ -95,6 +119,10 @@ Hypothesis names and colours come from the session's pinned KB version (`GET /kb
 fetched once per version); the KB content and the candidates are read with field checks, not
 casts, until the api types them (#198). `guardian.session.updated` and `guardian.session.decided` invalidate
 the `['guardian']` queries.
+The session detail also shows the current belief as the Oracle (`BeliefView`, as on the phone's
+live panel) with the posterior bar beneath; where WebGL is missing, the bar alone. In-flight
+rows on `/guardian` carry a live mark; decisions are toned (release green, review amber, holds
+and declines red) and always named in text too.
 
 ## 2a. Design system: "data terminal", dark (#99)
 

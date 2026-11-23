@@ -8,6 +8,7 @@ import {
   useKbDisplays,
 } from '../api/guardian';
 import type { SessionMode, SessionStatus } from '../api/types';
+import { forDark } from '../components/HypothesisBar';
 import { MoneyText } from '../components/MoneyText';
 import { ProblemAlert } from '../components/ProblemAlert';
 import { decisionText, humanise } from '../lib/format';
@@ -36,6 +37,19 @@ function isMode(value: string): value is SessionMode {
   return value in MODES;
 }
 
+const SELECT =
+  'rounded-md border border-control bg-raised px-3 py-1.5 text-[13px] text-ink transition-colors hover:border-soft focus:border-accent focus:outline-none';
+
+/** Statuses still in flight: the row carries a live mark. */
+const IN_FLIGHT = new Set<string>(['CREATED', 'PASSIVE_PROBING', 'PLANNING', 'AWAITING_CUSTOMER']);
+
+const DECISION_TONE: Readonly<Record<string, string>> = {
+  RELEASE: 'text-positive',
+  HOLD_FOR_REVIEW: 'text-warning',
+  PROTECTIVE_HOLD: 'text-negative',
+  DECLINE: 'text-negative',
+};
+
 const TIME = new Intl.DateTimeFormat('en-IN', {
   dateStyle: 'medium',
   timeStyle: 'medium',
@@ -52,12 +66,15 @@ export function GuardianPage() {
   // The decisions the api accepts are the ACTIVE KB's GUARDIAN_PAYMENT ones (docs/16).
   const active = useActiveKbDisplay();
   return (
-    <section aria-labelledby="guardian-title">
-      <h1 id="guardian-title" className="text-2xl font-semibold">
+    <section aria-labelledby="guardian-title" className="max-w-[1320px]">
+      <h1 id="guardian-title" className="text-[26px] font-semibold tracking-tight">
         Guardian monitor
       </h1>
+      <p className="mt-1 text-[14px] text-muted">
+        Every payment DELPHI weighs, newest first, as it happens.
+      </p>
       <form
-        className="mt-4 flex flex-wrap items-end gap-4 text-sm"
+        className="mt-6 flex flex-wrap items-end gap-4 text-[12px] text-muted"
         aria-label="Filters"
         onSubmit={(e) => {
           e.preventDefault();
@@ -66,7 +83,7 @@ export function GuardianPage() {
         <label className="flex flex-col gap-1">
           Status
           <select
-            className="rounded border border-slate-300 px-2 py-1"
+            className={SELECT}
             value={filters.status ?? ''}
             onChange={(e) => {
               const v = e.target.value;
@@ -84,7 +101,7 @@ export function GuardianPage() {
         <label className="flex flex-col gap-1">
           Decision
           <select
-            className="rounded border border-slate-300 px-2 py-1"
+            className={SELECT}
             value={filters.decision ?? ''}
             onChange={(e) => {
               setFilters({ ...filters, decision: e.target.value || undefined });
@@ -101,7 +118,7 @@ export function GuardianPage() {
         <label className="flex flex-col gap-1">
           Mode
           <select
-            className="rounded border border-slate-300 px-2 py-1"
+            className={SELECT}
             value={filters.mode ?? ''}
             onChange={(e) => {
               const v = e.target.value;
@@ -116,9 +133,10 @@ export function GuardianPage() {
             ))}
           </select>
         </label>
-        <label className="flex items-center gap-2">
+        <label className="flex items-center gap-2 pb-2 text-[13px] text-soft">
           <input
             type="checkbox"
+            className="accent-[var(--color-accent)]"
             checked={filters.unexplained ?? false}
             onChange={(e) => {
               setFilters({ ...filters, unexplained: e.target.checked || undefined });
@@ -127,81 +145,115 @@ export function GuardianPage() {
           Unexplained only
         </label>
       </form>
-      <div className="mt-4">
-        {sessions.isPending && <p className="text-slate-600">Loading sessions…</p>}
+      <div className="mt-5 rounded-md bg-surface px-8 py-6">
+        {sessions.isPending && <p className="text-[14px] text-muted">Loading sessions…</p>}
         {sessions.isError && (
           <ProblemAlert error={sessions.error} title="Could not load the sessions" />
         )}
         {sessions.isSuccess && items.length === 0 && (
-          <p className="text-slate-600">No Guardian sessions match.</p>
+          <p className="text-[14px] text-muted">No Guardian sessions match.</p>
         )}
         {sessions.isSuccess && items.length > 0 && (
           <>
-            <table className="w-full text-left text-sm">
-              <caption className="sr-only">Guardian sessions, newest first</caption>
-              <thead className="border-b border-slate-300 text-slate-600">
-                <tr>
-                  <th scope="col" className="py-2 pr-4">
-                    Started
-                  </th>
-                  <th scope="col" className="py-2 pr-4 text-right">
-                    Amount
-                  </th>
-                  <th scope="col" className="py-2 pr-4">
-                    Leading hypothesis
-                  </th>
-                  <th scope="col" className="py-2 pr-4">
-                    Status
-                  </th>
-                  <th scope="col" className="py-2 pr-4">
-                    Decision
-                  </th>
-                  <th scope="col" className="py-2 pr-4">
-                    B1 / B2
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((s) => (
-                  <tr key={s.id} className="border-b border-slate-100">
-                    <td className="py-2 pr-4">
-                      <Link to={`/guardian/${s.id}`} className="underline">
-                        {TIME.format(new Date(s.started_at))}
-                      </Link>
-                    </td>
-                    <td className="py-2 pr-4 text-right">
-                      <MoneyText paise={s.payment.amount_paise} />
-                    </td>
-                    <td className="py-2 pr-4">
-                      {s.leading_hypothesis
-                        ? (kbs.get(s.kb_version_id)?.styles[s.leading_hypothesis]?.name ??
-                          humanise(s.leading_hypothesis))
-                        : '—'}
-                      {s.unexplained && (
-                        <span className="ml-2 rounded bg-violet-100 px-2 py-0.5 text-violet-900">
-                          Unexplained
-                        </span>
-                      )}
-                    </td>
-                    <td className="py-2 pr-4">
-                      {isStatus(s.status) ? STATUSES[s.status] : humanise(s.status)}
-                    </td>
-                    <td className="py-2 pr-4">{s.decision ? decisionText(s.decision) : '—'}</td>
-                    <td className="py-2 pr-4">
-                      {s.baselines
-                        ? `${decisionText(s.baselines.B1)} / ${decisionText(s.baselines.B2)}`
-                        : '—'}
-                    </td>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[860px] text-left text-[14px]">
+                <caption className="sr-only">Guardian sessions, newest first</caption>
+                <thead className="border-b border-line text-[12px] text-muted">
+                  <tr>
+                    <th scope="col" className="py-2 pr-4 font-normal">
+                      Started
+                    </th>
+                    <th scope="col" className="py-2 pr-6 text-right font-normal">
+                      Amount
+                    </th>
+                    <th scope="col" className="py-2 pr-4 font-normal">
+                      Leading hypothesis
+                    </th>
+                    <th scope="col" className="py-2 pr-4 font-normal">
+                      Status
+                    </th>
+                    <th scope="col" className="py-2 pr-4 font-normal">
+                      Decision
+                    </th>
+                    <th scope="col" className="py-2 pr-4 font-normal">
+                      B1 / B2
+                    </th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {items.map((s) => (
+                    <tr
+                      key={s.id}
+                      className="border-b border-line text-soft transition-colors last:border-b-0 hover:bg-raised/50"
+                    >
+                      <td className="py-3 pr-4">
+                        <Link
+                          to={`/guardian/${s.id}`}
+                          className="figure text-[13px] text-ink underline decoration-control underline-offset-4 hover:decoration-soft"
+                        >
+                          {TIME.format(new Date(s.started_at))}
+                        </Link>
+                      </td>
+                      <td className="figure py-3 pr-6 text-right text-ink">
+                        <MoneyText paise={s.payment.amount_paise} />
+                      </td>
+                      <td className="py-3 pr-4">
+                        {s.leading_hypothesis ? (
+                          <span className="inline-flex items-center gap-2">
+                            <span
+                              aria-hidden
+                              className="size-2 shrink-0 rounded-full"
+                              style={{
+                                background: forDark(
+                                  kbs.get(s.kb_version_id)?.styles[s.leading_hypothesis]?.color ??
+                                    '#8A8C92',
+                                ),
+                              }}
+                            />
+                            {kbs.get(s.kb_version_id)?.styles[s.leading_hypothesis]?.name ??
+                              humanise(s.leading_hypothesis)}
+                          </span>
+                        ) : (
+                          '—'
+                        )}
+                        {s.unexplained && (
+                          <span className="ml-2 rounded-sm bg-raised px-2 py-0.5 text-[12px] text-soft">
+                            Unexplained
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-3 pr-4">
+                        <span className="inline-flex items-center gap-2">
+                          {IN_FLIGHT.has(s.status) && (
+                            <span aria-hidden className="relative flex size-2">
+                              <span className="absolute inline-flex size-full animate-ping rounded-full bg-accent opacity-60" />
+                              <span className="relative inline-flex size-2 rounded-full bg-accent" />
+                            </span>
+                          )}
+                          {isStatus(s.status) ? STATUSES[s.status] : humanise(s.status)}
+                        </span>
+                      </td>
+                      <td
+                        className={`py-3 pr-4 ${s.decision ? (DECISION_TONE[s.decision] ?? '') : ''}`}
+                      >
+                        {s.decision ? decisionText(s.decision) : '—'}
+                      </td>
+                      <td className="py-3 pr-4 text-muted">
+                        {s.baselines
+                          ? `${decisionText(s.baselines.B1)} / ${decisionText(s.baselines.B2)}`
+                          : '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
             {sessions.hasNextPage && (
-              <p className="mt-3 flex items-center gap-3 text-sm text-slate-600">
+              <p className="mt-4 flex items-center gap-3 text-[13px] text-muted">
                 Showing the newest {items.length}; more sessions match.
                 <button
                   type="button"
-                  className="rounded border border-slate-300 px-3 py-1 text-slate-900"
+                  className="rounded-md border border-control px-3 py-1.5 text-soft transition-colors hover:border-soft hover:text-ink"
                   disabled={sessions.isFetchingNextPage}
                   onClick={() => {
                     void sessions.fetchNextPage();

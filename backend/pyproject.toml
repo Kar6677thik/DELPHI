@@ -181,3 +181,8 @@ name = "only sim and evaluation import ground truth (docs/04 §4.1 rule 5)"
 type = "protected"
 protected_modules = ["delphi.sim.truth"]
 allowed_importers = ["delphi.sim", "delphi.evaluation"]
+
+[tool.bandit]
+# B101 (assert): the asserts narrow types after a check the code has already made; none guards
+# input or a security decision, and the image never runs Python with -O.
+skips = ["B101"]

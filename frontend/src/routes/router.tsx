@@ -17,6 +17,7 @@ const PAGES: Partial<Record<string, () => Promise<ComponentType>>> = {
   '/guardian': () => import('./GuardianPage').then((m) => m.GuardianPage),
   '/guardian/:id': () => import('./GuardianSessionPage').then((m) => m.GuardianSessionPage),
   '/kb': () => import('./KbPage').then((m) => m.KbPage),
+  '/admin': () => import('./AdminPage').then((m) => m.AdminPage),
 };
 
 export const routes: RouteObject[] = [
@@ -56,7 +57,10 @@ export const routes: RouteObject[] = [
         const load = PAGES[screen.path];
         return load
           ? { path: screen.path, lazy: () => load().then((Page) => ({ element: gate(<Page />) })) }
-          : { path: screen.path, element: gate(<PlaceholderPage title={screen.title} />) };
+          : {
+              path: screen.path,
+              element: gate(<PlaceholderPage title={screen.title} path={screen.path} />),
+            };
       }),
       { path: '*', element: <NotFoundPage /> },
     ],
