@@ -71,9 +71,15 @@ mock phone's channel (`PhoneChannel` over an in-process `PhoneHub`). `ask` sends
 `session.decided` (doc 16 §3). The phone's probe-responses handler calls `respond`, then
 signals the board; a wrong OTP goes to the phone as `probe.attempt_result`. A cancel signals the
 waiting run, so the task stops at once. The phone answers and cancels only sessions with
-`runner` API. While the slot is empty the write endpoints answer 503 `NOT_INITIALISED`; #95 fills
-it at start-up (with the real `PriorPort` and `resume_all`), and the app's shutdown stops its
-tasks.
+`runner` API. While the slot is empty the write endpoints answer 503 `NOT_INITIALISED`.
+`delphi api` fills it at start-up (`cli.live_guardian_for`, #95): the prior is the sensing
+inference (`SensingInference`, #92), the passive probes use the simulated adapters over the bank
+(§5), with a `statement_timeout` of the KB's `passive_adapter_timeout_ms` plus
+`passive_statement_margin_ms`, and the passive pool has `passive_probe_threads` threads. The
+app's lifespan runs `resume_all` before it serves the first request (FR-GDN-14), and its
+shutdown stops the slot's tasks. Time runs REAL until `DELPHI_TIME_MODE` (doc 07) is a setting.
+The worker's own runner, which drives AUTOPLAY sessions with simulated customers, comes with the
+autoplay traffic (#101).
 
 **Implementation** (`delphi.guardian.service.GuardianService`, #94). One method per step, each in
 its own transaction:

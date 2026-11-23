@@ -36,8 +36,11 @@ from delphi.api.web_security import WebSecurityMiddleware
 from delphi.guardian.api import LiveGuardian
 from delphi.platform.auth_sessions import LoginThrottle
 from delphi.platform.events import EventHub
+from delphi.platform.logging import get_logger
 from delphi.platform.rate_limit import TokenBuckets
 from delphi.platform.wiring import Platform
+
+log = get_logger(__name__)
 
 
 def create_app(
@@ -51,12 +54,17 @@ def create_app(
 
     ``guardian_runner`` is the runner slot (#98): the LIVE sessions of the mock phone, driven
     in this process. Without it the Guardian's write endpoints and the phone stream answer 503
-    NOT_INITIALISED. Tests put one in with a fixture prior; #95 fills it at start-up. The slot
-    can also be set later, on ``app.state.guardian_runner``."""
+    NOT_INITIALISED. Tests put one in with a fixture prior; ``delphi api`` fills it at start-up
+    (#95, ``cli.live_guardian_for``), and the lifespan resumes its interrupted sessions first.
+    The slot can also be set later, on ``app.state.guardian_runner``."""
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         task = asyncio.create_task(event_hub.run()) if event_hub is not None else None
+        live_at_start: LiveGuardian | None = _app.state.guardian_runner
+        if live_at_start is not None:  # FR-GDN-14: finish the sessions a restart interrupted
+            resumed = await live_at_start.runner.resume_all()
+            log.info("guardian.resumed", sessions=len(resumed))
         try:
             yield
         finally:
