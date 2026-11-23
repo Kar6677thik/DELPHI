@@ -1,11 +1,15 @@
 # Dependency updates (docs/19 §5, #127): weekly, grouped per ecosystem, so each week brings at
-# most one PR per ecosystem. CI runs on every Dependabot PR like any other.
+# most one PR per ecosystem. CI runs on every Dependabot PR like any other. Major versions are
+# skipped: a new Python, Node or library major is a deliberate upgrade, done by hand.
 version: 2
 updates:
   - package-ecosystem: uv
     directory: /backend
     schedule:
       interval: weekly
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     groups:
       python:
         patterns: ["*"]
@@ -13,6 +17,12 @@ updates:
     directory: /frontend
     schedule:
       interval: weekly
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+      # Bumped by hand with the Playwright image pinned in ci.yml (the e2e job): the test
+      # library must match the browsers in that image.
+      - dependency-name: "@playwright/test"
     groups:
       javascript:
         patterns: ["*"]
@@ -20,6 +30,9 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     groups:
       actions:
         patterns: ["*"]
@@ -27,3 +40,6 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]

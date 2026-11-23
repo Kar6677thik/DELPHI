@@ -37,6 +37,7 @@ from delphi.navigator.store import (
     payer_is_vulnerable,
 )
 from delphi.navigator.tables import cases
+from delphi.navigator.traces import TraceType, record_trace
 from delphi.platform.audit import ActorType, record
 from delphi.platform.clock import Clock
 from delphi.platform.errors import DelphiError, NotFoundError, ProblemCode
@@ -179,6 +180,21 @@ def dispose(
         entity_type="case",
         entity_id=str(case_id),
         payload=payload,
+    )
+    record_trace(  # docs/09 §5
+        session,
+        case_id=case_id,
+        user_id=user_id,
+        type=TraceType.DISPOSITION,
+        at=now,
+        payload={
+            "decision": decision,
+            "typology": typology,
+            "confidence": disposition.confidence,
+            "is_override": is_override,
+            # whole seconds keep the analytics payload stable (docs/09 §5)
+            "seconds_since_opened": round((now - case.opened_at).total_seconds()),
+        },
     )
     publish(
         session,
