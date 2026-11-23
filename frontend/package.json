@@ -24,7 +24,7 @@
   "dependencies": {
     "@fontsource/ibm-plex-mono": "5.3.0",
     "@fontsource/public-sans": "5.3.0",
-    "@hookform/resolvers": "7.0.7",
+    "@hookform/resolvers": "7.0.8",
     "@radix-ui/react-dropdown-menu": "2.2.1",
     "@react-three/drei": "9.122.0",
     "@react-three/fiber": "8.18.0",
