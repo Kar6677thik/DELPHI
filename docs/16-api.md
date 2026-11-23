@@ -116,6 +116,10 @@ opening fields (posterior, prior components, leading hypothesis, amount, SLA and
 | POST `/chase/operations/{id}/liens/{lien_id}/release` | `chase:write` | `{reason}` |
 | POST `/chase/operations/{id}/close` | `chase:write` | |
 
+The Chase mutations take no `If-Match`, and `ChaseView` has no ETag: lien approval is guarded by
+`Idempotency-Key`, and release and close by the lien's or the operation's state. The list,
+`GET /chase/operations`, is not built yet.
+
 ### Scout, typologies, KB
 
 | Method & path | Perm | Notes |

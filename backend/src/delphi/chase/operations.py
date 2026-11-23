@@ -106,6 +106,17 @@ def _sources(
     return list(row.payment_ids), row.reported_at
 
 
+EVAL_PROFILE = "eval"
+
+
+def visibility_lag(session: Session, kb: KnowledgeBase) -> float:
+    """docs/10 §2: the minutes Chase lags the payment network, by the seeded dataset's profile:
+    ``eval``'s lag on an `eval` dataset, ``demo``'s otherwise (`demo` and `test`)."""
+    dataset = bank.current_dataset(session)
+    lags = kb.config.chase.visibility_lag_min
+    return lags.eval if dataset is not None and dataset.profile == EVAL_PROFILE else lags.demo
+
+
 def create_operation(
     session: Session,
     clock: Clock,
@@ -128,8 +139,9 @@ def create_operation(
     kb = version.kb
     now = clock.now()
     ids, complained_at = _sources(session, complaint_id, payment_ids)
-    lag = kb.config.chase.visibility_lag_min.demo
-    sources, moves = load_trace_inputs(session.connection(), ids, until=visible_until(now, lag))
+    sources, moves = load_trace_inputs(
+        session.connection(), ids, until=visible_until(now, visibility_lag(session, kb))
+    )
     if not sources:
         raise DelphiError(
             "None of these payments was executed: there is no money to chase.",
@@ -256,7 +268,7 @@ def approve_liens(
     sources, moves = load_trace_inputs(
         session.connection(),
         list(op.source_payment_ids),
-        until=visible_until(now, kb.config.chase.visibility_lag_min.demo),
+        until=visible_until(now, visibility_lag(session, kb)),
     )
     traced = trace(
         sources,
