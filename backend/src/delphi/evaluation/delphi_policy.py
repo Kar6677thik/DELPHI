@@ -21,17 +21,17 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from delphi.engine import SessionFacts
+from delphi.engine import Phase, SessionFacts, static_ineligibility
 from delphi.engine.belief import kl_bits
 from delphi.engine.exploration import session_seed
 from delphi.engine.types import CompiledProfile
 from delphi.evaluation.outcomes import Decision, ProbeMode, ProbeRecord
 from delphi.evaluation.replay import Ask, PolicyDecision, PolicyView
-from delphi.guardian.api import PriorInputs, run_session
+from delphi.guardian.api import FAIRNESS_WINDOW, PriorInputs, run_session
 from delphi.kb.model import KnowledgeBase
 from delphi.probes.classifiers import (
     GUARDIAN_CLASSIFIERS,
@@ -42,16 +42,18 @@ from delphi.probes.classifiers import (
     SessionBehaviourObs,
 )
 from delphi.probes.questions import FALLBACK_LANGUAGE, approved_variants
+from delphi.sensing.config import load_sensing_config
 
 CALL_STATUS_CONSENT = "call_status"  # kb/sources/probes/CALL_STATUS.yaml requires_consent
-FAIRNESS_WINDOW = timedelta(days=30)  # docs/06 §8: active sessions per customer in 30 days
 
 
 def passive_outcomes(
     view: PolicyView, kb: KnowledgeBase, *, p_mule: float
 ) -> dict[str, str | None]:
     """Each passive probe's outcome, as the live adapters and classifiers give it (docs/08 §5).
-    A probe whose input is missing (no telemetry) has no outcome (None: no update)."""
+    A probe whose input is missing (no telemetry, no known device) has no outcome (None: no
+    update). Whether a probe runs at all (CALL_STATUS needs its consent) is the planner's
+    ``static_ineligibility``, applied by ``Delphi.decide`` as the live service applies it."""
     t = kb.config.classifiers
     out: dict[str, str | None] = {}
     tel = view.telemetry
@@ -73,15 +75,19 @@ def passive_outcomes(
     if tel is None:
         out |= {"DEVICE_POSTURE": None, "SESSION_BEHAVIOUR": None, "CALL_STATUS": None}
         return out
-    out["DEVICE_POSTURE"] = GUARDIAN_CLASSIFIERS["DEVICE_POSTURE"].classify(
-        DevicePostureObs(
-            remote_access_active=tel.remote_access_active,
-            screen_share_active=tel.screen_share_active,
-            device_first_seen_at=view.device_first_seen_at
-            or view.initiated_at - timedelta(days=3650),
-            as_of=view.initiated_at,
-        ),
-        t,
+    # No known device: the live adapter fails, so there is no update (docs/08 §5).
+    out["DEVICE_POSTURE"] = (
+        GUARDIAN_CLASSIFIERS["DEVICE_POSTURE"].classify(
+            DevicePostureObs(
+                remote_access_active=tel.remote_access_active,
+                screen_share_active=tel.screen_share_active,
+                device_first_seen_at=view.device_first_seen_at,
+                as_of=view.initiated_at,
+            ),
+            t,
+        )
+        if view.device_first_seen_at is not None
+        else None
     )
     out["SESSION_BEHAVIOUR"] = GUARDIAN_CLASSIFIERS["SESSION_BEHAVIOUR"].classify(
         SessionBehaviourObs(
@@ -91,15 +97,9 @@ def passive_outcomes(
         ),
         t,
     )
-    out["CALL_STATUS"] = (
-        GUARDIAN_CLASSIFIERS["CALL_STATUS"].classify(
-            CallStatusObs(
-                on_call=tel.on_call, counterparty_in_contacts=tel.call_counterparty_known
-            ),
-            t,
-        )
-        if view.consent_call_status
-        else None
+    out["CALL_STATUS"] = GUARDIAN_CLASSIFIERS["CALL_STATUS"].classify(
+        CallStatusObs(on_call=tel.on_call, counterparty_in_contacts=tel.call_counterparty_known),
+        t,
     )
     return out
 
@@ -107,14 +107,21 @@ def passive_outcomes(
 DECISIONS = {d.value: d for d in Decision}
 
 
+def _mule_score_fallback() -> float:
+    return load_sensing_config().features.mule_score_fallback  # docs/13 §6
+
+
 @dataclass(slots=True)
 class Delphi:
-    """docs/22 §2's DELPHI (KB v1, frozen), and its ablations."""
+    """docs/22 §2's DELPHI (KB v1, frozen), and its ablations.
+
+    One instance replays one run: the fairness cap counts the customer's earlier active sessions
+    in this instance, so a new run takes a new instance (``run_policies`` builds one per run)."""
 
     kb: KnowledgeBase
     profile: CompiledProfile
     sensing: Mapping[UUID, PriorInputs]
-    p_mule_fallback: float
+    p_mule_fallback: float = field(default_factory=_mule_score_fallback)
     name: str = "DELPHI"
     active: bool = True
     explore: bool = True
@@ -149,14 +156,29 @@ class Delphi:
         )
 
     def decide(self, view: PolicyView, ask: Ask) -> PolicyDecision:
+        facts = self._facts(view)
+        # The passive probes the live service runs (service.py: static_ineligibility in the
+        # passive phase), so a probe without its consent leaves no step and no ProbeRecord.
+        passive = {
+            key: outcome
+            for key, outcome in passive_outcomes(view, self.kb, p_mule=self.p_mule_fallback).items()
+            if static_ineligibility(
+                self.profile,
+                self.profile.sources[key],
+                facts,
+                frozenset(),
+                Phase.GUARDIAN_PASSIVE,
+            )
+            is None
+        }
         result = run_session(
             self.profile,
             self.kb,
             self.sensing[view.payment_id],
             amount_paise=view.amount_paise,
             vulnerable=view.vulnerable,
-            facts=self._facts(view),
-            passive=passive_outcomes(view, self.kb, p_mule=self.p_mule_fallback),
+            facts=facts,
+            passive=passive,
             answer=ask,
             rng_seed=session_seed(str(view.payment_id), self.kb.config.engine.exploration_seed),
             explore=self.explore,

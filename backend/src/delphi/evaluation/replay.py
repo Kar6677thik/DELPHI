@@ -20,7 +20,7 @@ import heapq
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, Protocol
+from typing import Protocol
 from uuid import UUID
 
 from delphi.engine.types import CompiledProfile
@@ -47,6 +47,7 @@ from delphi.sim.dataset import Dataset
 from delphi.sim.generator_config import GeneratorConfig
 from delphi.sim.labels import PaymentDecision
 from delphi.sim.legacy_policy import Baseline, decide_b1, decide_b2, payee_is_new
+from delphi.sim.population import Customer
 from delphi.sim.response_models import ResponseModels
 from delphi.sim.telemetry import SessionTelemetry
 
@@ -113,7 +114,7 @@ class BankState:
     saved: Mapping[tuple[UUID, UUID], tuple[datetime, ...]]
     first_seen: Mapping[UUID, datetime]
     listed: Mapping[UUID, datetime]
-    customers: Mapping[UUID, Any] = field(default_factory=dict)
+    customers: Mapping[UUID, Customer] = field(default_factory=dict)
     merchants: frozenset[UUID] = frozenset()
     phone_risk: Mapping[UUID, str] = field(default_factory=dict)  # account → FRI category
     # payee account → (initiated_at, payer customer) of its released or executed payments
@@ -170,10 +171,8 @@ class BankState:
             if first_seen is not None and first_seen <= at
             else None,
             payer_balance_paise=self.balances.get(p.payer_account_id, 0),
-            language=getattr(self.customers.get(customer), "language", "en"),
-            consent_call_status=bool(
-                getattr(self.customers.get(customer), "consent_call_status", False)
-            ),
+            language=self.customers[customer].language,
+            consent_call_status=self.customers[customer].consent_call_status,
             payee_is_merchant=p.payee_account_id in self.merchants,
             payee_phone_risk=self.phone_risk.get(p.payee_account_id),
             payee_earlier_payments=len(earlier),

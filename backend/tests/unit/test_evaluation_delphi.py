@@ -10,11 +10,12 @@ import pytest
 
 from delphi.engine import compile_profile
 from delphi.evaluation.delphi_policy import Delphi, passive_outcomes
-from delphi.evaluation.outcomes import Decision, FinalStatus, ProbeMode
+from delphi.evaluation.outcomes import Decision, FinalStatus, PaymentOutcome, ProbeMode
 from delphi.evaluation.replay import BankState, replay
 from delphi.evaluation.sensing import HarnessSensing, train_and_score
 from delphi.evaluation.stream import eval_stream
 from delphi.kb.model import KnowledgeBase
+from delphi.sensing.config import load_sensing_config
 from delphi.sim.dataset import Dataset, generate_dataset
 from delphi.sim.generator_config import GeneratorConfig, load_generator_config
 from delphi.sim.response_models import ResponseModels, load_response_models
@@ -45,7 +46,7 @@ def models() -> ResponseModels:
 
 def _policy(kb: KnowledgeBase, sensing: HarnessSensing, kind: str = "full") -> Delphi:
     profile = compile_profile(kb, "GUARDIAN_PAYMENT")
-    kw = {"sensing": sensing.inputs, "p_mule_fallback": FALLBACK}
+    kw = {"sensing": sensing.inputs}
     if kind == "myopic":
         return Delphi.myopic(kb, profile, **kw)
     if kind == "no_active":
@@ -91,7 +92,33 @@ def test_passive_outcomes_read_the_view_as_the_live_adapters_do(
     assert passive_outcomes(remote, kb, p_mule=FALLBACK)["DEVICE_POSTURE"] == "REMOTE_ACCESS_ACTIVE"
     listed = replace(view, payee_listed=True)
     assert passive_outcomes(listed, kb, p_mule=FALLBACK)["BENEFICIARY_INTEL"] == "LISTED_SUSPECT"
-    no_consent = replace(view, consent_call_status=False)
-    assert passive_outcomes(no_consent, kb, p_mule=FALLBACK)["CALL_STATUS"] is None
+    unknown_device = replace(view, device_first_seen_at=None)
+    assert passive_outcomes(unknown_device, kb, p_mule=FALLBACK)["DEVICE_POSTURE"] is None
     silent = replace(view, telemetry=None)
     assert passive_outcomes(silent, kb, p_mule=FALLBACK)["SESSION_BEHAVIOUR"] is None
+
+
+def test_call_status_runs_only_with_consent_as_in_the_live_service(
+    dataset: Dataset, kb: KnowledgeBase, sensing: HarnessSensing, models: ResponseModels
+) -> None:
+    """The live service drops a probe the planner finds statically ineligible (no call-status
+    consent) before the passive phase, so it leaves no step and no ProbeRecord."""
+    outcomes = replay(dataset, _policy(kb, sensing, "no_active"), seed=SEED, models=models)
+    bank = BankState.at_history_end(dataset)
+
+    def called(o: PaymentOutcome) -> bool:
+        return any(p.probe_key == "CALL_STATUS" for p in o.probes)
+
+    consenting = [o for o in outcomes if bank.customers[o.customer_id].consent_call_status]
+    others = [o for o in outcomes if not bank.customers[o.customer_id].consent_call_status]
+    assert consenting and others
+    assert not any(called(o) for o in others)
+    assert any(called(o) for o in consenting)
+
+
+def test_the_mule_fallback_comes_from_the_sensing_settings(
+    kb: KnowledgeBase, sensing: HarnessSensing
+) -> None:
+    policy = _policy(kb, sensing)
+    assert policy.p_mule_fallback == load_sensing_config().features.mule_score_fallback
+    assert policy.p_mule_fallback == FALLBACK  # docs/13 §6: 0.10
