@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router';
 
 import { useCase, useRequestEvidence } from '../api/cases';
 import { useKbDisplay } from '../api/guardian';
+import { TraceContext, useTraceQueue, useTrack } from '../api/traces';
 import type { CaseDetail, EvidenceRow, Flip } from '../api/types';
 import { EvidenceCard } from '../components/EvidenceCard';
 import { HypothesisBar, type HypothesisStyles, percent } from '../components/HypothesisBar';
@@ -11,6 +12,7 @@ import { ProblemAlert } from '../components/ProblemAlert';
 import { RiskTable } from '../components/RiskTable';
 import { RoleGate } from '../components/RoleGate';
 import { decisionText, humanise } from '../lib/format';
+import { useSeen } from '../lib/useSeen';
 import { DispositionPanel } from './DispositionPanel';
 
 /** The outreach call is recorded by the investigator, not fetched (docs/09 §3). */
@@ -82,72 +84,78 @@ function Console({
     detail.evidence_records.map((r) => [r.id, humanise(r.source_key)]),
   );
   const citationLabel = (recordId: string): string | undefined => names[recordId];
+  const traces = useTraceQueue(detail.id); // docs/09 §5: the investigator's view events
+  useEffect(() => {
+    traces.track('CASE_VIEWED');
+  }, [traces]);
   return (
-    <div className="mt-4 space-y-8">
-      <dl className="grid grid-cols-2 gap-4 text-sm md:grid-cols-5">
-        <Field label="Type">{humanise(detail.type)}</Field>
-        <Field label="Protocol">
-          {detail.protocol === 'COERCION' ? (
-            <span className="rounded bg-amber-100 px-2 py-0.5 text-amber-900">Coercion</span>
-          ) : (
-            'Standard'
-          )}
-        </Field>
-        <Field label="At stake">
-          <MoneyText paise={detail.amount_at_stake_paise} />
-        </Field>
-        <Field label="Status">
-          <span aria-live="polite">{humanise(detail.status)}</span>
-        </Field>
-        <Field label="SLA">{detail.sla_breached ? 'SLA breached' : 'Within SLA'}</Field>
-      </dl>
+    <TraceContext.Provider value={traces.track}>
+      <div className="mt-4 space-y-8">
+        <dl className="grid grid-cols-2 gap-4 text-sm md:grid-cols-5">
+          <Field label="Type">{humanise(detail.type)}</Field>
+          <Field label="Protocol">
+            {detail.protocol === 'COERCION' ? (
+              <span className="rounded bg-amber-100 px-2 py-0.5 text-amber-900">Coercion</span>
+            ) : (
+              'Standard'
+            )}
+          </Field>
+          <Field label="At stake">
+            <MoneyText paise={detail.amount_at_stake_paise} />
+          </Field>
+          <Field label="Status">
+            <span aria-live="polite">{humanise(detail.status)}</span>
+          </Field>
+          <Field label="SLA">{detail.sla_breached ? 'SLA breached' : 'Within SLA'}</Field>
+        </dl>
 
-      <section aria-labelledby="belief-title">
-        <h2 id="belief-title" className="text-lg font-semibold">
-          Hypotheses and recommendation
-        </h2>
-        <div className="mt-2 space-y-3">
-          <HypothesisBar probs={detail.posterior} styles={styles} label="Posterior" />
-          <RiskTable risks={detail.risk_by_decision} taken={detail.disposition} />
-        </div>
-      </section>
-
-      {detail.evidence_sufficient && !disposed && <SufficiencyBanner detail={detail} />}
-
-      {!disposed && (
-        <NextBestEvidence
-          caseId={detail.id}
-          rows={detail.next_best_evidence}
-          outreachOutcomes={outreachOutcomes}
-        />
-      )}
-
-      {detail.what_would_change_my_mind && (
-        <WhatWouldChange flip={detail.what_would_change_my_mind} />
-      )}
-
-      <section aria-labelledby="evidence-title">
-        <h2 id="evidence-title" className="text-lg font-semibold">
-          Evidence
-        </h2>
-        {detail.evidence_records.length === 0 ? (
-          <p className="mt-2 text-slate-600">No evidence fetched yet.</p>
-        ) : (
+        <section aria-labelledby="belief-title">
+          <h2 id="belief-title" className="text-lg font-semibold">
+            Hypotheses and recommendation
+          </h2>
           <div className="mt-2 space-y-3">
-            {detail.evidence_records.map((record) => (
-              <EvidenceCard
-                key={record.id}
-                record={record}
-                styles={styles}
-                citationLabel={citationLabel}
-              />
-            ))}
+            <HypothesisBar probs={detail.posterior} styles={styles} label="Posterior" />
+            <RiskTable risks={detail.risk_by_decision} taken={detail.disposition} />
           </div>
-        )}
-      </section>
+        </section>
 
-      <DispositionPanel detail={detail} etag={etag} styles={styles} reload={reload} />
-    </div>
+        {detail.evidence_sufficient && !disposed && <SufficiencyBanner detail={detail} />}
+
+        {!disposed && (
+          <NextBestEvidence
+            caseId={detail.id}
+            rows={detail.next_best_evidence}
+            outreachOutcomes={outreachOutcomes}
+          />
+        )}
+
+        {detail.what_would_change_my_mind && (
+          <WhatWouldChange flip={detail.what_would_change_my_mind} />
+        )}
+
+        <section aria-labelledby="evidence-title">
+          <h2 id="evidence-title" className="text-lg font-semibold">
+            Evidence
+          </h2>
+          {detail.evidence_records.length === 0 ? (
+            <p className="mt-2 text-slate-600">No evidence fetched yet.</p>
+          ) : (
+            <div className="mt-2 space-y-3">
+              {detail.evidence_records.map((record) => (
+                <EvidenceCard
+                  key={record.id}
+                  record={record}
+                  styles={styles}
+                  citationLabel={citationLabel}
+                />
+              ))}
+            </div>
+          )}
+        </section>
+
+        <DispositionPanel detail={detail} etag={etag} styles={styles} reload={reload} />
+      </div>
+    </TraceContext.Provider>
   );
 }
 
@@ -166,8 +174,14 @@ function SufficiencyBanner({ detail }: { detail: CaseDetail }) {
 
 /** docs/06 §12: the single observation most likely to flip the recommendation. */
 function WhatWouldChange({ flip }: { flip: Flip }) {
+  const track = useTrack();
+  const ref = useRef<HTMLElement>(null);
+  const seen = useCallback(() => {
+    track('WCMM_VIEWED');
+  }, [track]);
+  useSeen(ref, seen); // docs/09 §5
   return (
-    <section aria-labelledby="wcmm-title">
+    <section ref={ref} aria-labelledby="wcmm-title">
       <h2 id="wcmm-title" className="text-lg font-semibold">
         What would change my mind
       </h2>

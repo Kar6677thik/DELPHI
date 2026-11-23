@@ -1,5 +1,9 @@
+import { useCallback, useRef } from 'react';
+
+import { useTrack } from '../api/traces';
 import type { EvidenceRecord } from '../api/types';
 import { humanise } from '../lib/format';
+import { useSeen } from '../lib/useSeen';
 import { type HypothesisStyles, percent } from './HypothesisBar';
 import { formatPaise } from './MoneyText';
 import { NarrativeWithCitations, factsId } from './NarrativeWithCitations';
@@ -45,8 +49,14 @@ export function EvidenceCard({
   citationLabel: (recordId: string) => string | undefined;
 }) {
   const titleId = `evidence-${record.id}`;
+  const track = useTrack();
+  const ref = useRef<HTMLElement>(null);
+  const seen = useCallback(() => {
+    track('EVIDENCE_VIEWED', record.id);
+  }, [track, record.id]);
+  useSeen(ref, seen); // docs/09 §5
   return (
-    <article aria-labelledby={titleId} className="rounded-md border border-slate-200 p-4">
+    <article ref={ref} aria-labelledby={titleId} className="rounded-md border border-slate-200 p-4">
       <header className="flex flex-wrap items-center gap-2">
         <h3 id={titleId} className="font-semibold">
           {humanise(record.source_key)}
@@ -85,6 +95,7 @@ export function EvidenceCard({
       <div className="mt-3">
         {record.narrative ? (
           <NarrativeWithCitations
+            recordId={record.id}
             narrative={record.narrative}
             source={record.narrative_source}
             citationLabel={citationLabel}
