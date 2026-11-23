@@ -22,8 +22,10 @@ from delphi.llm.minimise import pseudonym
 from delphi.llm.port import Purpose
 from delphi.llm.service import LlmService
 from delphi.navigator.evidence import narrative_subject
+from delphi.navigator.reviews import ComplaintSweepJob
 from delphi.navigator.store import get_case
 from delphi.navigator.tables import evidence_records
+from delphi.platform.clock import Clock
 from delphi.platform.events import EventType, publish
 from delphi.platform.jobs import JobContext, JobRegistry, JobType
 
@@ -91,6 +93,16 @@ class NarrativeJob:
 
 
 def register_navigator_jobs(
-    registry: JobRegistry, *, sessions: sessionmaker[Session], llm: LlmService
+    registry: JobRegistry,
+    *,
+    sessions: sessionmaker[Session],
+    llm: LlmService,
+    clock: Clock,
+    p_mule_fallback: float,
 ) -> None:
     registry.register(JobType.LLM_NARRATIVE, NarrativeJob(sessions, llm))
+    # The SLA runs in real time until the DEMO time mode is wired, as the Guardian's does.
+    registry.register(
+        JobType.COMPLAINT_SWEEP,
+        ComplaintSweepJob(sessions, clock, p_mule_fallback=p_mule_fallback, demo_time=False),
+    )

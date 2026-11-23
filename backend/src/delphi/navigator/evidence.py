@@ -232,7 +232,13 @@ def request_evidence(
     refresh: bool = False,
     recorded_outcome: str | None = None,
     note: str | None = None,
+    on_open: bool = False,
 ) -> EvidenceRecord:
+    """Fetch (or record) one evidence item and update the case's posterior (docs/09 §3).
+
+    ``on_open``: the record a trigger takes as the case opens (docs/09 §1, the complaints
+    trigger's LINKED_COMPLAINTS); it is no investigator action, so the case stays OPEN.
+    """
     locked = session.execute(
         select(cases.c.id).where(cases.c.id == case_id).with_for_update()
     ).scalar_one_or_none()
@@ -323,7 +329,7 @@ def request_evidence(
         .values(
             posterior=posterior_after,
             leading_hypothesis=_leading(posterior_after, [h for h in order if h in names]),
-            status=CaseStatus.IN_PROGRESS.value,
+            status=case.status.value if on_open else CaseStatus.IN_PROGRESS.value,
             version=case.version + 1,
         )
     )
