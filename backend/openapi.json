@@ -3370,7 +3370,7 @@
           "SESSION_TIMEOUT_SWEEP",
           "SCOUT_AUTO_TRIGGER",
           "LABEL_DELIVERY",
-          "COMPLAINT_SWEEP",
+          "ACCOUNT_REVIEW_SWEEP",
           "PROBE_YIELD_DAILY",
           "RETENTION_SWEEP",
           "AUDIT_VERIFY"

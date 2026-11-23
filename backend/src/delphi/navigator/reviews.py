@@ -1,4 +1,4 @@
-"""ACCOUNT_REVIEW cases from complaints (docs/09 §1, FR-NAV-01, #109).
+"""ACCOUNT_REVIEW cases from complaints and mule scores (docs/09 §1, FR-NAV-01, #109).
 
 A complaint that names a home-bank counterparty account opens an ACCOUNT_REVIEW case for it,
 unless the account already has one open. The initial posterior is the mule-scorer prior
@@ -10,9 +10,13 @@ so the console shows it in the timeline and never plans it again.
 Until an account has one, the docs/13 §6 fallback is used and logged. The account review has no
 anomaly percentile of its own, so q = 0 and the open mass is the profile's base.
 
-``COMPLAINT_SWEEP`` runs this every minute (docs/04 §5.4). It is idempotent per account: a case
-is opened only for complaints reported after the account's latest review was opened, so a
-disposed review is not reopened by the complaint that opened it.
+The mule-scorer trigger (``open_mule_reviews``) opens a review for a home-bank account whose
+stored score (``MULE_SWEEP``, #91) is at least ``navigator.mule_sweep_threshold`` and that was
+credited in the last 24 h, with the mule-scorer prior alone.
+
+``ACCOUNT_REVIEW_SWEEP`` runs both every minute (docs/04 §5.4). Each is idempotent per account:
+a case opens only for a complaint, or a credit, newer than the account's latest review, so a
+disposed review is not reopened by what opened it.
 """
 
 from __future__ import annotations
@@ -57,6 +61,7 @@ MULE = "MULE"
 GENUINE = "GENUINE"
 EXECUTED = "EXECUTED"
 CREDITS_WINDOW = timedelta(days=7)  # docs/02: an account's amount at stake is its 7-day credits
+MULE_CREDIT_WINDOW = timedelta(hours=24)  # docs/09 §1: "credits in the last 24 h"
 NO_ANOMALY = 0.0  # docs/06 §11: no account anomaly model, so the open mass is the base
 
 
@@ -251,9 +256,65 @@ def open_complaint_reviews(
     return opened
 
 
+def mule_suspects(session: Session, now: datetime, threshold: float) -> dict[UUID, datetime]:
+    """docs/09 §1: home-bank accounts whose stored mule score is at least ``threshold`` and
+    that were credited in the last 24 h, with their latest such credit."""
+    s, a, p = bank.account_scores.c, bank.accounts.c, bank.payments.c
+    rows = session.execute(
+        select(s.account_id, func.max(p.executed_at))
+        .join(bank.accounts, a.id == s.account_id)
+        .join(bank.payments, p.payee_account_id == s.account_id)
+        .where(
+            s.p_mule >= threshold,
+            a.bank_code == bank.HOME_BANK,
+            p.status == EXECUTED,
+            p.executed_at > now - MULE_CREDIT_WINDOW,
+            p.executed_at <= now,
+        )
+        .group_by(s.account_id)
+    ).all()
+    return {r[0]: r[1] for r in rows}
+
+
+def open_mule_reviews(
+    session: Session, clock: Clock, *, kb_version_id: int, demo_time: bool = False
+) -> list[CaseRecord]:
+    """docs/09 §1, the mule-scorer trigger: a review for each suspect (above), unless it has an
+    open review, or a review opened after its latest credit (no new money since). The prior is
+    the mule-scorer prior alone (no complaint to add)."""
+    version = get_version(session, kb_version_id)
+    if version is None:
+        raise DelphiError(f"No KB version {kb_version_id}.", code=ProblemCode.VALIDATION_FAILED)
+    now = clock.now()
+    threshold = version.kb.config.navigator.mule_sweep_threshold
+    reviewed = latest_review_opened(session)
+    opened: list[CaseRecord] = []
+    for account_id, credited_at in sorted(mule_suspects(session, now, threshold).items()):
+        last = reviewed.get(account_id)
+        if last is not None and last >= credited_at:
+            continue
+        if open_review_for_account(session, account_id) is not None:
+            continue
+        p_mule = stored_p_mule(session, account_id)
+        assert p_mule is not None  # a suspect has a stored score
+        opened.append(
+            open_account_review(
+                session,
+                clock,
+                account_id=account_id,
+                kb_version_id=kb_version_id,
+                p_mule=p_mule,
+                p_mule_source="account_scores",
+                demo_time=demo_time,
+            )
+        )
+    return opened
+
+
 @dataclass(frozen=True, slots=True)
-class ComplaintSweepJob:
-    """``COMPLAINT_SWEEP`` (every minute, docs/04 §5.4)."""
+class AccountReviewSweepJob:
+    """``ACCOUNT_REVIEW_SWEEP`` (every minute, docs/04 §5.4): both docs/09 §1 triggers, the
+    complaints first (a complained-about suspect gets the complaint's update)."""
 
     sessions: sessionmaker[Session]
     clock: Clock
@@ -265,11 +326,18 @@ class ComplaintSweepJob:
             active = active_version(session)
             if active is None:
                 return {"opened": 0, "reason": "no ACTIVE KB version"}
-            opened = open_complaint_reviews(
+            complaints = open_complaint_reviews(
                 session,
                 self.clock,
                 kb_version_id=active.id,
                 p_mule_fallback=self.p_mule_fallback,
                 demo_time=self.demo_time,
             )
-        return {"opened": len(opened)}
+            mules = open_mule_reviews(
+                session, self.clock, kb_version_id=active.id, demo_time=self.demo_time
+            )
+        return {
+            "opened": len(complaints) + len(mules),
+            "complaints": len(complaints),
+            "mule_scores": len(mules),
+        }

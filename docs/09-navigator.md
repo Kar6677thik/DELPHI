@@ -27,7 +27,7 @@ the session to the case (#94). A retried call for the same session returns the c
 an open case from another session is refused (`409 INVALID_STATE_TRANSITION`). The account-review
 triggers and the console come with M5 (#103, #109).
 
-**Implementation (complaints trigger, #109).** `COMPLAINT_SWEEP` (every minute, doc 04 §5.4) runs
+**Implementation (complaints trigger, #109).** `ACCOUNT_REVIEW_SWEEP` (every minute, doc 04 §5.4) runs
 `delphi.navigator.reviews.open_complaint_reviews` under the ACTIVE KB:
 - It finds the home-bank (`DLPH`) accounts named in `counterparty_account_ids` by complaints
   reported by now.
@@ -43,7 +43,14 @@ triggers and the console come with M5 (#103, #109).
   since this is not an investigator action.
 - The amount at stake is the account's executed credits over the last 7 days (doc 02).
 
-The MULE_SWEEP trigger follows with the mule scorer (#91).
+**The mule-scorer trigger (#109 PR 2)** runs in the same sweep, which is now
+`ACCOUNT_REVIEW_SWEEP`. It opens an ACCOUNT_REVIEW case for each home-bank account whose stored
+score (`account_scores`, written by `MULE_SWEEP`, doc 13 §6) is ≥ `mule_sweep_threshold` (0.70)
+and that had an executed credit in the last 24 h. The prior is the mule-scorer prior alone.
+- It skips an account with an open review, or one whose latest review opened after its latest
+  credit, so only new money reopens a disposed review.
+- Complaints run first, so an account that is both complained about and a suspect gets the
+  complaint's update.
 
 **The stored recommendation (#208).** The case row keeps `recommended_decision` and
 `risk_by_decision` current from the start, not only at disposition. Opening stores them for the

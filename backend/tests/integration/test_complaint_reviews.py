@@ -15,7 +15,11 @@ from delphi.engine.belief import update as bayes_update
 from delphi.engine.prior import build_prior
 from delphi.kb.loader import load_and_validate
 from delphi.navigator.api import CaseProtocol, CaseStatus, CaseType, case_profile, current_records
-from delphi.navigator.reviews import ComplaintSweepJob, open_complaint_reviews
+from delphi.navigator.reviews import (
+    AccountReviewSweepJob,
+    open_complaint_reviews,
+    open_mule_reviews,
+)
 from delphi.navigator.tables import cases
 from delphi.platform.jobs import JobContext
 from delphi.platform.tables import audit_log, outbox_events
@@ -139,10 +143,24 @@ def test_a_complaint_opens_a_review_with_the_updated_mule_prior(env: Env) -> Non
         assert conn.execute(events).scalar_one() == 1
 
 
-def test_the_stored_mule_score_is_used_when_there_is_one(env: Env) -> None:  # noqa: F811
-    account = _account(env)
+def _score(e: Env, account: UUID, p_mule: float) -> None:
+    """A stored mule score, as MULE_SWEEP writes it (#91)."""
+    with e.owner.begin() as conn:
+        artifact = conn.execute(
+            text("SELECT id FROM delphi.model_artifacts WHERE kind = 'MULE'")
+        ).scalar_one_or_none()
+    if artifact is not None:
+        with e.owner.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO bank.account_scores (account_id, p_mule, computed_at,"
+                    " model_artifact_id) VALUES (:a, :p, :t, :m)"
+                ),
+                {"a": account, "p": p_mule, "t": T0, "m": artifact},
+            )
+        return
     artifact = uuid4()
-    with env.owner.begin() as conn:
+    with e.owner.begin() as conn:
         conn.execute(
             text(
                 "INSERT INTO delphi.model_artifacts (id, kind, version, status, gate_passed,"
@@ -155,10 +173,15 @@ def test_the_stored_mule_score_is_used_when_there_is_one(env: Env) -> None:  # n
         conn.execute(
             text(
                 "INSERT INTO bank.account_scores (account_id, p_mule, computed_at,"
-                " model_artifact_id) VALUES (:a, 0.8, :t, :m)"
+                " model_artifact_id) VALUES (:a, :p, :t, :m)"
             ),
-            {"a": account, "t": T0, "m": artifact},
+            {"a": account, "p": p_mule, "t": T0, "m": artifact},
         )
+
+
+def test_the_stored_mule_score_is_used_when_there_is_one(env: Env) -> None:  # noqa: F811
+    account = _account(env)
+    _score(env, account, 0.8)
     _complaint(env, account)
     [case] = _sweep(env)
     assert case.prior_components["p_mule_source"] == "account_scores"
@@ -202,8 +225,65 @@ def test_a_complaint_not_yet_reported_opens_nothing(env: Env) -> None:  # noqa: 
 def test_the_sweep_job_uses_the_active_kb(env: Env) -> None:  # noqa: F811
     account = _account(env)
     _complaint(env, account)
-    job = ComplaintSweepJob(env.sessions, env.clock, p_mule_fallback=FALLBACK, demo_time=False)
+    job = AccountReviewSweepJob(env.sessions, env.clock, p_mule_fallback=FALLBACK, demo_time=False)
     ctx: Any = JobContext.__new__(JobContext)
-    assert job(ctx) == {"opened": 1}
-    assert job(ctx) == {"opened": 0}
+    assert job(ctx)["opened"] == 1
+    assert job(ctx)["opened"] == 0
     assert _reviews(env) == 1
+
+
+def _mule_sweep(e: Env) -> list[Any]:
+    with e.sessions.begin() as s:
+        return open_mule_reviews(s, e.clock, kb_version_id=e.kb_version_id)
+
+
+def test_a_credited_suspect_gets_a_review_with_the_mule_prior(env: Env) -> None:  # noqa: F811
+    """docs/09 §1: p_mule ≥ 0.70 and a credit in the last 24 h; the prior alone."""
+    suspect, quiet, low = _account(env), _account(env), _account(env)
+    external = _account(env, bank_code="XBK1")
+    for account, p in ((suspect, 0.9), (quiet, 0.95), (low, 0.6), (external, 0.99)):
+        _score(env, account, p)
+    for account in (suspect, low, external):
+        _credit(env, account, 1_000_000, days_ago=0.5)
+    _credit(env, quiet, 1_000_000, days_ago=2)  # credited, but not in the last 24 h
+    [case] = _mule_sweep(env)
+    assert case.subject_account_id == suspect and case.status is CaseStatus.OPEN
+    assert case.prior_components["p_model"] == {"MULE": 0.9, "GENUINE": pytest.approx(0.1)}
+    kb = load_and_validate(KB_DIR, CLASSIFIER_NAMES)
+    profile = case_profile(kb, CaseType.ACCOUNT_REVIEW.value)
+    prior = build_prior(profile, {"MULE": 0.9, "GENUINE": 0.1}, 0.0)
+    assert case.posterior == pytest.approx(
+        dict(zip(profile.hypotheses, map(float, prior), strict=True)), abs=1e-9
+    )
+    with env.sessions() as s:
+        assert current_records(s, case.id) == []  # no complaint to add
+    assert _mule_sweep(env) == []  # idempotent
+
+
+def test_only_new_money_reopens_a_disposed_suspect(env: Env) -> None:  # noqa: F811
+    suspect = _account(env)
+    _score(env, suspect, 0.9)
+    _credit(env, suspect, 1_000_000, days_ago=0.5)
+    [case] = _mule_sweep(env)
+    with env.owner.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE delphi.cases SET status = 'DISPOSED', disposition = 'CLEAR',"
+                " disposed_at = :t WHERE id = :c"
+            ),
+            {"t": T0, "c": case.id},
+        )
+    env.clock.advance(timedelta(minutes=10))
+    assert _mule_sweep(env) == []
+    _credit(env, suspect, 500_000, days_ago=0)  # new money after the review
+    assert len(_mule_sweep(env)) == 1
+
+
+def test_the_sweep_runs_both_triggers(env: Env) -> None:  # noqa: F811
+    complained, suspect = _account(env), _account(env)
+    _complaint(env, complained)
+    _score(env, suspect, 0.9)
+    _credit(env, suspect, 1_000_000, days_ago=0.1)
+    job = AccountReviewSweepJob(env.sessions, env.clock, p_mule_fallback=FALLBACK, demo_time=False)
+    ctx: Any = JobContext.__new__(JobContext)
+    assert job(ctx) == {"opened": 2, "complaints": 1, "mule_scores": 1}

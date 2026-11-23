@@ -23,7 +23,7 @@ from delphi.llm.port import Purpose
 from delphi.llm.service import LlmService
 from delphi.navigator.ddpack import GuardianTrail, refresh_complete
 from delphi.navigator.evidence import narrative_subject
-from delphi.navigator.reviews import ComplaintSweepJob
+from delphi.navigator.reviews import AccountReviewSweepJob
 from delphi.navigator.store import get_case
 from delphi.navigator.tables import evidence_records
 from delphi.platform.clock import Clock
@@ -107,6 +107,6 @@ def register_navigator_jobs(
     registry.register(JobType.LLM_NARRATIVE, NarrativeJob(sessions, llm, trail))
     # The SLA runs in real time until the DEMO time mode is wired, as the Guardian's does.
     registry.register(
-        JobType.COMPLAINT_SWEEP,
-        ComplaintSweepJob(sessions, clock, p_mule_fallback=p_mule_fallback, demo_time=False),
+        JobType.ACCOUNT_REVIEW_SWEEP,
+        AccountReviewSweepJob(sessions, clock, p_mule_fallback=p_mule_fallback, demo_time=False),
     )
