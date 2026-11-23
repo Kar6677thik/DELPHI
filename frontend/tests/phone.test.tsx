@@ -16,15 +16,40 @@ const RUN = '01930000-0000-7000-8000-0000000000e9';
 
 const PERSONA: Persona = {
   customer_id: 'c-ramesh',
+  persona_key: 'RAMESH',
   name: 'Ramesh Rao',
   language: 'te',
   vulnerable: true,
-  accounts: [{ id: 'a-ramesh', label: 'Savings ·· 4821', balance_paise: 1_250_000_00 }],
-  payees: [
-    { account_id: 'a-cbi', label: 'CBI Safe Account', note: 'New today' },
-    { account_id: 'a-anita', label: 'Anita Rao', note: 'Saved 2 years ago' },
+  accounts: [
+    {
+      id: 'a-ramesh',
+      label: 'Savings ·· 4821',
+      vpa: 'customer004821@dlph',
+      balance_paise: 1_250_000_00,
+    },
   ],
-  devices: [{ id: 'd-ramesh', label: 'Ramesh’s phone' }],
+  payees: [
+    {
+      account_id: 'a-cbi',
+      label: 'CBI Safe Account',
+      vpa: 'person000042@xbk2',
+      added_at: '2026-11-22T09:00:00Z',
+    },
+    {
+      account_id: 'a-anita',
+      label: 'Anita Rao',
+      vpa: null,
+      added_at: '2024-11-22T09:00:00Z',
+    },
+  ],
+  devices: [
+    {
+      id: 'd-ramesh',
+      label: 'Ramesh’s phone',
+      os: 'ANDROID',
+      first_seen_at: '2023-01-01T00:00:00Z',
+    },
+  ],
 };
 
 function view(overrides: Partial<GuardianSessionView> = {}): GuardianSessionView {
@@ -133,13 +158,14 @@ function phoneStream(): FakeEventSource {
 
 function mockApi() {
   let current = view();
-  const sent: { payment?: unknown; answer?: unknown } = {};
+  const sent: { payment?: unknown; answer?: unknown; idempotencyKey?: string | null } = {};
   server.use(
     http.get('/api/v1/phone/personas', () => HttpResponse.json([PERSONA])),
     http.get('/api/v1/kb/versions/1', () => HttpResponse.json(KB)),
     http.get('/api/v1/kb/versions', () => HttpResponse.json({ items: [KB], next_cursor: null })),
     http.post('/api/v1/guardian/sessions', async ({ request }) => {
       sent.payment = await request.json();
+      sent.idempotencyKey = request.headers.get('Idempotency-Key');
       return HttpResponse.json(current, { status: 201 });
     }),
     http.get(`/api/v1/guardian/sessions/${SESSION}`, () => HttpResponse.json(current)),
@@ -173,9 +199,9 @@ describe('/phone', () => {
         amount_paise: 4_80_000_00,
         channel: 'UPI_PUSH',
         device_id: 'd-ramesh',
-        telemetry: {},
       },
     });
+    expect(sent.idempotencyKey).toMatch(/^[0-9a-f-]{36}$/);
     expect(await within(phone).findByText('Checking this payment')).toBeInTheDocument();
     // The DELPHI side: the leading hypothesis leads, and why this question.
     const belief = await screen.findByRole('heading', { name: 'What DELPHI believes' });
