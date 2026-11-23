@@ -127,6 +127,15 @@ its own transaction:
   audit entry `guardian.session.fail_safe_failed`.
   Planning a session that isn't PLANNING is a caller error (409), not an engine error.
 
+**One procedure for the live Guardian and the evaluation harness (#123).** The engine steps above
+are pure functions in `delphi.guardian.procedure`, exported by `guardian.api`: `session_prior`
+and `takes_fast_path` (steps 2–3), `observe` (every update), `plan_step` (step 6, with the
+session's per-step exploration stream), `stop_reason` and `final_decision` (steps 8–9). The live
+service calls each one at its persistence point. `run_session` composes the same functions into a
+whole session for a caller that has every answer to hand (the harness, doc 22). It does no I/O and
+reads no clock, so the session's maximum duration is the caller's to enforce. A test replays a
+live session through `run_session` and gets the same probes, decision and posterior.
+
 ## 3. Fast path
 
 `RELEASE` immediately when **all** of these hold: p_model(GENUINE) ≥ 0.995, amount ≤ ₹10,000,

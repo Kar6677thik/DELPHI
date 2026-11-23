@@ -15,8 +15,21 @@ from delphi.guardian.phone import (
     PhoneSubscription,
     live_guardian,
 )
+from delphi.guardian.procedure import (
+    PriorInputs,
+    ProbeStep,
+    SessionPrior,
+    SessionResult,
+    final_decision,
+    observe,
+    plan_step,
+    run_session,
+    session_prior,
+    stop_reason,
+    takes_fast_path,
+)
 from delphi.guardian.service import PriorPort
-from delphi.guardian.store import SessionMode, SessionStatus
+from delphi.guardian.store import SessionMode, SessionStatus, TerminalReason
 from delphi.guardian.views import (
     SessionCursor,
     SessionFilter,
@@ -35,18 +48,30 @@ __all__ = [
     "PhoneEvent",
     "PhoneHub",
     "PhoneSubscription",
+    "PriorInputs",
     "PriorPort",
+    "ProbeStep",
     "SessionCursor",
     "SessionFilter",
     "SessionMode",
+    "SessionPrior",
+    "SessionResult",
     "SessionRow",
     "SessionStatus",
+    "TerminalReason",
     "build_dd_pack",
     "case_trail",
+    "final_decision",
     "get_session_row",
     "guardian_kpis",
     "list_sessions",
     "live_guardian",
+    "observe",
+    "plan_step",
     "probe_run_rows",
     "render_dd_pack_html",
+    "run_session",
+    "session_prior",
+    "stop_reason",
+    "takes_fast_path",
 ]
