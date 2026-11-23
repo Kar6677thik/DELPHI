@@ -9,9 +9,14 @@ from __future__ import annotations
 from delphi.navigator.console import (
     ConsoleView,
     EvidenceRow,
+    Recommendation,
     case_profile,
     console,
+    recommend,
 )
+from delphi.navigator.ddpack import GuardianTrail, InheritedTrail
+from delphi.navigator.ddpack import build as build_case_dd_pack
+from delphi.navigator.ddpack import refresh_complete as refresh_dd_pack_complete
 from delphi.navigator.disposition import Disposition, dispose, vulnerable_payer
 from delphi.navigator.evidence import (
     OUTREACH,
@@ -21,6 +26,7 @@ from delphi.navigator.evidence import (
     request_evidence,
     request_simulated_outreach,
 )
+from delphi.navigator.kpis import CaseKpis, case_kpis
 from delphi.navigator.police_alert import (
     AlertAction,
     AlertStatus,
@@ -41,6 +47,7 @@ from delphi.navigator.store import (
     list_cases,
     open_case,
     open_case_for_payment,
+    sort_value,
 )
 
 __all__ = [
@@ -50,6 +57,7 @@ __all__ = [
     "AlertStatus",
     "CaseCursor",
     "CaseExistsError",
+    "CaseKpis",
     "CaseProtocol",
     "CaseRecord",
     "CaseSort",
@@ -59,8 +67,13 @@ __all__ = [
     "Disposition",
     "EvidenceRecord",
     "EvidenceRow",
+    "GuardianTrail",
+    "InheritedTrail",
     "PoliceAlert",
+    "Recommendation",
     "act_on_alert",
+    "build_case_dd_pack",
+    "case_kpis",
     "case_profile",
     "console",
     "current_records",
@@ -71,7 +84,10 @@ __all__ = [
     "observed_sources",
     "open_case",
     "open_case_for_payment",
+    "recommend",
+    "refresh_dd_pack_complete",
     "request_evidence",
     "request_simulated_outreach",
+    "sort_value",
     "vulnerable_payer",
 ]

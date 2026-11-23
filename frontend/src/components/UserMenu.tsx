@@ -18,19 +18,20 @@ export function UserMenu({ me }: { me: Me }) {
 
   return (
     <DropdownMenu.Root>
-      <DropdownMenu.Trigger className="rounded-md px-3 py-1.5 text-sm hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-slate-900">
-        {me.display_name} <span className="text-slate-600">({me.role})</span>
+      <DropdownMenu.Trigger className="-mx-1 rounded px-1 py-1 text-left text-[13px] text-soft hover:text-ink">
+        {me.display_name} <span className="text-muted">({me.role})</span>
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
         <DropdownMenu.Content
-          align="end"
+          align="start"
+          side="top"
           sideOffset={4}
-          className="min-w-40 rounded-md border border-slate-200 bg-white p-1 text-sm shadow-md"
+          className="min-w-44 rounded-md border border-control bg-raised p-1 text-[13px] shadow-[0_12px_28px_rgba(0,0,0,.35)]"
         >
           <DropdownMenu.Item
             onSelect={signOut}
             disabled={logout.isPending}
-            className="cursor-pointer rounded px-2 py-1.5 outline-none data-[highlighted]:bg-slate-100"
+            className="cursor-pointer rounded px-2 py-1.5 outline-none data-[highlighted]:bg-control"
           >
             Sign out
           </DropdownMenu.Item>

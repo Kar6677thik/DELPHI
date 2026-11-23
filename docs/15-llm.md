@@ -166,3 +166,11 @@ A fixed set of 30 evidence payloads (`tests/llm_eval/cases.jsonl`). Pass criteri
 validity 100%, numeric fidelity 100%, decision-language violations 0, fallback rate ≤ 10%.
 The run is not part of CI (it costs money and is non-deterministic). It is run before each
 milestone demo, and its results are committed to `docs/reports/llm-eval-<date>.md`.
+
+**Implementation** (#104): `delphi.llm.evaluation` and `delphi llm-eval` (`just llm-eval`). The
+30 cases are 27 evidence narratives (3 per source, covering nulls, zeros, large ₹ amounts and
+decimals) and 3 case summaries. Each case is sent exactly as `LlmService` sends it (minimised
+payload, current prompt, schema, token cap), and its output is checked with the production
+validators. The fallback rate counts errors, refusals, timeouts and outputs that fail validation.
+The run uses no database. A unit test runs the templates through the same cases: they pass every
+criterion, so the cases themselves are sound.

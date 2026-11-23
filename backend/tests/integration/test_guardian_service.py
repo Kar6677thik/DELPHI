@@ -53,6 +53,7 @@ from ._db import engine_as, upgrade
 T0 = datetime(2026, 11, 15, 10, 0, tzinfo=UTC)
 KB_DIR = Path(__file__).resolve().parents[3] / "kb"
 INR = 100  # paise
+OTP_KEY = b"test-otp-key-32-bytes-long-enough"
 
 GENUINE_SURE = {
     "GENUINE": 0.999,
@@ -144,8 +145,11 @@ class Env:
     sessions: sessionmaker[Session]
     clock: FixedClock
 
-    def payment(self, amount_inr: int, *, balance_inr: int = 1_000_000) -> UUID:
-        customer, payer, payee, payment = uuid4(), uuid4(), uuid4(), uuid4()
+    def payment(
+        self, amount_inr: int, *, balance_inr: int = 1_000_000, payment_id: UUID | None = None
+    ) -> UUID:
+        customer, payer, payee = uuid4(), uuid4(), uuid4()
+        payment = payment_id or uuid4()
         with self.owner.begin() as conn:
             conn.execute(
                 text(
@@ -193,7 +197,13 @@ class Env:
         fetch = fetchers(outcomes, kw.pop("slow", None))
         self._release = fetch.pop("_release")
         return GuardianService(
-            self.sessions, self.clock, prior, fetch, passive_executor(threads=8), **kw
+            self.sessions,
+            self.clock,
+            prior,
+            fetch,
+            passive_executor(threads=8),
+            otp_key=OTP_KEY,
+            **kw,
         )
 
     def release_slow(self) -> None:

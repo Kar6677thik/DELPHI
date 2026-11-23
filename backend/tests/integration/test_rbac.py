@@ -29,6 +29,7 @@ ACCESS: dict[tuple[str, str], str | Permission] = {
     ("GET", "/api/v1/health"): PUBLIC,
     ("GET", "/api/v1/ready"): PUBLIC,
     ("GET", "/api/v1/status"): Permission.VIEW,
+    ("GET", "/api/v1/metrics/summary"): Permission.VIEW,
     ("POST", "/api/v1/auth/login"): PUBLIC,
     ("POST", "/api/v1/auth/logout"): SIGNED_IN,
     ("GET", "/api/v1/auth/me"): SIGNED_IN,
@@ -48,6 +49,7 @@ ACCESS: dict[tuple[str, str], str | Permission] = {
     ("GET", "/api/v1/kb/versions/{version_id}/export"): Permission.VIEW,
     ("GET", "/api/v1/cases"): Permission.VIEW,
     ("GET", "/api/v1/cases/{case_id}"): Permission.VIEW,
+    ("GET", "/api/v1/cases/{case_id}/dd-pack"): Permission.VIEW,
     ("POST", "/api/v1/cases/{case_id}/disposition"): Permission.CASE_WRITE,
     ("POST", "/api/v1/cases/{case_id}/evidence-requests"): Permission.CASE_WRITE,
     ("POST", "/api/v1/cases/{case_id}/police-alert/{action}"): Permission.CASE_WRITE,
@@ -67,7 +69,15 @@ def clients(create_database: Callable[[], str]) -> Iterator[dict[Role | None, Te
     engine = engine_as(url, "delphi_app")
     clock = FixedClock(datetime(2026, 11, 7, tzinfo=UTC))
     platform = Platform(
-        settings=Settings(database_url=url, migrations_dir=MIGRATIONS_DIR),
+        # Every request below comes from one address on a fixed clock, so no bucket refills:
+        # lift the rate limits, which test_rate_limit.py covers (#127).
+        settings=Settings(
+            database_url=url,
+            migrations_dir=MIGRATIONS_DIR,
+            rate_limit_burst=100_000,
+            rate_limit_address_burst=100_000,
+            login_rate_burst=10_000,
+        ),
         engine=engine,
         sessions=make_session_factory(engine),
         clock=clock,

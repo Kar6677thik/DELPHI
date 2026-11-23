@@ -30,7 +30,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from delphi.engine.prior import build_prior, open_mass
 from delphi.kb.model import UNEXPLAINED
 from delphi.kb.store import active_version, get_version
-from delphi.navigator.console import case_profile
+from delphi.navigator.console import case_profile, recommend
 from delphi.navigator.evidence import request_evidence
 from delphi.navigator.store import (
     CaseExistsError,
@@ -124,6 +124,10 @@ def open_account_review(
     scale = kb.config.time.demo_time_scale if demo_time else 1.0
     sla_due_at = now + timedelta(minutes=kb.regulatory.case_sla.account_review_sla_minutes * scale)
     case_id = uuid7(unix_ms=int(now.timestamp() * 1000))
+    amount = credits_7d_paise(session, account_id, now)
+    # #208: the recommendation is stored from the start. The trigger's evidence record, taken
+    # straight after, recomputes it with the account owner's vulnerability.
+    advice = recommend(profile, posterior, amount_paise=amount, vulnerable=False)
     try:
         with session.begin_nested():
             session.execute(
@@ -137,7 +141,9 @@ def open_account_review(
                     prior_components=components,
                     posterior=posterior,
                     leading_hypothesis=leading,
-                    amount_at_stake_paise=credits_7d_paise(session, account_id, now),
+                    amount_at_stake_paise=amount,
+                    recommended_decision=advice.decision,
+                    risk_by_decision=dict(advice.risk_by_decision),
                     opened_at=now,
                     sla_due_at=sla_due_at,
                     is_override=False,

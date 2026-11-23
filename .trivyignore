@@ -1,0 +1,2 @@
+# Trivy waivers (docs/21 §6). Each entry needs a matching, unexpired entry in
+# security/waivers.yaml: the CVE, why it does not apply, who accepted it and when it expires.

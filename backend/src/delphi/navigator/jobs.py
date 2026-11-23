@@ -21,6 +21,7 @@ from delphi.kb.store import get_version
 from delphi.llm.minimise import pseudonym
 from delphi.llm.port import Purpose
 from delphi.llm.service import LlmService
+from delphi.navigator.ddpack import GuardianTrail, refresh_complete
 from delphi.navigator.evidence import narrative_subject
 from delphi.navigator.reviews import ComplaintSweepJob
 from delphi.navigator.store import get_case
@@ -58,6 +59,7 @@ class NarrativeJob:
 
     sessions: sessionmaker[Session]
     llm: LlmService
+    trail: GuardianTrail | None = None  # the case's Guardian session trail (DD pack, docs/09 §7)
 
     def __call__(self, ctx: JobContext) -> Mapping[str, Any] | None:
         record_id = UUID(str(ctx.job.params["evidence_record_id"]))
@@ -83,6 +85,7 @@ class NarrativeJob:
                 .returning(e.case_id)
             ).scalar_one_or_none()
             if case_id is not None:
+                refresh_complete(session, case_id, self.trail)  # section 6 may now be complete
                 publish(
                     session,
                     EventType.EVIDENCE_NARRATIVE_READY,
@@ -97,10 +100,11 @@ def register_navigator_jobs(
     *,
     sessions: sessionmaker[Session],
     llm: LlmService,
+    trail: GuardianTrail | None = None,
     clock: Clock,
     p_mule_fallback: float,
 ) -> None:
-    registry.register(JobType.LLM_NARRATIVE, NarrativeJob(sessions, llm))
+    registry.register(JobType.LLM_NARRATIVE, NarrativeJob(sessions, llm, trail))
     # The SLA runs in real time until the DEMO time mode is wired, as the Guardian's does.
     registry.register(
         JobType.COMPLAINT_SWEEP,

@@ -1,10 +1,9 @@
+import { StatePage } from './StatePage';
+
 export function ForbiddenPage() {
   return (
-    <section aria-labelledby="forbidden-title">
-      <h1 id="forbidden-title" className="text-2xl font-semibold">
-        No access
-      </h1>
-      <p className="mt-2 text-slate-700">Your role does not include this screen.</p>
-    </section>
+    <StatePage code="403" title="No access">
+      Your role does not include this screen. An admin can change your role on the Admin screen.
+    </StatePage>
   );
 }
