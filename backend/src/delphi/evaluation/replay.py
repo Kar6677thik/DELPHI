@@ -280,7 +280,10 @@ def replay(
 
         def ask(probe: str, payment_id: UUID = view.payment_id, t: PaymentTruth = t) -> str:
             rng = customer_rng(seed, payment_id, probe)
-            return models.sample_answer(rng, t.scenario, probe, coached=t.coached)
+            # t.sim_day: a coaching adaptation (docs/14 §5.3) applies on the session's day.
+            return models.sample_answer(
+                rng, t.scenario, probe, coached=t.coached, sim_day=t.sim_day
+            )
 
         decided = policy.decide(view, ask)
         outcomes.append(_outcome(bank, view, decided, truth, seed=seed, models=models))
