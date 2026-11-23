@@ -26,21 +26,33 @@ from delphi.api.routers import (
     jobs,
     kb,
     metrics,
+    phone,
     platform,
     sensing,
     status,
 )
 from delphi.api.spa import install_spa
 from delphi.api.web_security import WebSecurityMiddleware
+from delphi.guardian.api import LiveGuardian
 from delphi.platform.auth_sessions import LoginThrottle
 from delphi.platform.events import EventHub
 from delphi.platform.rate_limit import TokenBuckets
 from delphi.platform.wiring import Platform
 
 
-def create_app(resources: Platform, *, event_hub: EventHub | None = None) -> FastAPI:
+def create_app(
+    resources: Platform,
+    *,
+    event_hub: EventHub | None = None,
+    guardian_runner: LiveGuardian | None = None,
+) -> FastAPI:
     """``event_hub`` is the api process's live-event fan-out (docs/04 §5.5). Without one (tests,
-    contract generation) GET /events/stream answers 503 NOT_INITIALISED."""
+    contract generation) GET /events/stream answers 503 NOT_INITIALISED.
+
+    ``guardian_runner`` is the runner slot (#98): the LIVE sessions of the mock phone, driven
+    in this process. Without it the Guardian's write endpoints and the phone stream answer 503
+    NOT_INITIALISED. Tests put one in with a fixture prior; #95 fills it at start-up. The slot
+    can also be set later, on ``app.state.guardian_runner``."""
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -48,6 +60,9 @@ def create_app(resources: Platform, *, event_hub: EventHub | None = None) -> Fas
         try:
             yield
         finally:
+            live: LiveGuardian | None = _app.state.guardian_runner
+            if live is not None:  # its sessions resume on the next start-up (FR-GDN-14)
+                await live.runner.shutdown()
             if task is not None:
                 task.cancel()
                 with suppress(asyncio.CancelledError):
@@ -64,6 +79,7 @@ def create_app(resources: Platform, *, event_hub: EventHub | None = None) -> Fas
     )
     app.state.platform = resources
     app.state.event_hub = event_hub
+    app.state.guardian_runner = guardian_runner
     s = resources.settings
     app.state.login_throttle = LoginThrottle(
         resources.clock, max_failures=s.login_max_failures, window=s.login_window
@@ -95,6 +111,7 @@ def create_app(resources: Platform, *, event_hub: EventHub | None = None) -> Fas
     app.include_router(sensing.router)
     app.include_router(cases.router)
     app.include_router(guardian.router)
+    app.include_router(phone.router)
     app.include_router(metrics.router)
     # Last: the SPA catch-all must not shadow any API route.
     install_spa(app, resources.settings.static_dir)

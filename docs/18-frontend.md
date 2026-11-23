@@ -152,9 +152,10 @@ Each probe `ui` type has its own screen (doc 08 §4); the protective hold turns 
 paper-white with a red shield (doc 08 §7). The DELPHI side leads with the leading hypothesis's
 share as the largest figure and the posterior as a tall bar, then what the customer said, why
 this question (the candidates) and the risk table. "Phone only" shows the handset alone on black
-for the projector (Escape returns). Until the Guardian API (#98) lands, the phone's endpoints are
-typed by hand in `src/api/phone.ts` from doc 08 §4 and doc 16, and the page says so when they
-404.
+for the projector (Escape returns). The phone's requests and personas use the generated types;
+the phone stream's events (doc 16 §3) are typed by hand in `src/api/phone.ts` from doc 08 §4,
+since an SSE body has no OpenAPI schema. The phone sends no telemetry yet (a browser cannot see
+the call state), so its telemetry probes record ERROR.
 
 **The Theatre (`/theatre`).** The judges' view, full-screen on black and outside the app
 shell. It is the one place the quiet rules above give way to spectacle (bloom, light,
