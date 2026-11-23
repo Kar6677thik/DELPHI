@@ -492,7 +492,8 @@ export interface paths {
         /**
          * Read Case Dd Pack
          * @description The case's due-diligence pack (docs/09 §7, FR-NAV-11): JSON, or a printable HTML page.
-         *     Computed on read, so it is authoritative over the stored ``dd_pack_complete``.
+         *     Computed on read, so it is authoritative over the stored ``dd_pack_complete``. Reading it
+         *     records a ``DD_PACK_VIEWED`` trace event for the viewer (docs/09 §5).
          */
         get: operations["read_case_dd_pack_api_v1_cases__case_id__dd_pack_get"];
         put?: never;
