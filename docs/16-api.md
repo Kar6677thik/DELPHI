@@ -19,7 +19,7 @@ file is in this public repository, so it reveals nothing more (#127).
 | Probabilities | `{hypothesis_key: float}`, 6 decimals |
 | Time | RFC 3339 UTC strings (`…Z`) |
 | Pagination | Keyset: `?limit=50&cursor=<opaque>`; response `{items, next_cursor}`. Max limit 200 |
-| Idempotency | `Idempotency-Key` header (UUID) REQUIRED on: create Guardian session, probe response, evidence request, disposition, chase operation, lien approvals, job creation. The same key and same body returns the stored response, with header `Idempotent-Replayed: true`; the same key with a different body (or endpoint) returns `409 IDEMPOTENCY_CONFLICT`. Bodies are compared after canonicalising JSON (sorted keys, no whitespace). Keys are per user. A missing or non-UUID key is `422 VALIDATION_FAILED`. The response is stored in the same transaction as the request's changes, and concurrent requests with one key are serialised, so the work runs once. An error response is not stored. Keys are kept 24 h |
+| Idempotency | `Idempotency-Key` header (UUID) REQUIRED on: create Guardian session, probe response, evidence request, disposition, chase operation, lien approvals, job creation. The same key and same body returns the stored response, with header `Idempotent-Replayed: true`; the same key with a different body (or endpoint) returns `409 IDEMPOTENCY_CONFLICT`. Bodies are compared after canonicalising JSON (sorted keys, no whitespace). Keys are per user. A missing or non-UUID key is `422 VALIDATION_FAILED`. The response is stored in the same transaction as the request's changes, and concurrent requests with one key are serialised, so the work runs once. An error response is not stored. Keys are kept 24 h. The Guardian's create and probe response are the exception to "the same transaction": their work commits in the session's own steps (doc 08 §2), so the key's transaction holds its lock while the work runs and stores the response when it is done. Concurrent requests with one key still run it once; a crash between the work and the store frees the key with the work done |
 | Concurrency | Mutable aggregates return `ETag: "<version>"`. Mutations need `If-Match`; a mismatch returns `412 VERSION_CONFLICT` |
 | Errors | RFC 9457 `application/problem+json`: `{type, title, status, detail, code, instance, request_id, errors?: [{path, code, message}]}` |
 | Request id | `X-Request-Id` is accepted or generated, and echoed in the response and the logs |
@@ -55,14 +55,14 @@ Permission names refer to doc 19 §3.
 
 | Method & path | Perm | Request → Response |
 |---|---|---|
-| POST `/guardian/sessions` | `demo:drive` | `{payment: {payer_account_id, payee_account_id \| new_payee: {...}, amount_paise, channel, device_id, telemetry: {...}}}` → 201 `GuardianSessionView` |
+| POST `/guardian/sessions` | `demo:drive` | `Idempotency-Key`; `{payment: {payer_account_id, payee_account_id \| new_payee: {vpa}, amount_paise, channel, device_id, telemetry?: {typing_cadence_z, paste_on_account_field, max_field_dwell_s, remote_access_active, screen_share_active, on_call, call_counterparty_known, session_duration_s}}}` → 201 `GuardianSessionView` with `ETag`. The mock phone's Pay (doc 08 §1): the bank creates the payment (origin `DEMO`, `PENDING_GUARDIAN`) and its `session_telemetry` row, then the LIVE session runs steps 1–3 before the response (so a fast-path payment comes back decided) and the rest in its task. `new_payee` is a VPA the customer typed, resolved to its account (not saved as a payee). `channel` is `UPI_PUSH`, `UPI_COLLECT_APPROVAL`, `IMPS` or `NEFT`; `amount_paise` an integer in 1…10⁹ (₹10 crore, doc 19 §4). Without `telemetry` the telemetry probes record ERROR (doc 08 §2 step 4). 422 for exactly one payee missing, an unknown VPA or account, a payer that is not an active customer account at DLPH, a device that is not the payer's, or a payment to itself. 503 `NOT_INITIALISED` while the api has no runner (#95 sets it at start-up) or no KB is ACTIVE |
 | GET `/guardian/sessions` | `view` | filters: `status, decision, unexplained, mode, from, to`. `decision` must be one of the ACTIVE KB's `GUARDIAN_PAYMENT` decisions (422 otherwise); `mode` is `LIVE`, `AUTOPLAY` or `EVAL` (all modes when omitted; the evaluation harness runs in memory, #123, so EVAL rows are rare). `from`/`to` are on `started_at` ( `from` inclusive, `to` exclusive, RFC 3339 with a zone). Newest first, keyset-paged; items are `GuardianSessionSummary`: the view below without `prior`, `risk_by_decision` and `probe_runs`, plus `leading_hypothesis` |
 | GET `/guardian/sessions/{id}` | `view` | `GuardianSessionView`, with `ETag: "<version>"` |
-| POST `/guardian/sessions/{id}/probe-responses` | `demo:drive` | doc 08 §4 body → 200 `GuardianSessionView` |
-| POST `/guardian/sessions/{id}/cancel` | `demo:drive` | customer cancels → 200 |
+| POST `/guardian/sessions/{id}/probe-responses` | `demo:drive` | `Idempotency-Key`; doc 08 §4 body → 200 `GuardianSessionView` plus `attempts_remaining` (set only for a wrong OTP with attempts left; the run still waits), with `ETag`. 404 for a run that is not this session's, 409 `PROBE_NOT_AWAITING` for a run that no longer waits, 409 `INVALID_STATE_TRANSITION` past the run's deadline or for a session the worker drives (`runner` WORKER: a simulated customer answers it), 400 `INVALID_CLIENT_SIGNALS`, 422 for an answer the screen cannot give. 503 `NOT_INITIALISED` without a runner |
+| POST `/guardian/sessions/{id}/cancel` | `demo:drive` | customer cancels (FR-GDN-07) → 200 `GuardianSessionView` (`CANCELLED_BY_CUSTOMER`, the payment CANCELLED) with `ETag`. 404 unknown, 409 for a finished session or one the worker drives. 503 `NOT_INITIALISED` without a runner |
 | GET `/guardian/sessions/{id}/dd-pack` | `view` | `?format=json\|html`: `{session_id, complete, sections: [{number, title, required, content, note?}]}` (doc 09 §7), or a printable page |
-| GET `/phone/personas` | `demo:drive` | personas with accounts, payees, devices |
-| GET `/phone/stream?customer_id=` | `demo:drive` | SSE `probe.requested`, `otp.sms`, `probe.attempt_result`, `session.decided` |
+| GET `/phone/personas` | `demo:drive` | personas with accounts, payees, devices: `[{customer_id, persona_key, name, language, vulnerable, accounts: [{id, label, vpa, balance_paise}], payees: [{account_id, label, vpa, added_at}], devices: [{id, label, os, first_seen_at}]}]`, by `persona_key`, from `bank.customers.persona_key` (never the `sim_truth` manifest). Accounts are the customer's own at DLPH; devices newest first. Empty before a dataset with personas is seeded |
+| GET `/phone/stream?customer_id=` | `demo:drive` | SSE `probe.requested`, `otp.sms`, `probe.attempt_result`, `session.decided` (§3, doc 08 §4). 404 for an unknown customer, 422 for a missing or malformed id, 503 `NOT_INITIALISED` without a runner |
 
 `GuardianSessionView`:
 
@@ -204,3 +204,20 @@ every 15 s. Reconnect with
 header (a new `EventSource`, opened after the browser gave up on an HTTP error) passes it as
 `?last_event_id=<id>`; the header wins if both are sent. SSE payloads are small: clients
 re-fetch the entity via REST.
+
+**The phone stream** (`GET /api/v1/phone/stream?customer_id=`, `demo:drive`) is the mock
+phone's customer channel (doc 08 §4), separate from the outbox: an `otp.sms` carries the live
+code, which DELPHI never stores. Each event is `event: <type>` and `data:` the doc 08 §4 object
+with its `type`, without an `id:`:
+
+- `probe.requested`: `{type, session_id, probe_run_id, probe_key, ui, language, variant_id, text,
+  options: [{key, text}], timeout_s}`. A question carries its served variant (APPROVED only,
+  FR-KB-05); the other screens carry `language`, `variant_id` and `text` null and no options.
+- `otp.sms`: `{type, session_id, probe_run_id, code}`.
+- `probe.attempt_result`: `{type, session_id, probe_run_id, attempts_remaining}` after a wrong OTP.
+- `session.decided`: `{type, session_id, status, decision, terminal_reason}` when the session
+  ends: `decision` null with status `CANCELLED_BY_CUSTOMER`.
+
+There is no replay; instead a probe still waiting for its answer (with its `otp.sms`) is sent
+again to every new connection, so a phone that reconnects still shows it. `: open` and the
+15 s `: ping` work as above. The events exist only in the api process that runs the session.
