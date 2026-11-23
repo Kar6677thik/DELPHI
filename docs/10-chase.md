@@ -135,6 +135,19 @@ stable. The 30 days, the 80% and the 3-credit minimum are the definition above, 
    The evaluation harness starts one for every executed fraud with a complaint (doc 22 §4), and
    story S-3's runner starts its chase explicitly.
 
+**Implementation (#113 PR 1).**
+- **Operations** (`delphi.chase.operations`): `POST /chase/operations` traces and stores
+  `chase_operations` and `chase_candidates` (migration 0015).
+- **Candidates** come through a `CandidateSource`. The default is the tracer's accounts above
+  `min_trace_inr`, unscored; #112's scoring plugs in there and fills the score columns.
+- **Approval:** `POST /chase/operations/{id}/liens` re-traces as of now. Each approved candidate's
+  lien is `min(T_now, balance now)` (`lien_amount`).
+  - An internal account's lien is PLACED, with `review_due_at`, or FAILED_FUNDS_MOVED at 0.
+  - An external account's lien waits as TICKET_SENT, with its ticket SENT_SIMULATED.
+- **Ticket worker:** acknowledgement, expiry and auto-close are PR 2.
+- **Bank effect:** the bank does not yet hold liened money back from later debits; that is #114's
+  live movement.
+
 ## 6. Metrics (per operation and aggregated)
 
 - `golden_hour_recovery_ratio` = Σ lien amounts PLACED within `golden_hour_minutes` (× time

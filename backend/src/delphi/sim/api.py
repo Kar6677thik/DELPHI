@@ -56,10 +56,12 @@ from delphi.sim.payments import (
     get_payment,
     get_payments,
 )
+from delphi.sim.population import HOME_BANK
 
 # The read-only `bank` tables re-exported for feature modules, and this facade's own API.
 __all__ = [
     "DATASET_REQUEST_LOCK_KEY",
+    "HOME_BANK",
     "PROFILES",
     "STATUS_FOR_DECISION",
     "Baseline",
