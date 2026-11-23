@@ -7,11 +7,17 @@
 
 ``run_idempotent`` opens the request's transaction, replays a stored response or runs the
 handler, and stores its response in that same transaction.
+
+``run_idempotent_async`` is for work that commits in its own steps (a Guardian session's,
+docs/08 §2), which cannot share the key's transaction. It holds the key's lock while the work
+runs, so concurrent requests with one key still run it once, and stores the response when the
+work is done. A crash in between frees the key with the work done (docs/16 §1).
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import asyncio
+from collections.abc import Awaitable, Callable
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -87,4 +93,57 @@ def run_idempotent(
             body=payload,
             now=now,
         )
+    return JSONResponse(payload, status_code=status)
+
+
+async def run_idempotent_async(
+    request: Request,
+    body: bytes,
+    principal: Principal,
+    key: UUID,
+    handler: Callable[[], Awaitable[tuple[int, Any]]],
+) -> JSONResponse:
+    """``run_idempotent`` for a handler that commits its own work. The key's transaction (and
+    its lock) stays open while the handler runs; its database steps run off the event loop."""
+    platform: Platform = request.app.state.platform
+    endpoint = f"{request.method} {request.url.path}"
+    fingerprint = request_fingerprint(endpoint, body)
+    now = platform.clock.now()
+    session = platform.sessions()
+    try:
+        stored = await asyncio.to_thread(
+            lambda: lookup(
+                session,
+                user_id=principal.user_id,
+                key=key,
+                endpoint=endpoint,
+                fingerprint=fingerprint,
+                now=now,
+                retention=platform.settings.idempotency_retention,
+            )
+        )
+        if stored is not None:
+            await asyncio.to_thread(session.commit)  # an expired key's delete, and the lock
+            return JSONResponse(
+                stored.body, status_code=stored.status, headers={REPLAY_HEADER: "true"}
+            )
+        status, result = await handler()
+        payload = jsonable_encoder(result)
+
+        def keep() -> None:
+            store(
+                session,
+                user_id=principal.user_id,
+                key=key,
+                endpoint=endpoint,
+                fingerprint=fingerprint,
+                status=status,
+                body=payload,
+                now=now,
+            )
+            session.commit()
+
+        await asyncio.to_thread(keep)
+    finally:
+        await asyncio.to_thread(session.close)  # rolls back whatever was not committed
     return JSONResponse(payload, status_code=status)
