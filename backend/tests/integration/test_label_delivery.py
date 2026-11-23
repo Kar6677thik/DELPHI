@@ -24,7 +24,7 @@ from delphi.platform.tables import jobs
 from delphi.platform.worker import run_job
 from delphi.sim import api
 from delphi.sim.catalog import datasets
-from delphi.sim.delivery import deliver_labels
+from delphi.sim.delivery import deliver_batch, deliver_labels, lock_delivery
 from delphi.sim.generator_config import history_end, load_generator_config
 from delphi.sim.jobs import register_sim_jobs
 from delphi.sim.labels import FRAUD_OTHER, LabelSource
@@ -137,6 +137,30 @@ def test_label_delivery_delivers_what_falls_due_once(seeded: Bank) -> None:
     assert rest["delivered"] == sum(r.due_at > SOON for r in later)
     assert len(seeded.delivered()) == len(seeded.schedule())
     assert all(r.delivered for r in seeded.schedule())
+
+
+def test_a_batch_is_bounded_and_takes_the_oldest_due_first(seeded: Bank) -> None:
+    """Each batch is one bounded UPDATE (no key list in the statement): the 2026-11-22 OOM."""
+    due = sorted(
+        (r for r in seeded.schedule() if not r.delivered and r.due_at <= T0), key=lambda r: r.due_at
+    )
+    assert len(due) > 3
+    with seeded.sim.begin() as conn:
+        batch = deliver_batch(
+            conn, until=T0, active_hypotheses=frozenset({"GENUINE"}), now=T0, limit=3
+        )
+    assert batch.marked == 3
+    marked = [r for r in seeded.schedule() if r.delivered and r.due_at > END]
+    assert len(marked) == 3
+    assert max(r.due_at for r in marked) <= due[3].due_at
+
+
+def test_a_run_that_finds_the_lock_held_skips(seeded: Bank) -> None:
+    """A second LABEL_DELIVERY never queues behind the first on the advisory lock."""
+    with seeded.sim.begin() as holder:
+        assert lock_delivery(holder, wait=False)
+        result = seeded.run(JobType.LABEL_DELIVERY, "tick-busy")
+    assert result["skipped"] == "busy" and result["delivered"] == 0
 
 
 def test_a_complaint_outside_the_active_kb_is_fraud_other(seeded: Bank) -> None:

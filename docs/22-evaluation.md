@@ -34,8 +34,13 @@ not depend on the number of workers (per-customer RNG streams).
   payment id), each with its session telemetry. Every customer draw comes from
   `keyed_rng(seed, "eval", payment_id, what…)`, including "would the OTP pass"
   (`otp_would_pass`, the same draw for B2, DELPHI and the coercion-catch metric).
-- **Replay** (`delphi.evaluation.replay`): a discrete-event loop on a `VirtualClock` over the
-  stream's payments and the window's scheduled transfers (salaries, mule forwarding).
+- **Replay** (`delphi.evaluation.replay`): a discrete-event loop over the stream's payments and
+  the window's scheduled transfers (salaries, mule forwarding), in time order. Its `VirtualClock`
+  keeps the replay's time; a policy reads the time from the view's `initiated_at`.
+  - Mule forwarding covers only the transfers already scheduled when the history ends. A payment
+    a policy releases into a mule account in the window starts no new forwarding.
+  - The registry listings are fixed when the dataset is generated, whatever each policy decides:
+    a hold does not delay a listing, and a release does not bring one forward.
   - A transfer at the same instant as a payment is booked first.
   - Each policy has its own `BankState`, starting from the history's end: balances, pairs already
     paid, saved payees, devices first seen and registry listings.

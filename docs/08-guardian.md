@@ -60,7 +60,26 @@ runner registers (`expect`s) a run before asking, so a fast answer is never lost
 nobody expects are dropped. The
 synchronous service steps run in threads, so the event loop never blocks on the database. An
 unexpected error in a task ends the session through the fail-safe. A cancelled task (shutdown)
-just stops, and its session is resumed next time.
+just stops, and its session is resumed next time. The runner's optional `on_finished` hears about
+every session that ends in it (decided, cancelled, fail-safe, or the fast path at `submit`); a
+failure there is logged and never changes the session.
+
+**The api's runner slot** (`delphi.guardian.phone.LiveGuardian`, #98) is
+`app.state.guardian_runner`: the service, an API `SessionRunner`, its `AnswerBoard`, and the
+mock phone's channel (`PhoneChannel` over an in-process `PhoneHub`). `ask` sends
+`probe.requested` (and `otp.sms`) to the payer's phone stream and `on_finished` sends
+`session.decided` (doc 16 §3). The phone's probe-responses handler calls `respond`, then
+signals the board; a wrong OTP goes to the phone as `probe.attempt_result`. A cancel signals the
+waiting run, so the task stops at once. The phone answers and cancels only sessions with
+`runner` API. While the slot is empty the write endpoints answer 503 `NOT_INITIALISED`.
+`delphi api` fills it at start-up (`cli.live_guardian_for`, #95): the prior is the sensing
+inference (`SensingInference`, #92), the passive probes use the simulated adapters over the bank
+(§5), with a `statement_timeout` of the KB's `passive_adapter_timeout_ms` plus
+`passive_statement_margin_ms`, and the passive pool has `passive_probe_threads` threads. The
+app's lifespan runs `resume_all` before it serves the first request (FR-GDN-14), and its
+shutdown stops the slot's tasks. Time runs REAL until `DELPHI_TIME_MODE` (doc 07) is a setting.
+The worker's own runner, which drives AUTOPLAY sessions with simulated customers, comes with the
+autoplay traffic (#101).
 
 **Implementation** (`delphi.guardian.service.GuardianService`, #94). One method per step, each in
 its own transaction:

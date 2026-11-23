@@ -20,7 +20,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Query, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import AwareDatetime, BaseModel, Field
 from sqlalchemy.orm import Session
 
 from delphi.api.idempotency import IdempotencyKey, RawBody, run_idempotent
@@ -31,9 +31,7 @@ from delphi.guardian.api import case_trail
 from delphi.kb.model import UNEXPLAINED
 from delphi.kb.store import get_version
 from delphi.navigator.api import (
-    OUTREACH as OUTREACH_SOURCE,
-)
-from delphi.navigator.api import (
+    MAX_TRACE_BATCH,
     AlertAction,
     AlertStatus,
     CaseCursor,
@@ -42,9 +40,11 @@ from delphi.navigator.api import (
     CaseSort,
     CaseStatus,
     CaseType,
+    ClientTrace,
     ConsoleView,
     Disposition,
     EvidenceRecord,
+    TraceType,
     act_on_alert,
     build_case_dd_pack,
     case_profile,
@@ -54,11 +54,16 @@ from delphi.navigator.api import (
     get_alert,
     get_case,
     list_cases,
+    record_client_traces,
+    record_trace,
     refresh_dd_pack_complete,
     request_evidence,
     request_simulated_outreach,
     sort_value,
     vulnerable_payer,
+)
+from delphi.navigator.api import (
+    OUTREACH as OUTREACH_SOURCE,
 )
 from delphi.platform.ddpack import render_html as render_dd_pack_html
 from delphi.platform.errors import DelphiError, NotFoundError, ProblemCode
@@ -580,6 +585,55 @@ def act_on_police_alert(
         return _detail(session, acted, platform.clock.now())
 
 
+class TracePayload(BaseModel):
+    """What a view event may carry: the evidence record it is about, for EVIDENCE_VIEWED and
+    NARRATIVE_EXPANDED. Nothing else is stored from a browser."""
+
+    model_config = {"extra": "forbid"}
+
+    evidence_record_id: UUID | None = None
+
+
+class TraceEventIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    type: TraceType
+    payload: TracePayload = Field(default_factory=TracePayload)
+    at: AwareDatetime  # docs/16: times are UTC (ADR-0014); a zone-less time is a 422
+
+
+class TraceBatch(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    events: list[TraceEventIn] = Field(min_length=1, max_length=MAX_TRACE_BATCH)
+
+
+class TraceBatchResult(BaseModel):
+    recorded: int
+
+
+@router.post("/cases/{case_id}/trace-events", response_model=TraceBatchResult)
+def post_trace_events(
+    case_id: UUID,
+    body: TraceBatch,
+    *,
+    principal: Annotated[Principal, Depends(require(Permission.VIEW))],
+    request: Request,
+) -> TraceBatchResult:
+    """The console's view events, batched (docs/09 §5, FR-NAV-08): CASE_VIEWED,
+    EVIDENCE_VIEWED, NARRATIVE_EXPANDED and WCMM_VIEWED. The server records the actions itself,
+    so any other type is 422, as is an evidence-record event naming a record of another case;
+    the whole batch is then refused. 404 for an unknown case."""
+    platform = _platform(request)
+    events = [
+        ClientTrace(type=e.type, at=e.at, evidence_record_id=e.payload.evidence_record_id)
+        for e in body.events
+    ]
+    with platform.sessions.begin() as session:
+        recorded = record_client_traces(session, platform.clock, case_id, principal.user_id, events)
+    return TraceBatchResult(recorded=recorded)
+
+
 @router.get(
     "/cases/{case_id}/dd-pack",
     response_model=None,
@@ -588,12 +642,14 @@ def act_on_police_alert(
 def read_case_dd_pack(
     case_id: UUID,
     request: Request,
-    _principal: Annotated[Principal, Depends(require(Permission.VIEW))],
+    principal: Annotated[Principal, Depends(require(Permission.VIEW))],
     format: Annotated[DdPackFormat, Query()] = DdPackFormat.JSON,
 ) -> Any:
     """The case's due-diligence pack (docs/09 §7, FR-NAV-11): JSON, or a printable HTML page.
-    Computed on read, so it is authoritative over the stored ``dd_pack_complete``."""
-    with _platform(request).sessions() as session:
+    Computed on read, so it is authoritative over the stored ``dd_pack_complete``. Reading it
+    records a ``DD_PACK_VIEWED`` trace event for the viewer (docs/09 §5)."""
+    platform = _platform(request)
+    with platform.sessions.begin() as session:
         record = get_case(session, case_id)
         if record is None:
             raise NotFoundError("No case with this id.")
@@ -603,6 +659,14 @@ def read_case_dd_pack(
             else None
         )
         pack = build_case_dd_pack(session, case_id, inherited)
+        record_trace(
+            session,
+            case_id=case_id,
+            user_id=principal.user_id,
+            type=TraceType.DD_PACK_VIEWED,
+            at=platform.clock.now(),
+            payload={"format": format.value, "complete": pack.complete},
+        )
     if format is DdPackFormat.HTML:
         return HTMLResponse(render_dd_pack_html(pack))
     return pack.as_json()

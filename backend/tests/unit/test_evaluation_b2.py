@@ -4,13 +4,15 @@ prior the Guardian builds, asking for an OTP in its middle band."""
 
 from __future__ import annotations
 
+from datetime import timedelta
+from typing import Any, cast
 from uuid import UUID
 
 import pytest
 
 from delphi.engine import compile_profile
 from delphi.evaluation.outcomes import Decision, FinalStatus
-from delphi.evaluation.replay import B2, replay
+from delphi.evaluation.replay import B2, Ask, PolicyDecision, PolicyView, replay
 from delphi.evaluation.sensing import HarnessSensing, train_and_score
 from delphi.evaluation.stream import eval_stream, otp_would_pass, stream_truth
 from delphi.guardian.api import PriorInputs
@@ -125,3 +127,35 @@ def test_the_otp_band_releases_exactly_when_the_customers_otp_passes(
     passes = [otp_would_pass(SEED, models, o.payment_id, truth[o.payment_id]) for o in outcomes]
     assert released == passes
     assert any(released) and not all(released)
+
+
+def test_an_asked_customer_answers_on_the_sessions_sim_day(
+    dataset: Dataset, models: ResponseModels
+) -> None:
+    """docs/14 §5.3: the replay passes each session's sim day (days since the history's start)
+    to the response model, so a coaching adaptation takes effect in the window."""
+    asked: list[UUID] = []
+    days: list[tuple[str, float]] = []
+
+    class Spy:
+        def sample_answer(self, rng: Any, scenario: Any, probe: str, **kw: Any) -> str:
+            days.append((probe, kw["sim_day"]))
+            return str(models.sample_answer(rng, scenario, probe, **kw))
+
+    class AskThree:
+        name = "ask-three"
+
+        def decide(self, view: PolicyView, ask: Ask) -> PolicyDecision:
+            if len(asked) < 3:
+                asked.append(view.payment_id)
+                ask("PURPOSE_QUESTION")
+            return PolicyDecision(Decision.RELEASE, view.initiated_at)
+
+    replay(dataset, AskThree(), seed=SEED, models=cast(ResponseModels, Spy()))
+    start = dataset.population.history_start
+    at = {i.payment.id: i.payment.initiated_at for i in eval_stream(dataset)}
+    expected = [(at[p] - start) / timedelta(days=1) for p in asked]
+    assert [d for probe, d in days if probe == "PURPOSE_QUESTION"] == expected
+    history_days = (dataset.population.history_end - start) / timedelta(days=1)
+    # Every draw, the OTP ones for the coercion-catch metric included, is in the window.
+    assert all(d >= history_days for _, d in days)
