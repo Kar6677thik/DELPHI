@@ -5,8 +5,9 @@ pairs already paid, and what the bank knows about payees, devices and registry l
 decisions change that copy (a released payment executes when the payer can fund it), so B1, B2
 and DELPHI each meet the stream as their own decisions left the bank.
 
-The replay is a discrete-event loop on a ``VirtualClock``: the stream's payments and the
-window's scheduled transfers (salaries, mule forwarding), in time order. Nothing sleeps.
+The replay is a discrete-event loop over the stream's payments and the window's scheduled
+transfers (salaries, mule forwarding), in time order. Nothing sleeps. The ``VirtualClock`` only
+keeps the replay's own time: a policy reads the time from ``view.initiated_at``, not the clock.
 
 A policy sees a ``PolicyView``, built from bank-visible records only (no field comes from
 ``sim_truth``). The truth needed to score the run (the scenario, the OTP stream) is joined in

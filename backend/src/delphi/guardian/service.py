@@ -55,7 +55,6 @@ from delphi.guardian.active import (
     ui_for,
 )
 from delphi.guardian.procedure import (
-    PriorInputs,
     final_decision,
     observe,
     plan_step,
@@ -97,6 +96,7 @@ from delphi.probes.api import (
     run_passive_probes,
     serve_question,
 )
+from delphi.sensing.api import PriorInputs
 from delphi.sim import api as bank
 
 PROFILE = "GUARDIAN_PAYMENT"
@@ -110,7 +110,8 @@ log = get_logger(__name__)
 
 
 class PriorPort(Protocol):
-    """The sensing inference (#92). Reads only data from before the payment's initiation."""
+    """The sensing inference (``delphi.sensing.api.SensingInference``, #92). Reads only data
+    from before the payment's initiation."""
 
     def prior_inputs(self, payment: bank.PaymentView) -> PriorInputs: ...
 
