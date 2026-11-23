@@ -3,7 +3,7 @@ import { http, HttpResponse } from 'msw';
 import { describe, expect, it } from 'vitest';
 
 import type { MetricsSummary } from '../src/api/types';
-import { duration } from '../src/routes/OverviewPage';
+import { duration } from '../src/lib/format';
 import { MOCK_STATUS, MOCK_SUMMARY, setMockSession } from './mocks/handlers';
 import { server } from './mocks/node';
 import { renderApp } from './renderApp';

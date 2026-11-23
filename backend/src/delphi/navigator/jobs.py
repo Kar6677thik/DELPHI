@@ -21,6 +21,7 @@ from delphi.kb.store import get_version
 from delphi.llm.minimise import pseudonym
 from delphi.llm.port import Purpose
 from delphi.llm.service import LlmService
+from delphi.navigator.ddpack import GuardianTrail, refresh_complete
 from delphi.navigator.evidence import narrative_subject
 from delphi.navigator.store import get_case
 from delphi.navigator.tables import evidence_records
@@ -56,6 +57,7 @@ class NarrativeJob:
 
     sessions: sessionmaker[Session]
     llm: LlmService
+    trail: GuardianTrail | None = None  # the case's Guardian session trail (DD pack, docs/09 §7)
 
     def __call__(self, ctx: JobContext) -> Mapping[str, Any] | None:
         record_id = UUID(str(ctx.job.params["evidence_record_id"]))
@@ -81,6 +83,7 @@ class NarrativeJob:
                 .returning(e.case_id)
             ).scalar_one_or_none()
             if case_id is not None:
+                refresh_complete(session, case_id, self.trail)  # section 6 may now be complete
                 publish(
                     session,
                     EventType.EVIDENCE_NARRATIVE_READY,
@@ -91,6 +94,10 @@ class NarrativeJob:
 
 
 def register_navigator_jobs(
-    registry: JobRegistry, *, sessions: sessionmaker[Session], llm: LlmService
+    registry: JobRegistry,
+    *,
+    sessions: sessionmaker[Session],
+    llm: LlmService,
+    trail: GuardianTrail | None = None,
 ) -> None:
-    registry.register(JobType.LLM_NARRATIVE, NarrativeJob(sessions, llm))
+    registry.register(JobType.LLM_NARRATIVE, NarrativeJob(sessions, llm, trail))

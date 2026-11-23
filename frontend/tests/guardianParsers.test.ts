@@ -85,7 +85,7 @@ describe('kbDisplay (docs/07 §4)', () => {
   it.each([null, undefined, 'kb', 42, [], ['hypotheses']])(
     'gives only the implicit hypothesis and no decisions for content %j',
     (content) => {
-      expect(kbDisplay(content)).toEqual({ styles: UNEXPLAINED, decisions: [] });
+      expect(kbDisplay(content)).toEqual({ styles: UNEXPLAINED, decisions: [], outcomes: {} });
     },
   );
 
@@ -105,6 +105,21 @@ describe('kbDisplay (docs/07 §4)', () => {
       ATO: { name: 'ATO', color: '#7C3AED' },
     });
     expect(display.decisions).toEqual(['RELEASE', 'DECLINE']);
+  });
+
+  it("reads each source's outcomes, skipping malformed ones", () => {
+    const display = kbDisplay({
+      sources: {
+        CUSTOMER_OUTREACH_CALL: { outcomes: ['CONFIRMS_COERCION', 4, 'UNREACHABLE'] },
+        INBOUND_FAN_IN: { outcomes: 'HIGH' },
+        BROKEN: null,
+      },
+    });
+    expect(display.outcomes).toEqual({
+      CUSTOMER_OUTREACH_CALL: ['CONFIRMS_COERCION', 'UNREACHABLE'],
+      INBOUND_FAN_IN: [],
+      BROKEN: [],
+    });
   });
 
   it('has no decisions when the GUARDIAN_PAYMENT profile is missing or malformed', () => {

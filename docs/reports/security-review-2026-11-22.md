@@ -79,8 +79,8 @@ not against the docs. Paths are relative to `backend/src/delphi/` unless they sa
 | Lockfiles used frozen in CI and the image | OK | `ci.yml`, `nightly.yml`, `Dockerfile` |
 | Actions pinned by commit SHA | OK | Every external `uses:` is pinned |
 | `pnpm audit` | OK | `ci.yml` (frontend job) |
-| gitleaks, pip-audit, bandit, Trivy image scan, dependency review | Open | docs/19 §5 and docs/21 §6 list them, but no workflow runs them |
-| Dependabot | Open | There's no `.github/dependabot.yml` |
+| gitleaks, pip-audit, bandit, Trivy image scan, dependency review | Fixed | `ci.yml` jobs `security`, `image-scan` and `dependency-review` (#127 part 2). First runs: gitleaks found no leaks in 227 commits; pip-audit found nothing; bandit found only `assert`s (skipped, see `pyproject.toml`) and one false positive (`cli.py`, catalog names); Trivy found one fixable HIGH, zlib CVE-2026-85091, now fixed by upgrading the Debian packages in the image |
+| Dependabot | Fixed | `.github/dependabot.yml`: uv, npm, GitHub Actions and Docker, weekly and grouped |
 | No secrets committed; `.env` ignored | OK | Scans for API keys, tokens, private keys and high-entropy strings found only labelled placeholders |
 | `.env.example` | Fixed (docs) | None exists. docs/19 now points to docs/23 §4.1, which lists every setting |
 
@@ -93,11 +93,10 @@ not against the docs. Paths are relative to `backend/src/delphi/` unless they sa
 
 ## Open items
 
-1. **CI scanners:** gitleaks, pip-audit, bandit, a Trivy scan of a no-push image build, and
-   dependency review, as a `security` job in `ci.yml`. This needs owner approval
-   (`.github/workflows`).
-2. **Dependabot:** for uv/pip, npm, GitHub Actions and Docker.
-3. **`If-Match`:** require it on the evidence-request and police-alert actions, or narrow the
+1. **CI scanners and Dependabot:** done in #127 part 2 (owner-approved). The image scan also
+   found uv's download cache left in the image (about 450 MB); the image now builds without it.
+   Waivers live in `security/waivers.yaml`; a Trivy waiver also goes in `.trivyignore`.
+2. **`If-Match`:** require it on the evidence-request and police-alert actions, or narrow the
    docs/16 §1 rule. That's a docs/16 decision.
-4. **Recheck when built:** four-eyes promotion (#119), the ₹10 crore amount limit (payment
+3. **Recheck when built:** four-eyes promotion (#119), the ₹10 crore amount limit (payment
    create), and the `DELPHI_SECRET_KEY` OTP key (#171, #215).
