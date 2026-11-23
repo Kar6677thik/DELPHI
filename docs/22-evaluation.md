@@ -26,8 +26,12 @@ and the numbers for the pitch.
    `docs/reports/evaluation-<date>.md` (committed by the owner).
 
 Runtime target: ≤ 30 minutes for `eval` on the home server (4 cores), ≤ 2 minutes for `test`.
-Engine work is parallelised across customers with `multiprocessing` (4 workers). Results must
-not depend on the number of workers (per-customer RNG streams).
+Engine work is parallelised with `multiprocessing` (4 workers). Results must not depend on the
+number of workers (per-customer RNG streams). The harness splits the work **by policy**
+(`delphi.evaluation.harness.run_policies`, #123), not by customer: within one policy, customers
+share the bank (payees receive from many customers, balances move), so splitting a policy's
+stream would change what it sees. Five policies on 4 forked workers; the dataset and the trained
+sensing are shared copy-on-write.
 
 **Implementation (#123).**
 - **Stream** (`delphi.evaluation.stream`): the window's sessions in initiation order (ties by
