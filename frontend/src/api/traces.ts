@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef } from 'react';
 
 import { apiFetch } from './client';
 import type { components } from './schema';
@@ -74,15 +74,20 @@ export function createTraceQueue(
   return { track, flush };
 }
 
-/** The console's queue for its case, flushed when the console unmounts. */
+/**
+ * The console's queue for its case, flushed when the console unmounts. The flush waits a tick and
+ * is cancelled if the console mounts again at once (React's development double mount), so only a
+ * real departure sends early.
+ */
 export function useTraceQueue(caseId: string): TraceQueue {
   const queue = useMemo(() => createTraceQueue(caseId), [caseId]);
-  useEffect(
-    () => () => {
-      queue.flush();
-    },
-    [queue],
-  );
+  const leaving = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (leaving.current !== null) clearTimeout(leaving.current);
+    return () => {
+      leaving.current = setTimeout(queue.flush, 0);
+    };
+  }, [queue]);
   return queue;
 }
 
