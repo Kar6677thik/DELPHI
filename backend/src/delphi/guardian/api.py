@@ -7,7 +7,6 @@ from delphi.guardian.ddpack import build as build_dd_pack
 from delphi.guardian.ddpack import render_html as render_dd_pack_html
 from delphi.guardian.kpis import GuardianKpis, guardian_kpis
 from delphi.guardian.procedure import (
-    PriorInputs,
     ProbeStep,
     SessionPrior,
     SessionResult,
@@ -28,6 +27,7 @@ from delphi.guardian.views import (
     list_sessions,
     probe_run_rows,
 )
+from delphi.sensing.api import PriorInputs
 
 __all__ = [
     "DdPack",
