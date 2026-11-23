@@ -2,9 +2,11 @@
 
 For each source, the daily mean ``info_yield_bits`` over its completed observations. The alert
 ``PROBE_YIELD_DEGRADED`` is raised for a source on a day when its rolling 7-day mean falls below
-0.7 × its rolling mean over the 28 days before those 7, and the 7 days hold at least 30
-observations. Pure: the caller loads the observations (``probe_runs``, or the harness's probe
-records) and stores or shows the alerts. The numbers are settings (``DELPHI_YIELD_*``).
+0.7 × its rolling mean over the 28 days before those 7, the 7 days hold at least 30
+observations, and the 28 days at least 30 too (one baseline observation is no baseline). Pure:
+the caller loads the observations (``probe_runs``, or the harness's probe records) and stores or
+shows the alerts. The numbers are settings (``DELPHI_YIELD_*``). A day is a UTC calendar day
+(ADR-0014): the caller buckets each observation by its UTC completion date.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ class DriftConfig:
     baseline_days: int
     ratio: float
     min_recent_count: int
+    min_baseline_count: int
 
     @staticmethod
     def of(settings: Settings) -> DriftConfig:
@@ -33,13 +36,14 @@ class DriftConfig:
             baseline_days=settings.yield_baseline_days,
             ratio=settings.yield_drift_ratio,
             min_recent_count=settings.yield_min_recent_count,
+            min_baseline_count=settings.yield_min_baseline_count,
         )
 
 
 @dataclass(frozen=True, slots=True)
 class Observation:
     source_key: str
-    day: date
+    day: date  # the UTC date the observation completed (ADR-0014)
     info_yield_bits: float
 
 
@@ -99,6 +103,10 @@ def drift_alerts(
             recent_n, recent = _window(rows, day, config.recent_days)
             base_end = day - timedelta(days=config.recent_days)
             base_n, base = _window(rows, base_end, config.baseline_days)
-            if recent_n >= config.min_recent_count and base_n > 0 and recent < config.ratio * base:
+            if (
+                recent_n >= config.min_recent_count
+                and base_n >= config.min_baseline_count
+                and recent < config.ratio * base
+            ):
                 alerts.append(DriftAlert(source, day, recent, base, recent_n))
     return alerts

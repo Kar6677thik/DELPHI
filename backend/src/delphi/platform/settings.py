@@ -136,6 +136,7 @@ class Settings(BaseSettings):
     yield_baseline_days: int = Field(default=28, ge=1, le=365)
     yield_drift_ratio: float = Field(default=0.7, gt=0, lt=1)
     yield_min_recent_count: int = Field(default=30, ge=1)
+    yield_min_baseline_count: int = Field(default=30, ge=1)
 
     http_host: str = "0.0.0.0"  # nosec B104: binds inside the pod only (docs/23 §4)
     http_port: Port = 8000

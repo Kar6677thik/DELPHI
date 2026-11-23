@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date, timedelta
 
 from delphi.learning.drift import (
@@ -58,3 +59,15 @@ def test_daily_yields_aggregate_per_source_and_day() -> None:
         Observation("B", DAY0, 2.0),
     ]
     assert daily_yields(obs) == [DailyYield("A", DAY0, 2, 0.75), DailyYield("B", DAY0, 1, 2.0)]
+
+
+def test_a_thin_baseline_raises_nothing() -> None:
+    """One baseline day of 2 observations is no baseline: under the minimum of 30, no alert."""
+    rows = [*_days("PURPOSE_QUESTION", [1.0], per_day=2)]
+    rows += [
+        DailyYield("PURPOSE_QUESTION", DAY0 + timedelta(days=CONFIG.recent_days + k), 10, 0.1)
+        for k in range(1, CONFIG.recent_days + 1)
+    ]
+    assert drift_alerts(rows, CONFIG) == []
+    loose = replace(CONFIG, min_baseline_count=1)
+    assert drift_alerts(rows, loose)  # the same rows alert with no minimum
