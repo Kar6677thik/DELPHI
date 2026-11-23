@@ -41,6 +41,7 @@ from delphi.navigator.disposition import vulnerable_payer
 from delphi.navigator.evidence_adapters import ADAPTERS, EvidenceSubject
 from delphi.navigator.store import CaseRecord, CaseStatus, get_case
 from delphi.navigator.tables import cases, evidence_records
+from delphi.navigator.traces import TraceType, record_trace
 from delphi.platform.audit import ActorType, record
 from delphi.platform.clock import Clock
 from delphi.platform.errors import DelphiError, NotFoundError, ProblemCode
@@ -177,8 +178,9 @@ def _rank(
     posterior: Mapping[str, float],
     observed: frozenset[str],
     source_key: str,
-) -> tuple[int | None, float | None]:
-    """The source's place and net value in the console's ranking at this moment (docs/09 §2),
+) -> tuple[int | None, float | None, float | None]:
+    """The source's place, net value and settle % in the console's ranking at this moment
+    (docs/09 §2),
     from ``posterior``: the case's, or for a refresh the case's without the superseded
     observation."""
     view = console(
@@ -192,7 +194,9 @@ def _rank(
     )
     ranked = [r for r in view.next_best_evidence if r.eligible]
     row = next((i for i, r in enumerate(ranked) if r.source_key == source_key), None)
-    return (None, None) if row is None else (row + 1, ranked[row].net_value_paise)
+    if row is None:
+        return None, None, None
+    return row + 1, ranked[row].net_value_paise, ranked[row].settle_pct
 
 
 def _fetch(
@@ -270,7 +274,7 @@ def request_evidence(
         before = bayes_update(before, 1.0 / old)  # the KB floors likelihoods, so never 0
     names = profile.hypotheses
     posterior_before = {h: float(p) for h, p in zip(names, before, strict=True)}
-    rank, net_value = _rank(
+    rank, net_value, settle_pct = _rank(
         session,
         case,
         kb=version.kb,
@@ -372,6 +376,21 @@ def request_evidence(
             "evidence_record_id": str(record_id),
             "source_key": source_key,
             "outcome": outcome,
+            "refresh": source_key in current,
+        },
+    )
+    record_trace(  # docs/09 §5: what the console showed for the source when it was asked for
+        session,
+        case_id=case_id,
+        user_id=requested_by,
+        type=TraceType.EVIDENCE_REQUESTED,
+        at=now,
+        payload={
+            "source_key": source_key,
+            "evidence_record_id": str(record_id),
+            "rank_shown": rank,
+            "net_value_shown_paise": None if net_value is None else round(net_value),
+            "settle_pct_shown": None if settle_pct is None else round(settle_pct, 1),
             "refresh": source_key in current,
         },
     )
