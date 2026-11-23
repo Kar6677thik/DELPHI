@@ -30,8 +30,10 @@ from delphi.chase.api import (
     cfcfrms_tickets,
     chase_candidates,
     chase_operations,
+    close_operation,
     create_operation,
     liens,
+    release_lien,
 )
 from delphi.platform.errors import NotFoundError
 from delphi.platform.wiring import Platform
@@ -217,6 +219,54 @@ def approve(
             body.candidate_ids,
             approved_by=principal.user_id,
         )
+        return HTTPStatus.OK, _view(session, operation_id).model_dump(mode="json")
+
+    return run_idempotent(request, raw, principal, key, run)
+
+
+class ReleaseLien(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=1, max_length=500)
+
+
+@router.post("/chase/operations/{operation_id}/liens/{lien_id}/release", response_model=ChaseView)
+def release(
+    operation_id: UUID,
+    lien_id: UUID,
+    *,
+    principal: Annotated[Principal, Depends(require(Permission.CHASE_WRITE))],
+    body: ReleaseLien,
+    raw: RawBody,
+    key: IdempotencyKey,
+    request: Request,
+) -> JSONResponse:
+    """docs/05 §6: a PLACED lien is released, with the reason; 409 for any other status."""
+    platform = _platform(request)
+
+    def run(session: Session) -> tuple[int, Any]:
+        release_lien(
+            session, platform.clock, operation_id, lien_id, by=principal.user_id, reason=body.reason
+        )
+        return HTTPStatus.OK, _view(session, operation_id).model_dump(mode="json")
+
+    return run_idempotent(request, raw, principal, key, run)
+
+
+@router.post("/chase/operations/{operation_id}/close", response_model=ChaseView)
+def close(
+    operation_id: UUID,
+    *,
+    principal: Annotated[Principal, Depends(require(Permission.CHASE_WRITE))],
+    raw: RawBody,
+    key: IdempotencyKey,
+    request: Request,
+) -> JSONResponse:
+    """docs/10 §5 step 7: a manual close, at any time; 409 once closed."""
+    platform = _platform(request)
+
+    def run(session: Session) -> tuple[int, Any]:
+        close_operation(session, platform.clock, operation_id, by=principal.user_id)
         return HTTPStatus.OK, _view(session, operation_id).model_dump(mode="json")
 
     return run_idempotent(request, raw, principal, key, run)

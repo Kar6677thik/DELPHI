@@ -144,7 +144,16 @@ stable. The 30 days, the 80% and the 3-credit minimum are the definition above, 
   lien is `min(T_now, balance now)` (`lien_amount`).
   - An internal account's lien is PLACED, with `review_due_at`, or FAILED_FUNDS_MOVED at 0.
   - An external account's lien waits as TICKET_SENT, with its ticket SENT_SIMULATED.
-- **Ticket worker:** acknowledgement, expiry and auto-close are PR 2.
+- **Tickets** (`delphi.chase.tickets`, #113 PR 2): `CHASE_RETRACE` (every 20 s, the docs/04
+  floor) settles every SENT_SIMULATED ticket.
+  - **Acknowledged** after the simulator's CFCFRMS latency (doc 14 §9,
+    `sim.external.cfcfrms_ack_delay`, seeded by the bank's dataset). The lien is then PLACED for
+    min(approved amount, balance now), or FAILED_FUNDS_MOVED at 0.
+  - **Expired** after `ticket_expiry_min`: the lien is FAILED_NO_RESPONSE.
+- **Closing:** the same job closes OPEN operations past their golden hour with no pending ticket.
+  `POST …/close` closes one by hand, and `POST …/liens/{id}/release` releases a PLACED lien with a
+  reason.
+- **Time:** all latencies run in real time until the DEMO time mode is wired.
 - **Bank effect:** the bank does not yet hold liened money back from later debits; that is #114's
   live movement.
 

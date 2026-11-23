@@ -45,6 +45,7 @@ from delphi.sim.bank import (
 )
 from delphi.sim.baselines import Baseline, baseline_decisions
 from delphi.sim.catalog import datasets
+from delphi.sim.external import cfcfrms_ack_delay
 from delphi.sim.generator_config import history_end, load_generator_config
 from delphi.sim.payments import (
     STATUS_FOR_DECISION,
@@ -76,6 +77,7 @@ __all__ = [
     "apply_guardian_decision",
     "baseline_decisions",
     "cancel_payment",
+    "cfcfrms_ack_delay",
     "complaints",
     "crm_events",
     "current_dataset",
@@ -87,6 +89,7 @@ __all__ = [
     "history_window",
     "labels",
     "ledger_entries",
+    "load_generator_config",
     "login_events",
     "payees",
     "payments",

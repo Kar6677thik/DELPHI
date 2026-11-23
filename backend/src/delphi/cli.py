@@ -25,6 +25,7 @@ from sqlalchemy import Engine, text
 
 from delphi.api.app import create_app
 from delphi.api.contract import OPENAPI_FILE, openapi_document
+from delphi.chase.jobs import register_chase_jobs
 from delphi.guardian.api import case_trail
 from delphi.kb.canonical import content_sha256
 from delphi.kb.issues import KbValidationError
@@ -206,6 +207,7 @@ def worker_registry(
     register_sensing_jobs(
         registry, engine=platform.engine, sessions=platform.sessions, clock=platform.clock
     )
+    register_chase_jobs(registry, sessions=platform.sessions, clock=platform.clock)
     settings = platform.settings
     llm = LlmService(
         platform.sessions,

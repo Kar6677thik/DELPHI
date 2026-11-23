@@ -59,6 +59,11 @@ ACCESS: dict[tuple[str, str], str | Permission] = {
     ("POST", "/api/v1/chase/operations"): Permission.CHASE_WRITE,
     ("GET", "/api/v1/chase/operations/{operation_id}"): Permission.VIEW,
     ("POST", "/api/v1/chase/operations/{operation_id}/liens"): Permission.CHASE_WRITE,
+    (
+        "POST",
+        "/api/v1/chase/operations/{operation_id}/liens/{lien_id}/release",
+    ): Permission.CHASE_WRITE,
+    ("POST", "/api/v1/chase/operations/{operation_id}/close"): Permission.CHASE_WRITE,
 }
 PASSWORD = "correct horse battery"
 BROWSER = {"X-Delphi-Csrf": "1", "Origin": "https://testserver"}
@@ -136,6 +141,7 @@ def test_access(
         .replace("{version_id}", "999")
         .replace("{case_id}", str(uuid4()))
         .replace("{operation_id}", str(uuid4()))
+        .replace("{lien_id}", str(uuid4()))
         .replace("{action}", "send")
         .replace("{session_id}", str(uuid4()))
     )
