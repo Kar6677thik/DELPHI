@@ -1,4 +1,4 @@
-import { act, screen, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { describe, expect, it } from 'vitest';
 
@@ -347,5 +347,52 @@ describe('disposition helpers', () => {
   it('lists nothing when nothing a reader sees changed', () => {
     const detail = mockCaseDetail();
     expect(caseChanges(detail, { ...detail, version: 9 })).toEqual([]);
+  });
+});
+
+describe('view events (docs/09 §5, #264)', () => {
+  it('sends what the investigator viewed when they leave the console', async () => {
+    Element.prototype.scrollIntoView = () => undefined; // jsdom has no layout
+    // The previous test's console sends its last batch a tick after it unmounts: let it go first.
+    await act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+    const batches: { type: string; payload?: { evidence_record_id: string } }[][] = [];
+    const record = mockEvidence();
+    serve(
+      mockCaseDetail({
+        evidence_records: [record],
+        what_would_change_my_mind: {
+          source_key: 'CUSTOMER_OUTREACH_CALL',
+          outcome: 'CONFIRMS_GENUINE_PURPOSE',
+          probability: 0.12,
+          new_decision: 'RELEASE',
+          risk_change_paise: -500_000,
+        },
+      }),
+    );
+    server.use(
+      http.post(`${CASE_URL}/trace-events`, async ({ request }) => {
+        const body = (await request.json()) as { events: (typeof batches)[number] };
+        batches.push(body.events);
+        return HttpResponse.json({ recorded: body.events.length });
+      }),
+      http.get('/api/v1/cases', () => HttpResponse.json({ items: [], next_cursor: null })),
+    );
+    const { user, router } = await openConsole('viewer');
+    await user.click(await screen.findByRole('button', { name: 'Show the facts: Inbound fan in' }));
+    expect(batches).toEqual([]); // batched: nothing sent yet
+    await act(async () => {
+      await router.navigate('/cases'); // leaving the console sends the batch
+    });
+    await waitFor(() => {
+      expect(batches).toHaveLength(1);
+    });
+    const [events] = batches;
+    const types = events?.map((e) => e.type) ?? [];
+    // The views as the page shows (React runs children's effects first), then the click.
+    expect(types.slice(0, 3).sort()).toEqual(['CASE_VIEWED', 'EVIDENCE_VIEWED', 'WCMM_VIEWED']);
+    expect(types[3]).toBe('NARRATIVE_EXPANDED');
+    expect(events?.find((e) => e.type === 'NARRATIVE_EXPANDED')?.payload).toEqual({
+      evidence_record_id: record.id,
+    });
   });
 });
