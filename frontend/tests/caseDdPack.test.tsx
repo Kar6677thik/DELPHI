@@ -48,13 +48,19 @@ function pack(complete: boolean) {
   };
 }
 
+/** The pack's status line, whose parts are styled apart: match the whole paragraph's text. */
+function packStatus(text: string) {
+  return (_: string, el: Element | null) =>
+    el?.getAttribute('role') === 'status' && el.textContent.replace(/\s+/g, ' ').trim() === text;
+}
+
 describe('the case DD pack page (docs/18 §2, docs/09 §7)', () => {
   it('shows all nine sections in order with the completeness', async () => {
     setMockSession('viewer');
     server.use(http.get(URL, () => HttpResponse.json(pack(true))));
     renderApp(`/cases/${CASE_ID}/dd-pack`);
     expect(await screen.findByRole('heading', { name: 'Due-diligence pack' })).toBeInTheDocument();
-    expect(await screen.findByText(`Case ${CASE_ID} · Complete`)).toBeInTheDocument();
+    expect(await screen.findByText(packStatus(`Case ${CASE_ID} · Complete`))).toBeVisible();
     const headings = screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent);
     expect(headings).toHaveLength(TITLES.length);
     TITLES.forEach((title, i) => {
@@ -76,7 +82,7 @@ describe('the case DD pack page (docs/18 §2, docs/09 §7)', () => {
     setMockSession('viewer');
     server.use(http.get(URL, () => HttpResponse.json(pack(false))));
     renderApp(`/cases/${CASE_ID}/dd-pack`);
-    expect(await screen.findByText(`Case ${CASE_ID} · Incomplete`)).toBeInTheDocument();
+    expect(await screen.findByText(packStatus(`Case ${CASE_ID} · Incomplete`))).toBeVisible();
     const decisions = within(screen.getByRole('region', { name: /5\. Decisions/ }));
     expect(decisions.getByRole('heading')).toHaveTextContent('Required · missing');
     expect(decisions.getByText('The case has no disposition yet.')).toBeInTheDocument();
