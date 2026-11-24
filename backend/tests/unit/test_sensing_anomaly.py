@@ -8,10 +8,12 @@ import numpy as np
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
+from sklearn.ensemble import IsolationForest
 
 from delphi.sensing.anomaly import (
     AnomalyInputError,
     AnomalyModel,
+    FlatForest,
     feature_matrix,
     train_anomaly,
     train_anomaly_matrix,
@@ -194,3 +196,31 @@ def test_bad_training_matrices_are_refused(
 ) -> None:
     with pytest.raises(AnomalyInputError, match=message):
         train_anomaly_matrix(matrix, features, config)
+
+
+@pytest.mark.parametrize("max_samples, max_features", [("auto", 1.0), (2, 1.0), (64, 0.5)])
+def test_the_flat_forest_scores_like_score_samples(
+    config: AnomalyConfig, max_samples: int | str, max_features: float
+) -> None:
+    """The online scorer (#92) gives sklearn's score: tiny trees (two samples), subsampled
+    features, ties on a threshold (integer counts) and rows outside the training range."""
+    train = feature_matrix(_rows(N_TRAIN, seed=1), FEATURES)
+    forest = IsolationForest(
+        n_estimators=config.n_estimators,
+        max_samples=max_samples,
+        max_features=max_features,
+        random_state=config.random_state,
+    ).fit(train)
+    flat = FlatForest.of(forest)
+    rows = np.vstack([train[:50], feature_matrix(_rows(150, seed=2), FEATURES) * 3.0 - 1.0])
+    expected = -forest.score_samples(rows)
+    got = np.array([flat.score(row) for row in rows])
+    np.testing.assert_allclose(got, expected, rtol=0, atol=1e-12)
+
+
+def test_the_flat_forest_matches_the_model_percentile(config: AnomalyConfig) -> None:
+    model = train_anomaly(_rows(N_TRAIN, seed=3), FEATURES, config)
+    flat = FlatForest.of(model.forest)
+    for row in _rows(100, seed=4):
+        matrix = feature_matrix([row], FEATURES)
+        assert model.percentile_of_score(flat.score(matrix[0])) == model.percentile(row)

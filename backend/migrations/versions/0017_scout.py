@@ -1,12 +1,18 @@
 """Scout runs, clusters, typology drafts and queue dismissals (docs/11 §1–2, docs/17, #117).
 
-Revision ID: 0016
-Revises: 0015
+Revision ID: 0017
+Revises: 0016
 Create Date: 2026-11-23
 
 `RUN_SCOUT` stores each run, its clusters and one CANDIDATE `typology_drafts` row per cluster
 (docs/11 §2); #118's draft editor and backtests build on the same table. An FDE engineer can
 dismiss an unexplained-queue item with a reason (docs/11 §1): one dismissal per item.
+
+It also indexes what the Scout reads every run (bounded after #263): the unexplained Guardian
+sessions by `decided_at` (partial, `WHERE unexplained`), the disposed account reviews by
+`disposed_at`, and the members of clusters (GIN on `member_refs`, for the promoted-member test).
+One run per job: a retried `RUN_SCOUT` finds its run by `job_id` (unique) instead of inserting
+a second one.
 
 0001's default privileges give both application roles DML on the tables. Expand/contract
 (docs/17 §1): this migration only adds tables and their indexes.
@@ -16,8 +22,8 @@ from __future__ import annotations
 
 from alembic import op
 
-revision = "0016"
-down_revision = "0015"
+revision = "0017"
+down_revision = "0016"
 branch_labels = None
 depends_on = None
 
@@ -32,7 +38,7 @@ CREATE TABLE delphi.scout_runs (
   params      jsonb NOT NULL
 );
 CREATE INDEX scout_runs_started_idx ON delphi.scout_runs (started_at);
-CREATE INDEX scout_runs_job_idx ON delphi.scout_runs (job_id);
+CREATE UNIQUE INDEX scout_runs_job_key ON delphi.scout_runs (job_id);
 
 CREATE TABLE delphi.scout_clusters (
   id                      uuid PRIMARY KEY,
@@ -44,6 +50,8 @@ CREATE TABLE delphi.scout_clusters (
   created_at              timestamptz NOT NULL
 );
 CREATE INDEX scout_clusters_run_idx ON delphi.scout_clusters (run_id);
+CREATE INDEX scout_clusters_member_refs_idx ON delphi.scout_clusters
+  USING gin (member_refs jsonb_path_ops);
 
 CREATE TABLE delphi.typology_drafts (
   id                   uuid PRIMARY KEY,
@@ -83,6 +91,10 @@ CREATE TABLE delphi.scout_queue_dismissals (
   PRIMARY KEY (subject_type, subject_id)
 );
 CREATE INDEX scout_queue_dismissals_by_idx ON delphi.scout_queue_dismissals (dismissed_by);
+CREATE INDEX guardian_sessions_unexplained_decided_idx ON delphi.guardian_sessions
+  (decided_at, id) WHERE unexplained;
+CREATE INDEX cases_disposed_review_idx ON delphi.cases (disposed_at, id)
+  WHERE type = 'ACCOUNT_REVIEW' AND status = 'DISPOSED';
 """
 
 
@@ -91,6 +103,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.execute("DROP INDEX delphi.cases_disposed_review_idx")
+    op.execute("DROP INDEX delphi.guardian_sessions_unexplained_decided_idx")
     op.execute(
         "DROP TABLE delphi.scout_queue_dismissals, delphi.typology_drafts,"
         " delphi.scout_clusters, delphi.scout_runs"

@@ -14,6 +14,12 @@ cluster (members as ``{subject_type, subject_id}`` refs, its size and time span)
 ``typology_drafts`` row per cluster, status CANDIDATE, whose spec holds the suggested name, the
 draft likelihood rows and the outcome profile.
 
+**Bounds (after #263).** A run loads at most ``scout_max_items`` queue items (the newest of the
+lookback) and as many reference sessions, with the sensing config parsed once. The reference
+set's argmax is taken in SQL. A retried ``RUN_SCOUT`` (a lost lease) finds its run by ``job_id``
+(unique) and returns it. ``SCOUT_AUTO_TRIGGER`` enqueues nothing while a ``RUN_SCOUT`` is QUEUED
+or RUNNING, so slow or failing runs do not pile up.
+
 **Gap fills (docs/11 §2 is silent):**
 - The sensing artifacts store no feature means or standard deviations, so the z-scores use the
   run's own items (queue and reference).
@@ -21,7 +27,7 @@ draft likelihood rows and the outcome profile.
   customer's events map to them (asked on #117).
 
 ``SCOUT_AUTO_TRIGGER`` (every 5 min) enqueues a run once ``auto_trigger_new_items`` items have
-entered the queue since the last run started.
+entered the queue since the last run started, unless one is already QUEUED or RUNNING.
 """
 
 from __future__ import annotations
@@ -33,21 +39,22 @@ from typing import Any
 from uuid import UUID
 
 import numpy as np
-from sqlalchemy import func, select
+from sqlalchemy import exists, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
-from delphi.guardian.api import attributed_sessions, observed_outcomes
+from delphi.guardian.api import attributed_sessions_query, observed_outcomes
 from delphi.kb.model import KnowledgeBase
 from delphi.kb.store import active_version
 from delphi.navigator.api import current_records
 from delphi.platform.clock import Clock
 from delphi.platform.events import EventType, publish
 from delphi.platform.ids import uuid7
-from delphi.platform.jobs import JobContext, JobType, enqueue
+from delphi.platform.jobs import JobContext, JobStatus, JobType, enqueue
+from delphi.platform.tables import jobs
 from delphi.scout.clustering import FeatureSpace, ScoutItem, scout
-from delphi.scout.queue import QueueItem, SubjectType, queue_items
+from delphi.scout.queue import QueueItem, SubjectType, count_queue_items, queue_items
 from delphi.scout.tables import scout_clusters, scout_runs, typology_drafts
-from delphi.sensing.api import scout_features
+from delphi.sensing.api import FeatureConfig, scout_feature_config, scout_features
 from delphi.sim import api as bank
 
 CANDIDATE = "CANDIDATE"
@@ -67,11 +74,13 @@ def _channel(session: Session, payment_id: UUID | None) -> str:
     return payment.channel if payment is not None else ""
 
 
-def _load(session: Session, item: QueueItem) -> ScoutItem:
+def _load(session: Session, item: QueueItem, config: FeatureConfig) -> ScoutItem:
     if item.subject_type is SubjectType.GUARDIAN_SESSION:
         outcomes = observed_outcomes(session, item.subject_id)
         features = (
-            scout_features(session.connection(), item.payment_id) if item.payment_id else None
+            scout_features(session.connection(), item.payment_id, config)
+            if item.payment_id
+            else None
         )
     else:
         outcomes = {r.source_key: r.outcome for r in current_records(session, item.subject_id)}
@@ -97,22 +106,48 @@ def _space(kb: KnowledgeBase, items: Sequence[ScoutItem]) -> FeatureSpace:
     )
 
 
+def _reference(session: Session, *, since: datetime, limit: int) -> list[QueueItem]:
+    """The newest ``limit`` sessions attributed to a known typology since ``since``."""
+    ref = attributed_sessions_query(since).subquery("ref")
+    rows = session.execute(
+        select(ref).order_by(ref.c.entered_at.desc(), ref.c.subject_id.desc()).limit(limit)
+    )
+    return [
+        QueueItem(SubjectType.GUARDIAN_SESSION, r.subject_id, r.entered_at, 0.0, r.payment_id)
+        for r in rows
+    ]
+
+
+def _run_of_job(session: Session, job_id: UUID | None) -> UUID | None:
+    if job_id is None:
+        return None
+    found: UUID | None = session.execute(
+        select(scout_runs.c.id).where(scout_runs.c.job_id == job_id)
+    ).scalar()
+    return found
+
+
 def run_scout(
-    session: Session, clock: Clock, kb: KnowledgeBase, *, job_id: UUID | None = None
+    session: Session,
+    clock: Clock,
+    kb: KnowledgeBase,
+    *,
+    max_items: int,
+    job_id: UUID | None = None,
 ) -> UUID:
-    """One Scout run (docs/11 §2), in the caller's transaction. Returns the run's id."""
+    """One Scout run (docs/11 §2), in the caller's transaction. Returns the run's id; a job that
+    already stored its run (a retry) gets that run back."""
+    existing = _run_of_job(session, job_id)
+    if existing is not None:
+        return existing
     cfg = kb.config.scout
     started = clock.now()
     since = started - timedelta(days=cfg.lookback_days)
-    queue = [_Loaded(q, _load(session, q)) for q in queue_items(session, kb, since=since)]
+    config = scout_feature_config()
+    newest = queue_items(session, kb, since=since, limit=max_items, newest_first=True)
+    queue = [_Loaded(q, _load(session, q, config)) for q in reversed(newest)]
     reference = [
-        _load(
-            session,
-            QueueItem(
-                SubjectType.GUARDIAN_SESSION, s.id, s.decided_at, s.p_unexplained, s.payment_id
-            ),
-        )
-        for s in attributed_sessions(session, since=since)
+        _load(session, r, config) for r in _reference(session, since=since, limit=max_items)
     ]
     items = [q.item for q in queue]
     result = scout(
@@ -131,6 +166,7 @@ def run_scout(
         "min_samples": cfg.min_samples,
         "cluster_selection_epsilon": cfg.cluster_selection_epsilon,
         "n_reference": len(reference),
+        "max_items": max_items,
     }
     session.execute(
         scout_runs.insert().values(
@@ -199,24 +235,43 @@ class RunScoutJob:
 
     sessions: sessionmaker[Session]
     clock: Clock
+    max_items: int
 
     def __call__(self, ctx: JobContext) -> Mapping[str, Any] | None:
         with self.sessions.begin() as session:
             version = active_version(session)
             if version is None:
                 return {"run_id": None, "reason": "no ACTIVE KB version"}
-            run_id = run_scout(session, self.clock, version.kb, job_id=ctx.job.id)
+            run_id = run_scout(
+                session, self.clock, version.kb, max_items=self.max_items, job_id=ctx.job.id
+            )
         return {"run_id": str(run_id)}
 
 
 def new_items_since_last_run(session: Session, kb: KnowledgeBase) -> int:
     last: datetime | None = session.execute(select(func.max(scout_runs.c.started_at))).scalar()
-    return len(queue_items(session, kb, since=last))
+    return count_queue_items(session, kb, since=last)
+
+
+def run_pending(session: Session) -> bool:
+    """A RUN_SCOUT is QUEUED or RUNNING (a retry after a lost lease included)."""
+    j = jobs.c
+    return bool(
+        session.execute(
+            select(
+                exists().where(
+                    j.type == JobType.RUN_SCOUT.value,
+                    j.status.in_((JobStatus.QUEUED.value, JobStatus.RUNNING.value)),
+                )
+            )
+        ).scalar()
+    )
 
 
 @dataclass(frozen=True, slots=True)
 class ScoutAutoTriggerJob:
-    """``SCOUT_AUTO_TRIGGER`` (every 5 min): a run once enough new items are waiting."""
+    """``SCOUT_AUTO_TRIGGER`` (every 5 min): a run once enough new items are waiting, and none
+    is pending."""
 
     sessions: sessionmaker[Session]
     clock: Clock
@@ -226,6 +281,8 @@ class ScoutAutoTriggerJob:
             version = active_version(session)
             if version is None:
                 return {"enqueued": False}
+            if run_pending(session):
+                return {"enqueued": False, "reason": "a run is pending"}
             waiting = new_items_since_last_run(session, version.kb)
             if waiting < version.kb.config.scout.auto_trigger_new_items:
                 return {"enqueued": False, "new_items": waiting}

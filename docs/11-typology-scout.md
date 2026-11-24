@@ -9,6 +9,15 @@ A Guardian session or case enters the unexplained queue when its **terminal** po
 P(UNEXPLAINED) ≥ `unexplained_routing_threshold` (0.35). It stays there until it is assigned to
 a promoted typology, or dismissed by an FDE engineer.
 
+**Implementation (#117).** The queue is one SQL query (`delphi.scout.queue`), bounded by every
+caller (a page, a count, one item):
+- The sources are `guardian.api.unexplained_sessions_query` (decided sessions flagged
+  `unexplained`, partial index on `decided_at`) and `navigator.api.unexplained_reviews_query`
+  (disposed ACCOUNT_REVIEW cases, with the P(UNEXPLAINED) threshold applied in SQL).
+- Dismissed items and members of promoted clusters are excluded with `NOT EXISTS`, the latter
+  through a GIN index on `scout_clusters.member_refs`.
+- Items are ordered by `(entered_at, subject_id)`, with a keyset cursor.
+
 ## 2. Scout run (`RUN_SCOUT` job)
 
 Triggered manually (`POST /scout/runs`) or automatically when ≥ 10 new items have entered the
@@ -67,8 +76,14 @@ missing from an item sits at its training mean (z = 0).
 - **The run** (`delphi.scout.run`): `RUN_SCOUT` (`POST /scout/runs`, or `SCOUT_AUTO_TRIGGER`
   once `auto_trigger_new_items` items have entered since the last run) loads the queue items of
   the last `lookback_days`.
+  - It is bounded (after #263): at most `DELPHI_SCOUT_MAX_ITEMS` (proposed 500) queue items, the
+    newest of the lookback, and as many reference sessions. The sensing config is parsed once
+    per run.
+  - It is idempotent: a retried job (a lost lease) finds its run by `scout_runs.job_id` (unique)
+    and returns it.
+  - The auto-trigger enqueues nothing while a `RUN_SCOUT` is QUEUED or RUNNING.
   - The reference set is that period's sessions attributed to a known typology: not flagged
-    unexplained, with an argmax that is neither GENUINE nor UNEXPLAINED.
+    unexplained, with an argmax (taken in SQL) that is neither GENUINE nor UNEXPLAINED.
   - Each item's outcomes are a session's completed probe runs or a case's current evidence
     records. Its features are the doc 13 §3 payment features (none for an account review).
   - Each cluster is stored with its size, members and time span (`first_at`/`last_at`, next to

@@ -15,14 +15,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
+from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import Select, Text, cast, exists, func, select, tuple_, union_all
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from delphi.guardian.api import unexplained_sessions
+from delphi.guardian.api import unexplained_sessions_query
 from delphi.kb.model import KnowledgeBase
-from delphi.navigator.api import unexplained_reviews
+from delphi.navigator.api import unexplained_reviews_query
 from delphi.platform.audit import ActorType, record
 from delphi.platform.clock import Clock
 from delphi.platform.errors import DelphiError, NotFoundError, ProblemCode
@@ -46,47 +48,80 @@ class QueueItem:
     account_id: UUID | None = None
 
 
-def _dismissed(session: Session) -> set[tuple[str, UUID]]:
-    d = scout_queue_dismissals.c
-    return {
-        (r.subject_type, r.subject_id)
-        for r in session.execute(select(d.subject_type, d.subject_id))
-    }
+@dataclass(frozen=True, slots=True)
+class QueueCursor:
+    """The last item of a page (keyset: ``entered_at``, then ``subject_id``)."""
+
+    entered_at: datetime
+    subject_id: UUID
 
 
-def _assigned(session: Session) -> set[tuple[str, UUID]]:
-    """Members of clusters whose draft was promoted to a typology."""
-    c, t = scout_clusters.c, typology_drafts.c
-    rows = session.execute(
-        select(c.member_refs)
-        .join(typology_drafts, t.cluster_id == c.id)
-        .where(t.status == PROMOTED)
+def _queue(kb: KnowledgeBase, *, since: datetime | None) -> Select[Any]:
+    """The queue as one SQL query: both sources, less the dismissed items and the members of
+    promoted clusters. Every caller bounds it (a page, a count, one item)."""
+    threshold = kb.config.engine.unexplained_routing_threshold
+    src = union_all(
+        unexplained_sessions_query(since),
+        unexplained_reviews_query(threshold=threshold, since=since),
+    ).subquery("queue")
+    d, c, t = scout_queue_dismissals.c, scout_clusters.c, typology_drafts.c
+    dismissed = exists().where(
+        d.subject_type == src.c.subject_type, d.subject_id == src.c.subject_id
     )
-    return {(ref["subject_type"], UUID(ref["subject_id"])) for (refs,) in rows for ref in refs}
+    ref = func.jsonb_build_array(
+        func.jsonb_build_object(
+            "subject_type", src.c.subject_type, "subject_id", cast(src.c.subject_id, Text)
+        )
+    )
+    assigned = exists().where(
+        t.cluster_id == c.id, t.status == PROMOTED, c.member_refs.contains(ref)
+    )
+    return select(src).where(~dismissed, ~assigned)
+
+
+def _item(row: Any) -> QueueItem:
+    return QueueItem(
+        SubjectType(row.subject_type),
+        row.subject_id,
+        row.entered_at,
+        float(row.p_unexplained),
+        payment_id=row.payment_id,
+        account_id=row.account_id,
+    )
 
 
 def queue_items(
-    session: Session, kb: KnowledgeBase, *, since: datetime | None = None
+    session: Session,
+    kb: KnowledgeBase,
+    *,
+    limit: int,
+    since: datetime | None = None,
+    after: QueueCursor | None = None,
+    newest_first: bool = False,
 ) -> list[QueueItem]:
-    """The queue now, oldest first; ``since`` keeps the items that entered at or after it."""
-    gone = _dismissed(session) | _assigned(session)
-    items = [
-        QueueItem(
-            SubjectType.GUARDIAN_SESSION,
-            s.id,
-            s.decided_at,
-            s.p_unexplained,
-            payment_id=s.payment_id,
+    """At most ``limit`` queue items, oldest first (``newest_first``: the newest, newest
+    first), after ``after``; ``since`` keeps the items that entered at or after it."""
+    query = _queue(kb, since=since).subquery("q")
+    rows = select(query)
+    if after is not None:
+        rows = rows.where(
+            tuple_(query.c.entered_at, query.c.subject_id)
+            > tuple_(after.entered_at, after.subject_id)
         )
-        for s in unexplained_sessions(session, since=since)
-    ]
-    threshold = kb.config.engine.unexplained_routing_threshold
-    items += [
-        QueueItem(SubjectType.CASE, r.id, r.disposed_at, r.p_unexplained, account_id=r.account_id)
-        for r in unexplained_reviews(session, threshold=threshold, since=since)
-    ]
-    items = [i for i in items if (i.subject_type.value, i.subject_id) not in gone]
-    return sorted(items, key=lambda i: (i.entered_at, str(i.subject_id)))
+    order = (query.c.entered_at, query.c.subject_id)
+    rows = rows.order_by(*(c.desc() for c in order) if newest_first else order).limit(limit)
+    return [_item(r) for r in session.execute(rows)]
+
+
+def count_queue_items(session: Session, kb: KnowledgeBase, *, since: datetime | None) -> int:
+    query = _queue(kb, since=since).subquery("q")
+    return int(session.execute(select(func.count()).select_from(query)).scalar_one())
+
+
+def queue_item(session: Session, kb: KnowledgeBase, item_id: UUID) -> QueueItem | None:
+    query = _queue(kb, since=None).subquery("q")
+    row = session.execute(select(query).where(query.c.subject_id == item_id).limit(1)).first()
+    return _item(row) if row is not None else None
 
 
 def dismiss(
@@ -98,22 +133,31 @@ def dismiss(
     reason: str,
     by: UUID,
 ) -> QueueItem:
-    """docs/11 §1: an FDE engineer removes an item from the queue, with a reason (audited)."""
+    """docs/11 §1: an FDE engineer removes an item from the queue, with a reason (audited). An
+    id not in the queue is a 404; losing a race with a concurrent dismissal of the same item is
+    a 409."""
     if not reason.strip():
         raise DelphiError("A dismissal needs a reason.", code=ProblemCode.VALIDATION_FAILED)
-    item = next((i for i in queue_items(session, kb) if i.subject_id == item_id), None)
+    item = queue_item(session, kb, item_id)
     if item is None:
         raise NotFoundError("No item with this id in the unexplained queue.")
     now = clock.now()
-    session.execute(
-        scout_queue_dismissals.insert().values(
+    inserted = session.execute(
+        insert(scout_queue_dismissals)
+        .values(
             subject_type=item.subject_type.value,
             subject_id=item.subject_id,
             reason=reason.strip(),
             dismissed_by=by,
             dismissed_at=now,
         )
-    )
+        .on_conflict_do_nothing()
+        .returning(scout_queue_dismissals.c.subject_id)
+    ).first()
+    if inserted is None:
+        raise DelphiError(
+            "This item was dismissed meanwhile.", code=ProblemCode.INVALID_STATE_TRANSITION
+        )
     record(
         session,
         clock,

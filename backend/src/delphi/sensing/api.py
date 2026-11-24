@@ -1,7 +1,9 @@
 """The sensing facade for the api and the CLI (docs/04 §4.1 rule 3): asking for a retrain
 (`POST /admin/sensing/train`, docs/13 §7), reading the ACTIVE artifacts, and whether the
-dataset and the models are ready (`GET /status`, docs/20 §3), and building the Guardian's
-``p_model`` with the payer's mule score (``with_payer_mule``, docs/06 §11)."""
+dataset and the models are ready (`GET /status`, docs/20 §3), the online inference
+(``SensingInference``: the Guardian's ``PriorPort`` and ``p_mule(account)``, docs/13 §1, §7), and
+building the Guardian's ``p_model`` with the payer's mule score (``with_payer_mule``,
+docs/06 §11)."""
 
 from __future__ import annotations
 
@@ -16,21 +18,26 @@ from delphi.platform.errors import DelphiError, InvalidStateTransitionError, Pro
 from delphi.platform.jobs import Enqueued, JobRecord, JobStatus, JobType, enqueue, list_jobs
 from delphi.platform.tables import jobs
 from delphi.sensing.artifacts import ArtifactKind, StoredArtifact, active_artifacts
-from delphi.sensing.config import load_sensing_config
+from delphi.sensing.config import FeatureConfig, load_sensing_config
 from delphi.sensing.features import build_payment_features
 from delphi.sensing.history import load_payment_snapshot
+from delphi.sensing.inference import PriorInputs, SensingInference
 from delphi.sensing.mule_scores import MuleScores
 from delphi.sensing.prior import with_payer_mule
 from delphi.sim.api import current_dataset
 
 __all__ = [
     "ArtifactKind",
+    "FeatureConfig",
     "Initialisation",
     "MuleScores",
+    "PriorInputs",
+    "SensingInference",
     "StoredArtifact",
     "active_artifacts",
     "initialisation",
     "request_training",
+    "scout_feature_config",
     "scout_features",
     "with_payer_mule",
 ]
@@ -105,14 +112,21 @@ def initialisation(session: Session) -> Initialisation:
     )
 
 
-def scout_features(conn: Connection, payment_id: UUID) -> dict[str, float] | None:
+def scout_features(
+    conn: Connection, payment_id: UUID, config: FeatureConfig | None = None
+) -> dict[str, float] | None:
     """docs/13 §3's payment features marked ``scout`` (all of them), as of the payment's
     initiation, for the Scout (docs/11 §2). The channel one-hot is left out: the Scout encodes the
-    channel itself. ``None`` for a payment the bank cannot build features for."""
-    config = load_sensing_config().features
+    channel itself. ``None`` for a payment the bank cannot build features for. A caller scoring
+    many payments passes ``config`` (``scout_feature_config()``), so the YAML is parsed once."""
+    config = config or scout_feature_config()
     try:
         payment, history = load_payment_snapshot(conn, payment_id, config)
     except LookupError:
         return None
     features = build_payment_features(payment, history, config)
     return {k: v for k, v in features.items() if not k.startswith("channel_")}
+
+
+def scout_feature_config() -> FeatureConfig:
+    return load_sensing_config().features

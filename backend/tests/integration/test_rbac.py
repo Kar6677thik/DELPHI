@@ -53,6 +53,7 @@ ACCESS: dict[tuple[str, str], str | Permission] = {
     ("POST", "/api/v1/cases/{case_id}/disposition"): Permission.CASE_WRITE,
     ("POST", "/api/v1/cases/{case_id}/evidence-requests"): Permission.CASE_WRITE,
     ("POST", "/api/v1/cases/{case_id}/police-alert/{action}"): Permission.CASE_WRITE,
+    ("POST", "/api/v1/cases/{case_id}/trace-events"): Permission.VIEW,
     ("GET", "/api/v1/guardian/sessions"): Permission.VIEW,
     ("GET", "/api/v1/guardian/sessions/{session_id}"): Permission.VIEW,
     ("GET", "/api/v1/guardian/sessions/{session_id}/dd-pack"): Permission.VIEW,
@@ -63,6 +64,11 @@ ACCESS: dict[tuple[str, str], str | Permission] = {
     ("POST", "/api/v1/scout/queue/{item_id}/dismiss"): Permission.FDE,
     ("POST", "/api/v1/scout/runs"): Permission.FDE,
     ("GET", "/api/v1/scout/clusters"): Permission.VIEW,
+    ("POST", "/api/v1/guardian/sessions"): Permission.DEMO_DRIVE,
+    ("POST", "/api/v1/guardian/sessions/{session_id}/probe-responses"): Permission.DEMO_DRIVE,
+    ("POST", "/api/v1/guardian/sessions/{session_id}/cancel"): Permission.DEMO_DRIVE,
+    ("GET", "/api/v1/phone/personas"): Permission.DEMO_DRIVE,
+    ("GET", "/api/v1/phone/stream"): Permission.DEMO_DRIVE,
 }
 PASSWORD = "correct horse battery"
 BROWSER = {"X-Delphi-Csrf": "1", "Origin": "https://testserver"}

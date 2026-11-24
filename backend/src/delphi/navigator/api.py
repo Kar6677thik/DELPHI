@@ -1,7 +1,8 @@
 """The Navigator's facade for the api and the other feature modules (docs/04 §4.1 rule 3).
 
 Guardian calls ``open_case`` when it holds a payment (#94); the api reads cases, builds the
-console view and records dispositions (docs/16, #103).
+console view and records dispositions (docs/16, #103), and stores the console's view events
+(docs/09 §5, #108).
 """
 
 from __future__ import annotations
@@ -43,17 +44,27 @@ from delphi.navigator.store import (
     CaseSort,
     CaseStatus,
     CaseType,
-    UnexplainedReview,
     get_case,
     list_cases,
     open_case,
     open_case_for_payment,
     sort_value,
-    unexplained_reviews,
+    unexplained_reviews_query,
+)
+from delphi.navigator.traces import (
+    CLIENT_TYPES,
+    MAX_TRACE_BATCH,
+    ClientTrace,
+    TraceType,
+    list_traces,
+    record_client_traces,
+    record_trace,
 )
 
 __all__ = [
+    "CLIENT_TYPES",
     "HOLD_DECISIONS",
+    "MAX_TRACE_BATCH",
     "OUTREACH",
     "AlertAction",
     "AlertStatus",
@@ -65,6 +76,7 @@ __all__ = [
     "CaseSort",
     "CaseStatus",
     "CaseType",
+    "ClientTrace",
     "ConsoleView",
     "Disposition",
     "EvidenceRecord",
@@ -73,7 +85,7 @@ __all__ = [
     "InheritedTrail",
     "PoliceAlert",
     "Recommendation",
-    "UnexplainedReview",
+    "TraceType",
     "act_on_alert",
     "build_case_dd_pack",
     "case_kpis",
@@ -84,14 +96,17 @@ __all__ = [
     "get_alert",
     "get_case",
     "list_cases",
+    "list_traces",
     "observed_sources",
     "open_case",
     "open_case_for_payment",
     "recommend",
+    "record_client_traces",
+    "record_trace",
     "refresh_dd_pack_complete",
     "request_evidence",
     "request_simulated_outreach",
     "sort_value",
-    "unexplained_reviews",
+    "unexplained_reviews_query",
     "vulnerable_payer",
 ]

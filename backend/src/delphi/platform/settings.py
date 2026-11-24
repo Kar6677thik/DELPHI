@@ -128,6 +128,9 @@ class Settings(BaseSettings):
     # docs/08 §4), so reading `probe_runs` reveals no live code (#171). Secret `delphi-app`,
     # api only. Generate with `openssl rand -hex 32`.
     secret_key: SecretStr | None = Field(default=None, min_length=MIN_SECRET_KEY_LENGTH)
+    # The most queue items (and reference sessions) one RUN_SCOUT loads, the newest of the
+    # lookback (docs/11 §2, bounded after #263). Proposed on #255; needs the owner's sign-off.
+    scout_max_items: int = Field(default=500, ge=10, le=20_000)
     # Retention (docs/17 §6).
     outbox_retention_h: int = Field(default=24, ge=1, le=24 * 30)
     idempotency_retention_h: int = Field(default=24, ge=1, le=24 * 30)

@@ -9,13 +9,16 @@ from datetime import timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text, update
 
 from delphi.api.security import Permission, Principal, current_principal
 from delphi.guardian.tables import guardian_sessions
 from delphi.kb.store import active_version
-from delphi.scout.api import queue_items
+from delphi.platform.errors import DelphiError, ProblemCode
+from delphi.scout import queue as queue_module
+from delphi.scout.api import dismiss, queue_items
 from delphi.scout.tables import scout_clusters, scout_runs, typology_drafts
 
 from .test_cases import BROWSER, T0, Env, _investigator, env, writer  # noqa: F401 - fixtures
@@ -77,7 +80,7 @@ def _ids(e: Env) -> list[UUID]:
     with e.sessions() as s:
         version = active_version(s)
         assert version is not None
-        return [i.subject_id for i in queue_items(s, version.kb)]
+        return [i.subject_id for i in queue_items(s, version.kb, limit=200)]
 
 
 def test_the_entry_rules(env: Env) -> None:  # noqa: F811
@@ -160,3 +163,44 @@ def test_an_fde_engineer_dismisses_an_item(
         ).scalar_one()
     assert audited == 1
     del investigator
+
+
+def test_the_queue_pages_with_a_keyset_cursor(
+    env: Env,  # noqa: F811
+    writer: tuple[TestClient, Principal],  # noqa: F811
+) -> None:
+    client, _ = writer
+    flagged = [_decided(env, unexplained=True, minutes=m) for m in range(5)]
+    seen: list[str] = []
+    cursor = None
+    while True:
+        params = {"limit": 2, **({"cursor": cursor} if cursor else {})}
+        page = client.get("/api/v1/scout/queue", params=params).json()
+        seen += [i["id"] for i in page["items"]]
+        cursor = page["next_cursor"]
+        if cursor is None:
+            break
+    assert seen == [str(i) for i in flagged]  # oldest first, each once
+    assert client.get("/api/v1/scout/queue", params={"limit": 201}).status_code == 422
+    assert client.get("/api/v1/scout/queue", params={"cursor": "nope"}).status_code == 422
+
+
+def test_losing_a_concurrent_dismissal_is_a_409(
+    env: Env,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two dismissals of one item with different Idempotency-Keys, both past the lookup: the
+    second to insert finds the row taken and gets a 409, not a 500 on the primary key."""
+    flagged = _decided(env, unexplained=True)
+    fde = _investigator(env)
+    with env.sessions.begin() as s:
+        version = active_version(s)
+        assert version is not None
+        kb = version.kb
+        item = queue_module.queue_item(s, kb, flagged)
+        dismiss(s, env.clock, kb, flagged, reason="Known merchant", by=fde.user_id)
+    # The other request looked the item up before the first one committed.
+    monkeypatch.setattr(queue_module, "queue_item", lambda *_a: item)
+    with env.sessions.begin() as s, pytest.raises(DelphiError) as raised:
+        dismiss(s, env.clock, kb, flagged, reason="Duplicate", by=fde.user_id)
+    assert raised.value.code is ProblemCode.INVALID_STATE_TRANSITION

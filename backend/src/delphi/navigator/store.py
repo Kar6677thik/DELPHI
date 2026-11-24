@@ -17,7 +17,8 @@ from enum import StrEnum
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import Connection, Float, and_, cast, func, or_, select
+from sqlalchemy import Connection, Float, Select, and_, cast, func, literal, null, or_, select
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -25,6 +26,7 @@ from delphi.kb.store import get_version
 from delphi.navigator.console import case_profile, recommend
 from delphi.navigator.police_alert import draft_alert
 from delphi.navigator.tables import cases
+from delphi.navigator.traces import TraceType, record_trace
 from delphi.platform.audit import ActorType, record
 from delphi.platform.clock import Clock
 from delphi.platform.errors import DelphiError, ProblemCode
@@ -257,6 +259,14 @@ def open_case(
         entity_id=str(case_id),
         payload=payload,
     )
+    record_trace(  # docs/09 §5: the engine opened it, so no user
+        session,
+        case_id=case_id,
+        user_id=None,
+        type=TraceType.CASE_OPENED,
+        at=now,
+        payload={"protocol": protocol.value, "decision": decision},
+    )
     if protocol is CaseProtocol.COERCION:  # docs/09 §6 item 2: drafted, never sent by itself
         draft_alert(session, clock, case_id=case_id, payment_id=payment_id)
     publish(session, EventType.CASE_OPENED, str(case_id), payload)
@@ -359,31 +369,25 @@ def list_cases(
     return [CaseRecord.of(r) for r in conn.execute(query.order_by(*order).limit(limit))]
 
 
-@dataclass(frozen=True, slots=True)
-class UnexplainedReview:
-    """A disposed account review whose terminal posterior is unexplained (docs/11 §1)."""
-
-    id: UUID
-    account_id: UUID
-    disposed_at: datetime
-    p_unexplained: float
-
-
-def unexplained_reviews(
-    conn: Connection | Session, *, threshold: float, since: datetime | None = None
-) -> list[UnexplainedReview]:
-    """Disposed ACCOUNT_REVIEW cases with P(UNEXPLAINED) ≥ ``threshold`` at disposition. A
-    PAYMENT_HOLD case is left out: its Guardian session is the queue item already."""
+def unexplained_reviews_query(*, threshold: float, since: datetime | None = None) -> Select[Any]:
+    """docs/11 §1, the Scout's queue source: disposed ACCOUNT_REVIEW cases with P(UNEXPLAINED)
+    ≥ ``threshold`` at disposition, filtered in SQL, as ``(subject_type, subject_id, entered_at,
+    p_unexplained, payment_id, account_id)``. A PAYMENT_HOLD case is left out: its Guardian
+    session is the queue item already."""
     c = cases.c
-    query = select(c.id, c.subject_account_id, c.disposed_at, c.posterior).where(
+    p_unexplained = func.coalesce(c.posterior["UNEXPLAINED"].as_float(), 0.0)
+    query = select(
+        literal("CASE").label("subject_type"),
+        c.id.label("subject_id"),
+        c.disposed_at.label("entered_at"),
+        p_unexplained.label("p_unexplained"),
+        null().cast(PG_UUID(as_uuid=True)).label("payment_id"),
+        c.subject_account_id.label("account_id"),
+    ).where(
         c.type == CaseType.ACCOUNT_REVIEW.value,
         c.status == CaseStatus.DISPOSED.value,
+        p_unexplained >= threshold,
     )
     if since is not None:
         query = query.where(c.disposed_at >= since)
-    out = []
-    for r in conn.execute(query.order_by(c.disposed_at, c.id)):
-        p = float(r.posterior.get("UNEXPLAINED", 0.0))
-        if p >= threshold:
-            out.append(UnexplainedReview(r.id, r.subject_account_id, r.disposed_at, p))
-    return out
+    return query

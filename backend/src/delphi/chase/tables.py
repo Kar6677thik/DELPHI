@@ -1,4 +1,4 @@
-"""SQLAlchemy Core definitions of the chase tables (migration 0015, docs/17)."""
+"""SQLAlchemy Core definitions of the chase tables (migration 0016, docs/17)."""
 
 from __future__ import annotations
 

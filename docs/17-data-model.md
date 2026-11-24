@@ -148,7 +148,9 @@ evidence_records(id, case_id, source_key, outcome, raw jsonb, record_refs jsonb,
                  narrative_source null, narrative_citations jsonb null, superseded_by null)
        -- migration 0013 (#102); unique (case_id, source_key) WHERE superseded_by IS NULL;
        -- superseded_by is DEFERRABLE INITIALLY DEFERRED (a refresh points at its successor)
-trace_events(id bigint identity, case_id, user_id, type, payload jsonb, at)
+trace_events(id bigint identity, case_id, user_id null, type, payload jsonb, at)
+       -- migration 0015 (#108); type is one of the doc 09 §5 events (a CHECK); user_id is null
+       -- for an event no person caused (CASE_OPENED); idx (case_id, at), idx (user_id)
 police_alert_drafts(id, case_id, status (DRAFT|SENT_SIMULATED|DISCARDED), payload jsonb,
                     acted_by null, acted_at null)
        -- migration 0014 (#106); unique case_id; acted_by and acted_at set iff not DRAFT

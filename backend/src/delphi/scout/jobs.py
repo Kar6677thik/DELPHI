@@ -10,7 +10,7 @@ from delphi.scout.run import RunScoutJob, ScoutAutoTriggerJob
 
 
 def register_scout_jobs(
-    registry: JobRegistry, *, sessions: sessionmaker[Session], clock: Clock
+    registry: JobRegistry, *, sessions: sessionmaker[Session], clock: Clock, max_items: int
 ) -> None:
-    registry.register(JobType.RUN_SCOUT, RunScoutJob(sessions, clock))
+    registry.register(JobType.RUN_SCOUT, RunScoutJob(sessions, clock, max_items))
     registry.register(JobType.SCOUT_AUTO_TRIGGER, ScoutAutoTriggerJob(sessions, clock))

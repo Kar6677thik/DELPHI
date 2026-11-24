@@ -12,7 +12,22 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import Connection, and_, or_, select
+from sqlalchemy import (
+    Connection,
+    Float,
+    Select,
+    Text,
+    and_,
+    cast,
+    column,
+    func,
+    literal,
+    null,
+    or_,
+    select,
+    true,
+)
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Session
 
 from delphi.guardian.tables import guardian_sessions, probe_runs
@@ -140,59 +155,56 @@ def probe_run_rows(conn: Connection | Session, session_id: UUID) -> list[Any]:
     )
 
 
-@dataclass(frozen=True, slots=True)
-class UnexplainedSession:
-    """A decided session flagged unexplained (docs/11 §1), for the Scout's queue."""
-
-    id: UUID
-    payment_id: UUID
-    decided_at: datetime
-    p_unexplained: float
-
-
-def unexplained_sessions(
-    conn: Connection | Session, *, since: datetime | None = None
-) -> list[UnexplainedSession]:
-    """Decided sessions whose terminal posterior was flagged unexplained, oldest first."""
+def unexplained_sessions_query(since: datetime | None = None) -> Select[Any]:
+    """docs/11 §1, the Scout's queue source: decided sessions whose terminal posterior was
+    flagged unexplained, as ``(subject_type, subject_id, entered_at, p_unexplained,
+    payment_id, account_id)``. A query, so the Scout bounds and pages it in SQL; it uses the
+    partial index on ``decided_at WHERE unexplained`` (0017)."""
     gs = guardian_sessions.c
-    query = select(gs.id, gs.payment_id, gs.decided_at, gs.posterior).where(
-        gs.unexplained.is_(True), gs.decided_at.is_not(None)
-    )
+    query = select(
+        literal("GUARDIAN_SESSION").label("subject_type"),
+        gs.id.label("subject_id"),
+        gs.decided_at.label("entered_at"),
+        func.coalesce(gs.posterior["UNEXPLAINED"].as_float(), 0.0).label("p_unexplained"),
+        gs.payment_id.label("payment_id"),
+        null().cast(PG_UUID(as_uuid=True)).label("account_id"),
+    ).where(gs.unexplained.is_(True), gs.decided_at.is_not(None))
     if since is not None:
         query = query.where(gs.decided_at >= since)
-    return [
-        UnexplainedSession(
-            r.id, r.payment_id, r.decided_at, float(r.posterior.get("UNEXPLAINED", 0))
+    return query
+
+
+def attributed_sessions_query(since: datetime | None = None) -> Select[Any]:
+    """docs/11 §2, the Scout's reference set: decided sessions attributed to a known typology
+    (the posterior's argmax, taken in SQL, is neither GENUINE nor UNEXPLAINED, and the session
+    is not flagged unexplained), with the queue source's columns. The caller bounds it."""
+    gs = guardian_sessions.c
+    h = (
+        func.jsonb_each_text(gs.posterior)
+        .table_valued(column("key", Text), column("value", Text))
+        .render_derived(name="h")
+    )
+    top = select(h.c.key).order_by(cast(h.c.value, Float).desc(), h.c.key).limit(1).lateral("top")
+    query = (
+        select(
+            literal("GUARDIAN_SESSION").label("subject_type"),
+            gs.id.label("subject_id"),
+            gs.decided_at.label("entered_at"),
+            func.coalesce(gs.posterior["UNEXPLAINED"].as_float(), 0.0).label("p_unexplained"),
+            gs.payment_id.label("payment_id"),
+            null().cast(PG_UUID(as_uuid=True)).label("account_id"),
         )
-        for r in conn.execute(query.order_by(gs.decided_at, gs.id))
-    ]
-
-
-def attributed_sessions(
-    conn: Connection | Session, *, since: datetime | None = None
-) -> list[UnexplainedSession]:
-    """Decided sessions attributed to a known typology (the posterior's argmax is neither
-    GENUINE nor UNEXPLAINED, and the session is not flagged unexplained): the Scout's reference
-    set (docs/11 §2)."""
-    gs = guardian_sessions.c
-    query = select(gs.id, gs.payment_id, gs.decided_at, gs.posterior).where(
-        gs.unexplained.is_(False), gs.decided_at.is_not(None), gs.posterior.is_not(None)
+        .select_from(guardian_sessions.join(top, true()))
+        .where(
+            gs.unexplained.is_(False),
+            gs.decided_at.is_not(None),
+            gs.posterior.is_not(None),
+            top.c.key.not_in(("GENUINE", "UNEXPLAINED")),
+        )
     )
     if since is not None:
         query = query.where(gs.decided_at >= since)
-    out = []
-    for r in conn.execute(query.order_by(gs.decided_at, gs.id)):
-        posterior = dict(r.posterior)
-        if posterior and max(posterior, key=posterior.__getitem__) not in (
-            "GENUINE",
-            "UNEXPLAINED",
-        ):
-            out.append(
-                UnexplainedSession(
-                    r.id, r.payment_id, r.decided_at, float(posterior.get("UNEXPLAINED", 0.0))
-                )
-            )
-    return out
+    return query
 
 
 def observed_outcomes(conn: Connection | Session, session_id: UUID) -> dict[str, str]:
