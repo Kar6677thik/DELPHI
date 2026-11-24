@@ -65,14 +65,19 @@ const CAPTIONS: Readonly<Record<CaseSort, string>> = {
 const SELECT =
   'rounded-md border border-control bg-raised px-3 py-1.5 text-[13px] text-ink transition-colors hover:border-soft focus:border-accent focus:outline-none';
 
-/** The queue's one-line summary: how many cases, and how many are past their SLA. */
-function summary(items: readonly CaseView[]): string {
+/**
+ * The queue's one-line summary. It counts the rows loaded: with more pages to come it says so,
+ * and never claims that none is past its SLA.
+ */
+export function summary(items: readonly CaseView[], more: boolean): string {
   const open = items.filter((c) => c.status !== 'DISPOSED').length;
   const breached = items.filter((c) => c.sla_breached && c.status !== 'DISPOSED').length;
+  const late = `${String(breached)} past their SLA`;
+  if (more) {
+    return `Showing the first ${String(items.length)} cases${breached > 0 ? `; ${late}` : ''}.`;
+  }
   const cases = `${String(open)} open ${open === 1 ? 'case' : 'cases'}`;
-  return breached > 0
-    ? `${cases}, ${String(breached)} past their SLA.`
-    : `${cases}, none past SLA.`;
+  return breached > 0 ? `${cases}, ${late}.` : `${cases}, none past SLA.`;
 }
 
 /** The case queue (docs/18 §2 `/cases`): soonest SLA, highest expected loss, or newest first. */
@@ -89,7 +94,7 @@ export function CasesPage() {
           </h1>
           <p className="mt-1 text-[14px] text-muted">
             {cases.isSuccess && cases.data.items.length > 0
-              ? summary(cases.data.items)
+              ? summary(cases.data.items, cases.data.next_cursor !== null)
               : 'The payments Guardian held, for an investigator to decide.'}
           </p>
         </div>
