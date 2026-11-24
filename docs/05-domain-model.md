@@ -111,6 +111,31 @@ disposition and every new case.
   and its cases leave every campaign (`cases.campaign_id` is cleared). Which group keeps the id
   when a campaign **splits** is the owner's to decide (asked on #259).
 
+**Implementation (#107).** The merge rule is `delphi.navigator.campaigns` (pure). Within one
+(hypothesis, entity) bucket it joins only time-adjacent neighbours, which gives the same groups
+as joining every pair, in O(n log n). The store is `delphi.navigator.campaign_store`.
+- **The job.** `CAMPAIGN_RECOMPUTE` runs every 60 s (doc 04 §5.4), so a new case, a disposition or
+  new evidence is regrouped within a minute, not in the transaction that caused it. It runs under
+  advisory lock 51.
+- **Only around touched cases.** Touched cases are those opened, disposed or given an evidence
+  record since `campaign_watermark`. They are taken in batches: `DELPHI_CAMPAIGN_BATCH` (50) per
+  transaction, at most `DELPHI_CAMPAIGN_BATCHES_PER_RUN` (20) per run, each under a 30 s statement
+  timeout. The watermark moves with each committed batch.
+- **The component.** From the touched cases, the job follows shared entities (an indexed lookup
+  on `case_entities`) to cases with the same leading hypothesis opened within the window. It adds
+  the other members of the campaigns it meets, and stops at `DELPHI_CAMPAIGN_MAX_COMPONENT`
+  (2,000) cases, logged. Only that component is regrouped.
+- **Entities** are written to `case_entities` the first time the job sees a case:
+  - a payment case: the payee account, the payment's device fingerprint, and the payer's latest
+    login /24 at or before the payment;
+  - an account review: the account itself.
+- **Merged and dissolved campaigns** keep their rows with `case_count = 0`; a merged one also has
+  `merged_into`.
+- **Fields.** `vulnerable_victims` counts distinct vulnerable payers, and the share in `rank_score`
+  is over the distinct payers. `f3_stage_max` stays null until the event → F3 stage mapping is
+  specified (asked on #117).
+- A case's `version` is not bumped when its campaign changes (the campaign is derived).
+
 ## 6. Chase operation (aggregate root: `ChaseOperation`)
 
 Owns `ChaseCandidate`s, `Lien`s and `CfcfrmsTicket`s.

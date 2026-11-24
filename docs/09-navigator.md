@@ -294,6 +294,12 @@ Rules are in doc 05 §5. The campaign list is sorted by `rank_score` and shows t
 F3 stage strip, case count, total expected loss, and victims who are vulnerable. Campaign
 detail lists the cases and the shared infrastructure entities.
 
+**Implementation (#107).** `GET /campaigns` lists the live campaigns (not merged, with cases),
+highest `rank_score` first, with keyset paging. `GET /campaigns/{id}` adds the cases and the
+entities shared by two or more of them, most shared first. A merged campaign still resolves, with
+`merged_into`. `GET /cases?campaign_id=` filters the queue, and `CaseView` carries `campaign_id`.
+The pages come in a later PR.
+
 **Implementation (#107 PR 1).** The merge rule and the stable ids are pure functions in
 `delphi.navigator.campaigns`, and the window is the KB's `navigator.campaign_window_days`.
 - `groups` links cases with the same leading hypothesis that share an entity and opened within the

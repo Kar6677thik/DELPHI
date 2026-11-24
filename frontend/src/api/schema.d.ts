@@ -528,6 +528,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/campaigns": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Campaigns */
+        get: operations["read_campaigns_api_v1_campaigns_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/campaigns/{campaign_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Campaign */
+        get: operations["read_campaign_api_v1_campaigns__campaign_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/guardian/sessions": {
         parameters: {
             query?: never;
@@ -754,6 +788,102 @@ export interface components {
              */
             biometric: "MATCH" | "NO_MATCH" | "CANCEL";
         };
+        /** CampaignCaseView */
+        CampaignCaseView: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Type */
+            type: string;
+            /** Status */
+            status: string;
+            /** Leading Hypothesis */
+            leading_hypothesis: string;
+            /**
+             * Opened At
+             * Format: date-time
+             */
+            opened_at: string;
+            /** Amount At Stake Paise */
+            amount_at_stake_paise: number;
+        };
+        /** CampaignDetail */
+        CampaignDetail: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Leading Hypothesis */
+            leading_hypothesis: string;
+            /** Case Count */
+            case_count: number;
+            /** F3 Stage Max */
+            f3_stage_max: string | null;
+            /** Expected Loss Paise */
+            expected_loss_paise: number;
+            /** Vulnerable Victims */
+            vulnerable_victims: number;
+            /** Rank Score */
+            rank_score: number;
+            /** Merged Into */
+            merged_into: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Cases */
+            cases: components["schemas"]["CampaignCaseView"][];
+            /** Shared Entities */
+            shared_entities: components["schemas"]["SharedEntity"][];
+        };
+        /** CampaignPage */
+        CampaignPage: {
+            /** Items */
+            items: components["schemas"]["CampaignView"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
+        /** CampaignView */
+        CampaignView: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Leading Hypothesis */
+            leading_hypothesis: string;
+            /** Case Count */
+            case_count: number;
+            /** F3 Stage Max */
+            f3_stage_max: string | null;
+            /** Expected Loss Paise */
+            expected_loss_paise: number;
+            /** Vulnerable Victims */
+            vulnerable_victims: number;
+            /** Rank Score */
+            rank_score: number;
+            /** Merged Into */
+            merged_into: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
         /**
          * CaseDetail
          * @description One case with the console's decision support (docs/09 §2, docs/16).
@@ -795,6 +925,8 @@ export interface components {
             };
             /** Amount At Stake Paise */
             amount_at_stake_paise: number;
+            /** Campaign Id */
+            campaign_id?: string | null;
             /**
              * Opened At
              * Format: date-time
@@ -921,6 +1053,8 @@ export interface components {
             } | null;
             /** Amount At Stake Paise */
             amount_at_stake_paise: number;
+            /** Campaign Id */
+            campaign_id?: string | null;
             /**
              * Opened At
              * Format: date-time
@@ -1320,7 +1454,7 @@ export interface components {
          * @description Every job type in docs/04 §5.4. A type is only claimed once a handler is registered.
          * @enum {string}
          */
-        JobType: "GENERATE_DATASET" | "TRAIN_SENSING" | "RUN_EVALUATION" | "RUN_SCOUT" | "RUN_LEARNING" | "RUN_BACKTEST" | "KB_REBASE" | "LLM_NARRATIVE" | "LLM_CASE_SUMMARY" | "LLM_QUESTION_VARIANTS" | "LLM_TYPOLOGY_DESCRIPTION" | "SIM_OUTREACH_CALL" | "DEMO_STORY" | "DEMO_RESET" | "SIM_TICK" | "CHASE_RETRACE" | "MULE_SWEEP" | "SESSION_TIMEOUT_SWEEP" | "SCOUT_AUTO_TRIGGER" | "LABEL_DELIVERY" | "PROBE_YIELD_DAILY" | "RETENTION_SWEEP" | "AUDIT_VERIFY";
+        JobType: "GENERATE_DATASET" | "TRAIN_SENSING" | "RUN_EVALUATION" | "RUN_SCOUT" | "RUN_LEARNING" | "RUN_BACKTEST" | "KB_REBASE" | "LLM_NARRATIVE" | "LLM_CASE_SUMMARY" | "LLM_QUESTION_VARIANTS" | "LLM_TYPOLOGY_DESCRIPTION" | "SIM_OUTREACH_CALL" | "DEMO_STORY" | "DEMO_RESET" | "SIM_TICK" | "CHASE_RETRACE" | "MULE_SWEEP" | "SESSION_TIMEOUT_SWEEP" | "SCOUT_AUTO_TRIGGER" | "LABEL_DELIVERY" | "CAMPAIGN_RECOMPUTE" | "PROBE_YIELD_DAILY" | "RETENTION_SWEEP" | "AUDIT_VERIFY";
         /** JobView */
         JobView: {
             /**
@@ -1844,6 +1978,15 @@ export interface components {
          * @enum {string}
          */
         SessionStatus: "CREATED" | "PASSIVE_PROBING" | "PLANNING" | "AWAITING_CUSTOMER" | "DECIDED" | "CANCELLED_BY_CUSTOMER";
+        /** SharedEntity */
+        SharedEntity: {
+            /** Kind */
+            kind: string;
+            /** Value */
+            value: string;
+            /** Case Count */
+            case_count: number;
+        };
         /**
          * StartSessionRequest
          * @description docs/16: `POST /guardian/sessions`.
@@ -2659,6 +2802,7 @@ export interface operations {
                 status?: components["schemas"]["CaseStatus"] | null;
                 type?: components["schemas"]["CaseType"] | null;
                 protocol?: components["schemas"]["CaseProtocol"] | null;
+                campaign_id?: string | null;
                 sort?: components["schemas"]["CaseSort"];
                 limit?: number;
                 cursor?: string | null;
@@ -2883,6 +3027,69 @@ export interface operations {
                 content: {
                     "application/json": unknown;
                     "text/html": unknown;
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    read_campaigns_api_v1_campaigns_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CampaignPage"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    read_campaign_api_v1_campaigns__campaign_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                campaign_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CampaignDetail"];
                 };
             };
             /** @description An RFC 9457 problem (docs/16 §1) */

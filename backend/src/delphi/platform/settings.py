@@ -128,6 +128,11 @@ class Settings(BaseSettings):
     # docs/08 §4), so reading `probe_runs` reveals no live code (#171). Secret `delphi-app`,
     # api only. Generate with `openssl rand -hex 32`.
     secret_key: SecretStr | None = Field(default=None, min_length=MIN_SECRET_KEY_LENGTH)
+    # Campaign recompute (docs/05 §5, #107), bounded after #263: touched cases per transaction,
+    # transactions per run, and the most cases one connected component may load.
+    campaign_batch: int = Field(default=50, ge=1, le=1_000)
+    campaign_batches_per_run: int = Field(default=20, ge=1, le=1_000)
+    campaign_max_component: int = Field(default=2_000, ge=10, le=50_000)
     # Retention (docs/17 §6).
     outbox_retention_h: int = Field(default=24, ge=1, le=24 * 30)
     idempotency_retention_h: int = Field(default=24, ge=1, le=24 * 30)

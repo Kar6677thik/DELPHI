@@ -21,10 +21,13 @@ from delphi.kb.store import get_version
 from delphi.llm.minimise import pseudonym
 from delphi.llm.port import Purpose
 from delphi.llm.service import LlmService
+from delphi.navigator.campaign_store import CampaignRecomputeJob
+from delphi.navigator.campaign_store import Limits as CampaignLimits
 from delphi.navigator.ddpack import GuardianTrail, refresh_complete
 from delphi.navigator.evidence import narrative_subject
 from delphi.navigator.store import get_case
 from delphi.navigator.tables import evidence_records
+from delphi.platform.clock import Clock
 from delphi.platform.events import EventType, publish
 from delphi.platform.jobs import JobContext, JobRegistry, JobType
 
@@ -99,5 +102,11 @@ def register_navigator_jobs(
     sessions: sessionmaker[Session],
     llm: LlmService,
     trail: GuardianTrail | None = None,
+    clock: Clock | None = None,
+    campaign_limits: CampaignLimits | None = None,
 ) -> None:
     registry.register(JobType.LLM_NARRATIVE, NarrativeJob(sessions, llm, trail))
+    if clock is not None and campaign_limits is not None:
+        registry.register(
+            JobType.CAMPAIGN_RECOMPUTE, CampaignRecomputeJob(sessions, clock, campaign_limits)
+        )

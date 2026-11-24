@@ -43,6 +43,7 @@ from delphi.llm.evaluation import CASES_FILE, load_cases, render_report, run_eva
 from delphi.llm.service import LlmService, primary_provider
 from delphi.navigator.api import OUTREACH as OUTREACH_SOURCE
 from delphi.navigator.api import request_evidence
+from delphi.navigator.campaign_store import Limits as CampaignLimits
 from delphi.navigator.jobs import register_navigator_jobs
 from delphi.platform.accounts import BootstrapError, ensure_bootstrap_admin
 from delphi.platform.audit import verify as audit_verify
@@ -303,7 +304,14 @@ def worker_registry(
         primary_provider(settings),
         settings.llm_daily_token_budget,
     )
-    register_navigator_jobs(registry, sessions=platform.sessions, llm=llm, trail=case_trail)
+    register_navigator_jobs(
+        registry,
+        sessions=platform.sessions,
+        llm=llm,
+        trail=case_trail,
+        clock=platform.clock,
+        campaign_limits=CampaignLimits.of(settings),
+    )
     if settings.simulation_enabled and settings.sim_database_url is None:
         # The api accepts simulated calls on this flag; a worker without the simulator's pool
         # would leave them queued for ever (docs/09 §3).

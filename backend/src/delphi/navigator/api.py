@@ -7,6 +7,13 @@ console view and records dispositions (docs/16, #103), and stores the console's 
 
 from __future__ import annotations
 
+from delphi.navigator.campaign_store import LoadedCase as CampaignCase
+from delphi.navigator.campaign_store import (
+    campaign_cases,
+    get_campaign,
+    list_campaigns,
+    member_cases,
+)
 from delphi.navigator.console import (
     ConsoleView,
     EvidenceRow,
@@ -67,6 +74,7 @@ __all__ = [
     "OUTREACH",
     "AlertAction",
     "AlertStatus",
+    "CampaignCase",
     "CaseCursor",
     "CaseExistsError",
     "CaseKpis",
@@ -87,15 +95,19 @@ __all__ = [
     "TraceType",
     "act_on_alert",
     "build_case_dd_pack",
+    "campaign_cases",
     "case_kpis",
     "case_profile",
     "console",
     "current_records",
     "dispose",
     "get_alert",
+    "get_campaign",
     "get_case",
+    "list_campaigns",
     "list_cases",
     "list_traces",
+    "member_cases",
     "observed_sources",
     "open_case",
     "open_case_for_payment",

@@ -342,6 +342,7 @@ def list_cases(
     status: CaseStatus | None = None,
     case_type: CaseType | None = None,
     protocol: CaseProtocol | None = None,
+    campaign_id: UUID | None = None,
 ) -> list[CaseRecord]:
     """The case queue, keyset-paged: soonest SLA first, the largest expected loss first, or
     newest first (docs/16 §1)."""
@@ -359,6 +360,8 @@ def list_cases(
         query = query.where(cases.c.type == case_type.value)
     if protocol is not None:
         query = query.where(cases.c.protocol == protocol.value)
+    if campaign_id is not None:
+        query = query.where(cases.c.campaign_id == campaign_id)
     if after is not None:
         if ascending:
             query = query.where(or_(key > after.at, and_(key == after.at, cases.c.id > after.id)))

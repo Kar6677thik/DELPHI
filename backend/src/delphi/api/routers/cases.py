@@ -94,6 +94,7 @@ class CaseView(BaseModel):
     recommended_decision: str | None
     risk_by_decision: dict[str, Any] | None
     amount_at_stake_paise: int
+    campaign_id: UUID | None = None  # set by CAMPAIGN_RECOMPUTE (docs/05 §5, #107)
     opened_at: datetime
     sla_due_at: datetime
     sla_breached: bool
@@ -123,6 +124,7 @@ class CaseView(BaseModel):
             kb_version_id=record.kb_version_id,
             leading_hypothesis=record.leading_hypothesis,
             leading_hypothesis_name=names.get(record.leading_hypothesis, record.leading_hypothesis),
+            campaign_id=record.campaign_id,
             posterior={k: round(v, PROBABILITY_DECIMALS) for k, v in record.posterior.items()},
             prior_components=dict(record.prior_components),
             recommended_decision=record.recommended_decision,
@@ -200,6 +202,7 @@ def read_cases(
     status: Annotated[CaseStatus | None, Query()] = None,
     type: Annotated[CaseType | None, Query()] = None,
     protocol: Annotated[CaseProtocol | None, Query()] = None,
+    campaign_id: Annotated[UUID | None, Query()] = None,
     sort: Annotated[CaseSort, Query()] = CaseSort.SLA_DUE_AT,
     limit: Annotated[int, Query(ge=1, le=MAX_LIMIT)] = DEFAULT_LIMIT,
     cursor: Annotated[str | None, Query()] = None,
@@ -217,6 +220,7 @@ def read_cases(
             status=status,
             case_type=type,
             protocol=protocol,
+            campaign_id=campaign_id,
         )
         page, more = records[:limit], len(records) > limit
         names = _display_names(session, page)
