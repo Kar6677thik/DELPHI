@@ -12,7 +12,8 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import Connection, and_, or_, select
+from sqlalchemy import Connection, Select, and_, func, literal, null, or_, select
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Session
 
 from delphi.guardian.tables import guardian_sessions, probe_runs
@@ -140,29 +141,20 @@ def probe_run_rows(conn: Connection | Session, session_id: UUID) -> list[Any]:
     )
 
 
-@dataclass(frozen=True, slots=True)
-class UnexplainedSession:
-    """A decided session flagged unexplained (docs/11 §1), for the Scout's queue."""
-
-    id: UUID
-    payment_id: UUID
-    decided_at: datetime
-    p_unexplained: float
-
-
-def unexplained_sessions(
-    conn: Connection | Session, *, since: datetime | None = None
-) -> list[UnexplainedSession]:
-    """Decided sessions whose terminal posterior was flagged unexplained, oldest first."""
+def unexplained_sessions_query(since: datetime | None = None) -> Select[Any]:
+    """docs/11 §1, the Scout's queue source: decided sessions whose terminal posterior was
+    flagged unexplained, as ``(subject_type, subject_id, entered_at, p_unexplained,
+    payment_id, account_id)``. A query, so the Scout bounds and pages it in SQL; it uses the
+    partial index on ``decided_at WHERE unexplained`` (0017)."""
     gs = guardian_sessions.c
-    query = select(gs.id, gs.payment_id, gs.decided_at, gs.posterior).where(
-        gs.unexplained.is_(True), gs.decided_at.is_not(None)
-    )
+    query = select(
+        literal("GUARDIAN_SESSION").label("subject_type"),
+        gs.id.label("subject_id"),
+        gs.decided_at.label("entered_at"),
+        func.coalesce(gs.posterior["UNEXPLAINED"].as_float(), 0.0).label("p_unexplained"),
+        gs.payment_id.label("payment_id"),
+        null().cast(PG_UUID(as_uuid=True)).label("account_id"),
+    ).where(gs.unexplained.is_(True), gs.decided_at.is_not(None))
     if since is not None:
         query = query.where(gs.decided_at >= since)
-    return [
-        UnexplainedSession(
-            r.id, r.payment_id, r.decided_at, float(r.posterior.get("UNEXPLAINED", 0))
-        )
-        for r in conn.execute(query.order_by(gs.decided_at, gs.id))
-    ]
+    return query

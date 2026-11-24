@@ -9,6 +9,15 @@ A Guardian session or case enters the unexplained queue when its **terminal** po
 P(UNEXPLAINED) ≥ `unexplained_routing_threshold` (0.35). It stays there until it is assigned to
 a promoted typology, or dismissed by an FDE engineer.
 
+**Implementation (#117).** The queue is one SQL query (`delphi.scout.queue`), bounded by every
+caller (a page, a count, one item):
+- The sources are `guardian.api.unexplained_sessions_query` (decided sessions flagged
+  `unexplained`, partial index on `decided_at`) and `navigator.api.unexplained_reviews_query`
+  (disposed ACCOUNT_REVIEW cases, with the P(UNEXPLAINED) threshold applied in SQL).
+- Dismissed items and members of promoted clusters are excluded with `NOT EXISTS`, the latter
+  through a GIN index on `scout_clusters.member_refs`.
+- Items are ordered by `(entered_at, subject_id)`, with a keyset cursor.
+
 ## 2. Scout run (`RUN_SCOUT` job)
 
 Triggered manually (`POST /scout/runs`) or automatically when ≥ 10 new items have entered the

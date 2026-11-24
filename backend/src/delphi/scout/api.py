@@ -2,6 +2,22 @@
 
 from __future__ import annotations
 
-from delphi.scout.queue import QueueItem, SubjectType, dismiss, queue_items
+from delphi.scout.queue import (
+    QueueCursor,
+    QueueItem,
+    SubjectType,
+    count_queue_items,
+    dismiss,
+    queue_item,
+    queue_items,
+)
 
-__all__ = ["QueueItem", "SubjectType", "dismiss", "queue_items"]
+__all__ = [
+    "QueueCursor",
+    "QueueItem",
+    "SubjectType",
+    "count_queue_items",
+    "dismiss",
+    "queue_item",
+    "queue_items",
+]
