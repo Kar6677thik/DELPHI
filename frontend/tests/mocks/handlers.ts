@@ -248,6 +248,9 @@ export const MOCK_STATUS: StatusView = {
 
 export const handlers = [
   http.get('/api/v1/cases', () => HttpResponse.json(MOCK_CASES)),
+  // The console's view events (docs/09 §5): accepted, as the api does; tests that check them
+  // replace this with `server.use`.
+  http.post('/api/v1/cases/:id/trace-events', () => HttpResponse.json({ recorded: 1 })),
   http.get('/api/v1/metrics/summary', () => HttpResponse.json(MOCK_SUMMARY)),
   http.get('/api/v1/status', () => HttpResponse.json(MOCK_STATUS)),
   http.get('/api/v1/guardian/sessions', () => HttpResponse.json({ items: [], next_cursor: null })),

@@ -83,10 +83,17 @@ def _payee(conn: Connection | Session, request: PaymentRequest) -> UUID:
     return request.payee_account_id
 
 
-def initiate_payment(conn: Connection | Session, request: PaymentRequest, at: datetime) -> UUID:
+def initiate_payment(
+    conn: Connection | Session,
+    request: PaymentRequest,
+    at: datetime,
+    *,
+    payment_id: UUID | None = None,
+) -> UUID:
     """Create the `DEMO` payment, ``PENDING_GUARDIAN``, and its session telemetry. The payer
     must be an active home-bank customer account and the device one of that customer's; the
-    payee another account. Anything else is the caller's mistake (422)."""
+    payee another account. Anything else is the caller's mistake (422). ``payment_id`` is a
+    fresh UUIDv7 unless the caller keys it (a story runner's retry finds its payment)."""
     if request.channel not in PHONE_CHANNELS:
         raise _invalid(f"channel must be one of {list(PHONE_CHANNELS)}.")
     payer = conn.execute(
@@ -106,7 +113,7 @@ def initiate_payment(conn: Connection | Session, request: PaymentRequest, at: da
     payee = _payee(conn, request)
     if payee == request.payer_account_id:
         raise _invalid("A payment cannot go to the account it comes from.")
-    payment_id = uuid7()
+    payment_id = payment_id or uuid7()
     conn.execute(
         payments.insert().values(
             id=payment_id,
