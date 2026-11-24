@@ -54,7 +54,7 @@ not against the docs. Paths are relative to `backend/src/delphi/` unless they sa
 | Control | Status | Where |
 |---|---|---|
 | Hash-chained audit log; the app role cannot UPDATE/DELETE/TRUNCATE it | OK | `platform/audit.py`; migration 0001, tested in `test_migrations.py` |
-| Optimistic locking | Open | `If-Match` is required on user PATCH and disposition. The evidence-request and police-alert actions return an ETag but don't require it. docs/16 §1's general rule and its per-endpoint table disagree |
+| Optimistic locking | Fixed (docs) | `If-Match` is required on edits (user PATCH, disposition, draft PATCH). Actions that append or act (evidence requests, the police alert) are keyed by `Idempotency-Key` and answer 409 on a forbidding state. docs/16 §1 now says so (owner decision, #127) |
 
 ## Denial of service
 
@@ -96,7 +96,7 @@ not against the docs. Paths are relative to `backend/src/delphi/` unless they sa
 1. **CI scanners and Dependabot:** done in #127 part 2 (owner-approved). The image scan also
    found uv's download cache left in the image (about 450 MB); the image now builds without it.
    Waivers live in `security/waivers.yaml`; a Trivy waiver also goes in `.trivyignore`.
-2. **`If-Match`:** require it on the evidence-request and police-alert actions, or narrow the
-   docs/16 §1 rule. That's a docs/16 decision.
-3. **Recheck when built:** four-eyes promotion (#119), the ₹10 crore amount limit (payment
-   create), and the `DELPHI_SECRET_KEY` OTP key (#171, #215).
+2. **`If-Match`:** decided. docs/16 §1 now separates edits (`If-Match`) from actions (`Idempotency-Key`).
+3. **Recheck when built:** four-eyes promotion (#119). The other two are built and checked:
+   - payment create refuses an amount over ₹10 crore (`MAX_AMOUNT_PAISE`, #246);
+   - the live Guardian keys its OTP digests with `Settings.otp_key` from `DELPHI_SECRET_KEY` (#271).
