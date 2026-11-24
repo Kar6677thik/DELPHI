@@ -172,8 +172,18 @@ share as the largest figure and the posterior as a tall bar, then what the custo
 this question (the candidates) and the risk table. "Phone only" shows the handset alone on black
 for the projector (Escape returns). The phone's requests and personas use the generated types;
 the phone stream's events (doc 16 §3) are typed by hand in `src/api/phone.ts` from doc 08 §4,
-since an SSE body has no OpenAPI schema. The phone sends no telemetry yet (a browser cannot see
-the call state), so its telemetry probes record ERROR.
+since an SSE body has no OpenAPI schema. A browser cannot see the phone's call or screen, so
+the presenter sets them in **"Around the customer"**, above the phone (hidden in "Phone only"):
+- **the call:** no call, on a call with an unknown number, or on a call with a contact;
+- **"Screen shared or remote access":** sends both flags;
+- **typing:** natural, pasted and hesitant (a paste and a 34 s field dwell), or not their rhythm
+  (a cadence z of 4.1).
+
+The payment carries these as its telemetry (doc 08 §5), with the session's real length from the
+moment the form opened. Each preset sits clearly on one side of the KB's classifier thresholds
+(a 20 s dwell, a cadence z of 3.0), so CALL_STATUS, DEVICE_POSTURE and SESSION_BEHAVIOUR observe
+what the presenter chose. The default is calm: no call, no shared screen, natural typing. S-1
+starts with "On a call, unknown number".
 
 **The Theatre (`/theatre`).** The judges' view, full-screen on black and outside the app
 shell. It is the one place the quiet rules above give way to spectacle (bloom, light,
