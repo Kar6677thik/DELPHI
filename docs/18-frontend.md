@@ -77,6 +77,24 @@ changed (status, leading hypothesis, recommendation, evidence count, disposition
 form until "Reload". `evidence.narrative_ready` invalidates the `['cases']` queries, like
 `case.*`.
 
+**Console view events and the DD pack page (#264):** the console sends the investigator's view
+events (doc 09 §5) through `api/traces.ts`. It queues them and sends at most one batch per 5 s to
+`POST /cases/{id}/trace-events` (at most 100 events per batch), plus whatever is left when the
+console unmounts. A failed send is dropped: analytics never block the console. The events:
+- `CASE_VIEWED` once when the console opens;
+- `EVIDENCE_VIEWED` and `WCMM_VIEWED` the first time an evidence card or "What would change my
+  mind" is at least half on screen (`IntersectionObserver`; without it, when shown). Each counts
+  once per page;
+- `NARRATIVE_EXPANDED` each time the investigator opens one of a narrative's citations, for the
+  narrative's record.
+
+The console links to `/cases/:id/dd-pack`. That page reads `GET /cases/{id}/dd-pack` with field
+checks, which records `DD_PACK_VIEWED` on the server. It shows "Complete" or "Incomplete", then
+the nine sections in order: each with "Required" or "Optional" ("· missing" for an empty required
+one), its note, and its content as tables, lists and text, or "Not applicable". "Print or save as
+PDF" prints the page, with the app's navigation and the page's buttons left out of print. "Open
+the printable page" opens the server's HTML version.
+
 **The knowledge base, read-only (part of #119):** `/kb` lists `GET /kb/versions` (status, change
 summary, "From vN" lineage) and opens the ACTIVE version, or the one in `?v=`. For it: the
 hypotheses with their descriptions (and the open-world Unexplained), every source grouped as
@@ -154,8 +172,18 @@ share as the largest figure and the posterior as a tall bar, then what the custo
 this question (the candidates) and the risk table. "Phone only" shows the handset alone on black
 for the projector (Escape returns). The phone's requests and personas use the generated types;
 the phone stream's events (doc 16 §3) are typed by hand in `src/api/phone.ts` from doc 08 §4,
-since an SSE body has no OpenAPI schema. The phone sends no telemetry yet (a browser cannot see
-the call state), so its telemetry probes record ERROR.
+since an SSE body has no OpenAPI schema. A browser cannot see the phone's call or screen, so
+the presenter sets them in **"Around the customer"**, above the phone (hidden in "Phone only"):
+- **the call:** no call, on a call with an unknown number, or on a call with a contact;
+- **"Screen shared or remote access":** sends both flags;
+- **typing:** natural, pasted and hesitant (a paste and a 34 s field dwell), or not their rhythm
+  (a cadence z of 4.1).
+
+The payment carries these as its telemetry (doc 08 §5), with the session's real length from the
+moment the form opened. Each preset sits clearly on one side of the KB's classifier thresholds
+(a 20 s dwell, a cadence z of 3.0), so CALL_STATUS, DEVICE_POSTURE and SESSION_BEHAVIOUR observe
+what the presenter chose. The default is calm: no call, no shared screen, natural typing. S-1
+starts with "On a call, unknown number".
 
 **The Theatre (`/theatre`).** The judges' view, full-screen on black and outside the app
 shell. It is the one place the quiet rules above give way to spectacle (bloom, light,
