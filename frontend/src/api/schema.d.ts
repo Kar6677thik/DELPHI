@@ -255,6 +255,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/demo/scenarios/{story}/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run Story
+         * @description Queue a `DEMO_STORY` job for S1 or S2 (202 with the job). Its result names the story's
+         *     customer and, in `autoplay`, the payment and its WORKER session; in `interactive`, the
+         *     `payment` to pay from the mock phone. 422 for S3 and S4 (a later release) or an unknown
+         *     mode; 503 NOT_INITIALISED until the dataset and models are ready, while the simulation is
+         *     off, or (interactive) while this process has no Guardian runner.
+         */
+        post: operations["run_story_api_v1_admin_demo_scenarios__story__run_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/kb/versions": {
         parameters: {
             query?: never;
@@ -1844,6 +1868,14 @@ export interface components {
             /** Models Below Gate */
             models_below_gate: components["schemas"]["ArtifactKind"][];
         };
+        /** StoryRunRequest */
+        StoryRunRequest: {
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "interactive" | "autoplay";
+        };
         /**
          * TelemetryIn
          * @description The app session's signals, as the mobile SDK reports them (docs/08 §5).
@@ -2402,6 +2434,43 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["DatasetRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobView"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    run_story_api_v1_admin_demo_scenarios__story__run_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                story: "S1" | "S2" | "S3" | "S4";
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StoryRunRequest"];
             };
         };
         responses: {
