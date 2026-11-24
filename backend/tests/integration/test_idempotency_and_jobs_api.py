@@ -2,22 +2,32 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 import threading
+import time
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 from uuid import UUID, uuid4
 
+import httpx
 import pytest
 from fastapi import APIRouter, Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
-from sqlalchemy import Column, Engine, MetaData, Table, Text, func, select
+from sqlalchemy import Column, Engine, MetaData, Table, Text, create_engine, func, select
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Session
 
 from delphi.api.app import create_app
-from delphi.api.idempotency import IdempotencyKey, RawBody, run_idempotent
+from delphi.api.idempotency import (
+    KEY_LOCKS,
+    IdempotencyKey,
+    RawBody,
+    run_idempotent,
+    run_idempotent_async,
+)
 from delphi.api.security import Permission, Principal, current_principal, require
 from delphi.platform.clock import FixedClock
 from delphi.platform.db import make_session_factory, migration_head
@@ -257,3 +267,118 @@ def test_retry_moves_a_failed_job_back_to_queued(env: tuple[FastAPI, Platform, F
     again = client.post(f"/api/v1/jobs/{job_id}/retry")
     assert again.status_code == 409 and again.json()["code"] == "INVALID_STATE_TRANSITION"
     assert client.post(f"/api/v1/jobs/{uuid4()}/retry").status_code == 404
+
+
+# ------------------------------------------------- work that commits its own steps (#286)
+
+# A pool smaller than the requests in flight: each request takes connections for its lookup,
+# its own steps and its store, one at a time. Holding the key's connection across the work
+# deadlocked such a pool until its timeout (#286).
+SMALL_POOL = 2
+POOL_TIMEOUT_S = 5
+IN_FLIGHT = 8
+
+
+def _async_router() -> APIRouter:
+    """A route like `POST /guardian/sessions`: its work commits in steps of its own."""
+    router = APIRouter(prefix="/api/v1/test")
+
+    @router.post("/steps", status_code=201)
+    async def create(
+        request: Request,
+        body: RawBody,
+        key: IdempotencyKey,
+        principal: Annotated[Principal, Depends(require(Permission.ADMIN))],
+    ) -> JSONResponse:
+        platform: Platform = request.app.state.platform
+
+        def step() -> UUID:
+            with platform.sessions.begin() as session:
+                made = enqueue(
+                    session, platform.clock, JobType.DEMO_RESET, idempotency_key=str(uuid4())
+                )
+                return made.job_id
+
+        async def run() -> tuple[int, Any]:
+            first = await asyncio.to_thread(step)
+            await asyncio.sleep(0.05)  # the other requests pile up meanwhile
+            second = await asyncio.to_thread(step)
+            return 201, {"job_ids": [str(first), str(second)]}
+
+        return await run_idempotent_async(request, body, principal, key, run)
+
+    return router
+
+
+@pytest.fixture
+def small_pool(
+    create_database: Callable[[], str],
+) -> Iterator[tuple[FastAPI, Platform]]:
+    url = create_database()
+    upgrade(url)
+    engine = create_engine(
+        url,
+        pool_size=SMALL_POOL,
+        max_overflow=0,
+        pool_timeout=POOL_TIMEOUT_S,
+        connect_args={"options": "-c timezone=UTC -c role=delphi_app"},
+    )
+    platform = Platform(
+        settings=Settings(database_url=url, migrations_dir=MIGRATIONS_DIR),
+        engine=engine,
+        sessions=make_session_factory(engine),
+        clock=FixedClock(T0),
+        started_at=T0,
+        migration_head=migration_head(MIGRATIONS_DIR),
+    )
+    with platform.sessions.begin() as s:
+        s.execute(
+            users.insert().values(
+                id=ADMIN.user_id,
+                username="admin",
+                display_name="Admin",
+                password_hash="unused",
+                role="ADMIN",
+            )
+        )
+    app = create_app(platform)
+    app.include_router(_async_router())
+    app.dependency_overrides[current_principal] = lambda: ADMIN
+    yield app, platform
+    engine.dispose()
+
+
+async def _post_all(app: FastAPI, keys: list[str]) -> list[httpx.Response]:
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://testserver", headers=BROWSER
+    ) as client:
+        return await asyncio.gather(
+            *(
+                client.post("/api/v1/test/steps", json={"x": 1}, headers={"Idempotency-Key": k})
+                for k in keys
+            )
+        )
+
+
+def test_requests_in_flight_never_starve_a_small_pool(
+    small_pool: tuple[FastAPI, Platform],
+) -> None:
+    app, platform = small_pool
+    started = time.monotonic()
+    replies = asyncio.run(_post_all(app, [str(uuid4()) for _ in range(IN_FLIGHT)]))
+    assert [r.status_code for r in replies] == [201] * IN_FLIGHT
+    assert time.monotonic() - started < POOL_TIMEOUT_S  # nobody waited out the pool
+    assert _jobs_count(platform) == 2 * IN_FLIGHT
+    assert len(KEY_LOCKS) == 0  # every key's lock is dropped once its requests are done
+
+
+def test_concurrent_requests_with_one_key_run_their_steps_once(
+    small_pool: tuple[FastAPI, Platform],
+) -> None:
+    app, platform = small_pool
+    replies = asyncio.run(_post_all(app, [str(uuid4())] * 4))
+    assert [r.status_code for r in replies] == [201] * 4
+    assert sum(r.headers.get("Idempotent-Replayed") == "true" for r in replies) == 3
+    assert len({json.dumps(r.json(), sort_keys=True) for r in replies}) == 1
+    assert _jobs_count(platform) == 2
