@@ -30,8 +30,23 @@ Engine work is parallelised with `multiprocessing` (4 workers). Results must not
 number of workers (per-customer RNG streams). The harness splits the work **by policy**
 (`delphi.evaluation.harness.run_policies`, #123), not by customer: within one policy, customers
 share the bank (payees receive from many customers, balances move), so splitting a policy's
-stream would change what it sees. Five policies on 4 forked workers; the dataset and the trained
-sensing are shared copy-on-write.
+stream would change what it sees. Five policies on 4 workers. The pool's initializer hands each
+worker the dataset and the trained sensing: inherited under `fork` (Linux, macOS), pickled under
+`spawn` where `fork` does not exist (Windows). Both give the same outcomes. CPython's reference
+counts still copy the pages a forked worker reads.
+
+**Measured on `eval` (#261, 4 cores, 15 GiB).** These numbers do not meet the budget yet.
+
+| Stage | Time | Peak RSS |
+|---|---|---|
+| Generate the dataset | 474 s | 4.56 GiB |
+| Train sensing and score 430,898 stream payments, batched | +610 s (1,084 s total) | 9.17 GiB |
+| Replay the five policies on 4 workers | not measured | killed (exit 137) |
+
+Before batching, scoring the stream row by row took about 106 minutes. The remaining memory is
+the in-memory bank frames, built from the dataset's records for training. Fitting 4.5 GiB needs
+those frames built column-wise and freed before the replay, and the workers to touch less of the
+history (follow-up). The CLI and job entry point that writes the report comes with #124.
 
 **Implementation (#123).**
 - **Stream** (`delphi.evaluation.stream`): the window's sessions in initiation order (ties by
