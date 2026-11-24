@@ -5,8 +5,9 @@ pairs already paid, and what the bank knows about payees, devices and registry l
 decisions change that copy (a released payment executes when the payer can fund it), so B1, B2
 and DELPHI each meet the stream as their own decisions left the bank.
 
-The replay is a discrete-event loop on a ``VirtualClock``: the stream's payments and the
-window's scheduled transfers (salaries, mule forwarding), in time order. Nothing sleeps.
+The replay is a discrete-event loop over the stream's payments and the window's scheduled
+transfers (salaries, mule forwarding), in time order. Nothing sleeps. The ``VirtualClock`` only
+keeps the replay's own time: a policy reads the time from ``view.initiated_at``, not the clock.
 
 A policy sees a ``PolicyView``, built from bank-visible records only (no field comes from
 ``sim_truth``). The truth needed to score the run (the scenario, the OTP stream) is joined in
@@ -19,7 +20,7 @@ import heapq
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, Protocol
+from typing import Protocol
 from uuid import UUID
 
 from delphi.engine.types import CompiledProfile
@@ -46,6 +47,7 @@ from delphi.sim.dataset import Dataset
 from delphi.sim.generator_config import GeneratorConfig
 from delphi.sim.labels import PaymentDecision
 from delphi.sim.legacy_policy import Baseline, decide_b1, decide_b2, payee_is_new
+from delphi.sim.population import Customer
 from delphi.sim.response_models import ResponseModels
 from delphi.sim.telemetry import SessionTelemetry
 
@@ -112,7 +114,7 @@ class BankState:
     saved: Mapping[tuple[UUID, UUID], tuple[datetime, ...]]
     first_seen: Mapping[UUID, datetime]
     listed: Mapping[UUID, datetime]
-    customers: Mapping[UUID, Any] = field(default_factory=dict)
+    customers: Mapping[UUID, Customer] = field(default_factory=dict)
     merchants: frozenset[UUID] = frozenset()
     phone_risk: Mapping[UUID, str] = field(default_factory=dict)  # account → FRI category
     # payee account → (initiated_at, payer customer) of its released or executed payments
@@ -169,10 +171,8 @@ class BankState:
             if first_seen is not None and first_seen <= at
             else None,
             payer_balance_paise=self.balances.get(p.payer_account_id, 0),
-            language=getattr(self.customers.get(customer), "language", "en"),
-            consent_call_status=bool(
-                getattr(self.customers.get(customer), "consent_call_status", False)
-            ),
+            language=self.customers[customer].language,
+            consent_call_status=self.customers[customer].consent_call_status,
             payee_is_merchant=p.payee_account_id in self.merchants,
             payee_phone_risk=self.phone_risk.get(p.payee_account_id),
             payee_earlier_payments=len(earlier),
@@ -337,7 +337,10 @@ def replay(
 
         def ask(probe: str, payment_id: UUID = view.payment_id, t: PaymentTruth = t) -> str:
             rng = customer_rng(seed, payment_id, probe)
-            return models.sample_answer(rng, t.scenario, probe, coached=t.coached)
+            # t.sim_day: a coaching adaptation (docs/14 §5.3) applies on the session's day.
+            return models.sample_answer(
+                rng, t.scenario, probe, coached=t.coached, sim_day=t.sim_day
+            )
 
         decided = policy.decide(view, ask)
         outcomes.append(_outcome(bank, view, decided, truth, seed=seed, models=models))

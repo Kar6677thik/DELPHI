@@ -21,7 +21,7 @@ event loop never blocks on the database. The passive phase is already async.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Protocol
@@ -90,8 +90,13 @@ class AnswerBoard:
             self._events.pop(probe_run_id, None)
 
 
+Finished = Callable[[GuardianSessionRecord], Awaitable[None]]
+
+
 class SessionRunner:
-    """Owns the session tasks of one process (one ``Runner`` kind)."""
+    """Owns the session tasks of one process (one ``Runner`` kind). ``on_finished`` hears about
+    every session that ends here (decided, cancelled, or the fail-safe): the mock phone's
+    ``session.decided`` (docs/08 §4). It never affects the session."""
 
     def __init__(
         self,
@@ -102,6 +107,7 @@ class SessionRunner:
         clock: Clock,
         *,
         runner: Runner,
+        on_finished: Finished | None = None,
     ) -> None:
         self._service = service
         self._channel = channel
@@ -109,6 +115,7 @@ class SessionRunner:
         self._sessions = sessions
         self._clock = clock
         self._runner = runner
+        self._on_finished = on_finished
         self._tasks: dict[UUID, asyncio.Task[GuardianSessionRecord]] = {}
 
     # ------------------------------------------------------------------ entry points
@@ -121,6 +128,8 @@ class SessionRunner:
         )
         if record.status not in DONE:
             self._spawn(record.id)
+        else:
+            await self._finished(record)  # the fast path, or the fail-safe at the prior
         return record
 
     async def resume_all(self) -> list[UUID]:
@@ -168,12 +177,22 @@ class SessionRunner:
         unexpected ends it through the fail-safe (FR-GDN-13); a cancelled task just stops, and
         the session is resumed on the next start-up."""
         try:
-            return await self._drive(session_id)
+            record = await self._drive(session_id)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             error = exc  # keep it past the except block for the thread
-            return await _off_loop(lambda: self._service.fail_safe(session_id, error))
+            record = await _off_loop(lambda: self._service.fail_safe(session_id, error))
+        await self._finished(record)
+        return record
+
+    async def _finished(self, record: GuardianSessionRecord) -> None:
+        if self._on_finished is None:
+            return
+        try:
+            await self._on_finished(record)
+        except Exception as exc:  # telling the customer must never change the session
+            log.warning("guardian.on_finished_failed", session=str(record.id), exc_info=exc)
 
     async def _drive(self, session_id: UUID) -> GuardianSessionRecord:
         while True:
