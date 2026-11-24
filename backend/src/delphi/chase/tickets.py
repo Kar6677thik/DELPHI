@@ -35,7 +35,13 @@ from uuid import UUID
 from sqlalchemy import exists, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
-from delphi.chase.operations import CandidateSource, TracedOnly, retrace_due
+from delphi.chase.operations import (
+    CandidateSource,
+    TracedOnly,
+    active_liens_paise,
+    lock_lien_accounts,
+    retrace_due,
+)
 from delphi.chase.tables import cfcfrms_tickets, chase_operations, liens
 from delphi.kb.store import get_version
 from delphi.platform.audit import ActorType, record
@@ -99,6 +105,9 @@ def process_tickets(
         .limit(limit)
         .with_for_update(of=cfcfrms_tickets, skip_locked=True)
     ).all()
+    # FR-CHS-05 across operations: an acknowledged lien takes at most the balance less the
+    # account's other active liens, under the same per-account lock as approval (#250 review).
+    lock_lien_accounts(session, [r.account_id for r in rows])
     counts = {"acknowledged": 0, "expired": 0}
     kbs: dict[int, Any] = {}
     for row in rows:
@@ -110,7 +119,9 @@ def process_tickets(
         scale = _scale(demo_time, kb)
         delay = ack_delay(str(row.id)) if ack_delay is not None else None
         if delay is not None and row.sent_at + delay * scale <= now:
-            amount = max(min(int(row.amount_paise), _balance(session, row.account_id)), 0)
+            others = active_liens_paise(session, [row.account_id], excluding=row.lien_id)
+            headroom = _balance(session, row.account_id) - others.get(row.account_id, 0)
+            amount = max(min(int(row.amount_paise), headroom), 0)
             placed = amount > 0
             status = "PLACED" if placed else "FAILED_FUNDS_MOVED"
             session.execute(

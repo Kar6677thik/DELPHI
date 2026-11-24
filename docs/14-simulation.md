@@ -610,7 +610,42 @@ while the worker was down) is cleared over several runs.
 ## 10. Demo control
 
 - `POST /admin/demo/scenarios/{story}/run {mode: "interactive"|"autoplay"}` for stories S-1 to
-  S-4.
+  S-4. It queues a `DEMO_STORY` job (doc 16), because the story's ids are in the persona
+  manifest (`sim_truth`), which only the worker reads. S-1 and S-2 run now (#101); S-3 and S-4
+  answer 422 until their runners land.
+
+**The S-1/S-2 runner** (`delphi.sim.stories`, #101) stages the story's scripted payment from
+`personas.yaml` with the manifest's ids: the persona's home account, the story payee, the
+amount, the channel, the story's session telemetry and the persona's device. Then:
+
+- **autoplay:** it creates the payment (`DEMO`, `PENDING_GUARDIAN`) with its ground truth (the
+  story's `scenario` and `coached` in `personas.yaml`: S-1 a coached `APP_DIGITAL_ARREST`, S-2
+  `GENUINE_UNUSUAL`), registers the story's scripted answers for it with the simulated customer
+  (§5.2; `after_s` and `app_switches` become the answer's latency and switches), and submits it to
+  the worker's Guardian runner (runner `WORKER`, mode `AUTOPLAY`, doc 08 §2). Probes the script
+  leaves out are answered from the scenario's response model. The job's result names the
+  customer, the payment and the session.
+- **interactive:** the presenter is the customer, and only the api's runner drives sessions the
+  phone can answer (doc 08 §2). So the job creates no payment: its result is the
+  `POST /guardian/sessions` `payment` body (and the customer id for `/phone/stream`), which the
+  mock phone pays with. The session then runs on the api's runner like any phone payment.
+
+Details where the scripts are silent:
+
+- **Arjun's new phone** (S-2) is a device of his first seen at the story's T, written by the job
+  (both modes). Its id is keyed by the dataset, so running S-2 again before a reset reuses it,
+  still NEW_DEVICE (doc 08 §5); the demo reset removes it with everything after the seed.
+- **The story's T is now.** A live run makes the payment when the presenter runs the story, so
+  S-1's `local_time` (23:40 IST) is not honoured: the prior's hour features see the real time.
+  Moving the payment's time would put it out of order with the session that decides it. The
+  23:40 is honoured where time is simulated: the persona tests' story time and the golden
+  replays (gap).
+- **Idempotency.** The payment's id is keyed by the job, so a retry after a lost lease finds the
+  payment its first attempt made, and the runner returns its session (one per payment). Each run
+  is one short transaction.
+- **Restarts.** The scripts live in the worker's memory. A story session resumed after a worker
+  restart (FR-GDN-14) answers its remaining probes from the response models with the story's
+  truth, so it may end differently from the script.
 - `POST /admin/demo/reset`: deletes every row created after the `seed_completed_at` marker
   (in dependency order, in one transaction), re-activates KB v1, and resets the persona state.
   Must finish in ≤ 60 s.

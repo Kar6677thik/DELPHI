@@ -12,6 +12,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from delphi.sim.response_models import CONFIG_DIR
+from delphi.sim.scenarios import ScenarioType
 
 PERSONA_CONFIG_FILE = CONFIG_DIR / "personas.yaml"
 
@@ -97,6 +98,10 @@ class Story(_Frozen):
     telemetry: StoryTelemetry | None = None
     answers: tuple[StoryAnswer, ...] = ()
     complaint_channel: str | None = None  # a complaint at T (S-3)
+    # The story payment's ground truth, written by its DEMO_STORY runner (docs/14 §10): the
+    # simulated customer answers the probes the script leaves out from this scenario's model.
+    scenario: ScenarioType | None = None
+    coached: bool = False
 
 
 class PersonaConfig(_Frozen):
