@@ -8,9 +8,13 @@ posterior's argmax), (b) they share an infrastructure entity (a device fingerpri
 counterparty account, or a login /24 IPv4 prefix), and (c) they were opened within
 ``window_days`` (the KB's ``navigator.campaign_window_days``, 7) of each other. A campaign is a
 connected component of that relation (union-find closure), so a chain of links joins cases that
-are not linked directly. A case whose
-leading hypothesis is GENUINE is never in a campaign; a case linked to no other case forms no
-campaign.
+are not linked directly. A case whose leading hypothesis is GENUINE is never in a campaign; a
+case linked to no other case forms no campaign.
+
+**Cost.** Within one (hypothesis, entity) bucket sorted by opening time, only neighbours are
+joined (each case with the next, when within the window). Any two cases within the window are
+joined by a chain of in-window neighbours, so the groups are the same as joining every pair, in
+O(n log n) instead of O(n²) for a busy entity (a shared NAT /24, a mule counterparty).
 
 **Stable ids.** A group keeps the id its members already had. When a group holds members of
 several campaigns (they merged), the oldest campaign's id survives and the others are reported
@@ -22,9 +26,10 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from itertools import pairwise
 from uuid import UUID
 
-GENUINE = "GENUINE"
+from delphi.kb.model import GENUINE
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,10 +68,8 @@ def groups(cases: Sequence[CaseFacts], *, window_days: float) -> list[list[UUID]
             by_entity.setdefault((c.leading_hypothesis, entity), []).append(c)
     for members in by_entity.values():
         members.sort(key=lambda c: (c.opened_at, str(c.case_id)))
-        for i, a in enumerate(members):
-            for b in members[i + 1 :]:
-                if b.opened_at - a.opened_at > window:
-                    break
+        for a, b in pairwise(members):
+            if b.opened_at - a.opened_at <= window:
                 uf.union(a.case_id, b.case_id)
     out: dict[UUID, list[CaseFacts]] = {}
     for c in eligible:
@@ -87,6 +90,7 @@ class Assignment:
     new_campaigns: dict[UUID, list[UUID]]  # a new campaign id → its cases
     merged_into: dict[UUID, UUID]  # a campaign that merged → the one that survived
     dissolved: frozenset[UUID]  # campaigns left with no group (all members unlinked)
+    unassigned: frozenset[UUID]  # cases that were in a campaign and are now in none
 
 
 def assign_ids(
@@ -97,8 +101,14 @@ def assign_ids(
     new_id: Callable[[], UUID],
 ) -> Assignment:
     """Stable ids for ``members`` (from ``groups``): ``created_at`` gives each existing
-    campaign's creation time, so the oldest survives a merge (ties: the smaller id)."""
+    campaign's creation time, so the oldest survives a merge (ties: the smaller id).
+
+    Precondition: ``created_at`` holds every campaign a case in ``cases`` points at; a missing
+    one is a ``ValueError`` naming it."""
     previous = {c.case_id: c.campaign_id for c in cases if c.campaign_id is not None}
+    missing = sorted({str(k) for k in previous.values()} - {str(k) for k in created_at})
+    if missing:
+        raise ValueError(f"created_at has no time for campaign(s) {', '.join(missing)}")
     campaign_of: dict[UUID, UUID] = {}
     new: dict[UUID, list[UUID]] = {}
     merged: dict[UUID, UUID] = {}
@@ -119,4 +129,5 @@ def assign_ids(
         for c in group:
             campaign_of[c] = survivor
     dissolved = frozenset(set(previous.values()) - set(campaign_of.values()) - set(merged))
-    return Assignment(campaign_of, new, merged, dissolved)
+    unassigned = frozenset(set(previous) - set(campaign_of))
+    return Assignment(campaign_of, new, merged, dissolved, unassigned)
