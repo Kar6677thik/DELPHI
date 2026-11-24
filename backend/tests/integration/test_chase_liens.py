@@ -167,3 +167,28 @@ def test_an_operation_needs_executed_money(
     response = _post(client, "/chase/operations", {"payment_ids": [str(uuid4())]})
     assert response.status_code == 422
     assert _post(client, "/chase/operations", {}).status_code == 422
+
+
+def test_liens_from_two_operations_stay_within_the_balance(
+    env: Env,  # noqa: F811
+    writer: tuple[TestClient, Principal],  # noqa: F811
+) -> None:
+    """FR-CHS-05 across operations (#250 review): two operations trace the same ₹40,000 to a
+    mule holding ₹40,000 (a complaint and a payment-id operation over one payment, say). Each
+    alone would lien min(taint, balance) = ₹40,000, ₹80,000 in all; the second gets only what
+    the first left, nothing here."""
+    client, _ = writer
+    mule = _account(env, "DLPH", 0)
+    source = _pay(env, _account(env, "DLPH", 100_000, customer=True), mule, 40_000, minutes=50)
+    placed = []
+    for _ in range(2):
+        op = _post(client, "/chase/operations", {"payment_ids": [str(source)]}).json()
+        [candidate] = [c for c in op["candidates"] if c["account_id"] == str(mule)]
+        view = _post(
+            client, f"/chase/operations/{op['id']}/liens", {"candidate_ids": [candidate["id"]]}
+        )
+        assert view.status_code == 200, view.text
+        assert view.headers["ETag"] == f'"{view.json()["version"]}"'
+        [lien] = view.json()["liens"]
+        placed.append((lien["status"], lien["amount_paise"]))
+    assert placed == [("PLACED", 40_000 * INR), ("FAILED_FUNDS_MOVED", 0)]

@@ -42,6 +42,7 @@ ACCESS: dict[tuple[str, str], str | Permission] = {
     ("PATCH", "/api/v1/admin/users/{user_id}"): Permission.ADMIN,
     ("GET", "/api/v1/admin/audit/verify"): Permission.ADMIN,
     ("POST", "/api/v1/admin/datasets"): Permission.ADMIN,
+    ("POST", "/api/v1/admin/demo/scenarios/{story}/run"): Permission.DEMO_DRIVE,
     ("POST", "/api/v1/admin/sensing/train"): Permission.ADMIN,
     ("GET", "/api/v1/kb/versions"): Permission.VIEW,
     ("GET", "/api/v1/kb/versions/{version_id}"): Permission.VIEW,
@@ -149,6 +150,7 @@ def test_access(
         .replace("{item_id}", str(uuid4()))
         .replace("{action}", "send")
         .replace("{session_id}", str(uuid4()))
+        .replace("{story}", "S1")
     )
     if (method, path) in {("POST", "/api/v1/auth/logout")}:
         # Signing out would end this module's shared session; check access with a probe

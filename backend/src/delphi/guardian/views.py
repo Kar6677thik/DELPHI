@@ -108,7 +108,7 @@ def list_sessions(
     *,
     limit: int,
     after: SessionCursor | None = None,
-    where: SessionFilter = SessionFilter(),  # noqa: B008 - frozen, so a shared default is safe
+    where: SessionFilter = SessionFilter(),  # frozen, so a shared default is safe
 ) -> list[SessionRow]:
     """Newest first. ``after`` continues a page (strictly older than the cursor)."""
     gs = guardian_sessions.c

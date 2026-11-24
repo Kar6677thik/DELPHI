@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from delphi.guardian.active import ClientSignals
+from delphi.guardian.autoplay import WorkerGuardian, worker_guardian
 from delphi.guardian.ddpack import DdPack, case_trail
 from delphi.guardian.ddpack import build as build_dd_pack
 from delphi.guardian.ddpack import render_html as render_dd_pack_html
@@ -62,6 +63,7 @@ __all__ = [
     "SessionRow",
     "SessionStatus",
     "TerminalReason",
+    "WorkerGuardian",
     "attributed_sessions_query",
     "build_dd_pack",
     "case_trail",
@@ -80,4 +82,5 @@ __all__ = [
     "stop_reason",
     "takes_fast_path",
     "unexplained_sessions_query",
+    "worker_guardian",
 ]
