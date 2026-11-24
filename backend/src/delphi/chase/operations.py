@@ -25,7 +25,7 @@ from datetime import datetime, timedelta
 from typing import Any, Protocol
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import Text, cast, func, literal, select, text, update
 from sqlalchemy.orm import Session
 
 from delphi.chase.ledger import CASH_OUT_CHANNEL, load_trace_inputs, visible_until
@@ -38,6 +38,7 @@ from delphi.platform.clock import Clock
 from delphi.platform.errors import DelphiError, NotFoundError, ProblemCode
 from delphi.platform.events import EventType, publish
 from delphi.platform.ids import uuid7
+from delphi.platform.locks import LIEN_ACCOUNT_LOCK_CLASS
 from delphi.sim import api as bank
 
 PAISE_PER_INR = 100
@@ -84,6 +85,51 @@ class TracedOnly:
         ]
 
 
+# Until the trace loader is bounded (#266), the request's transaction is limited the way the
+# recurring jobs are (#263): a slow or huge trace fails the request instead of the database.
+TRACE_STATEMENT_TIMEOUT = "30s"
+TRACE_WORK_MEM = "16MB"
+
+
+def bound_trace(session: Session) -> None:
+    session.execute(text(f"SET LOCAL statement_timeout = '{TRACE_STATEMENT_TIMEOUT}'"))
+    session.execute(text(f"SET LOCAL work_mem = '{TRACE_WORK_MEM}'"))
+
+
+ACTIVE_LIEN_STATUSES = ("PLACED", "TICKET_SENT")  # money a lien holds, or is about to
+
+
+def lock_lien_accounts(session: Session, accounts: Sequence[UUID]) -> None:
+    """Serialise lien setting per account (FR-CHS-05), in a fixed order so two transactions
+    locking overlapping accounts cannot deadlock. Held until the transaction ends."""
+    for account in sorted(set(accounts), key=str):
+        session.execute(
+            select(
+                func.pg_advisory_xact_lock(
+                    LIEN_ACCOUNT_LOCK_CLASS, func.hashtext(cast(literal(account), Text))
+                )
+            )
+        )
+
+
+def active_liens_paise(
+    session: Session, accounts: Sequence[UUID], *, excluding: UUID | None = None
+) -> dict[UUID, int]:
+    """Each account's money already under an active lien (PLACED or TICKET_SENT), any
+    operation's; ``excluding`` leaves one lien out (the one being settled)."""
+    if not accounts:
+        return {}
+    n = liens.c
+    query = (
+        select(n.account_id, func.sum(n.amount_paise))
+        .where(n.account_id.in_(list(accounts)), n.status.in_(ACTIVE_LIEN_STATUSES))
+        .group_by(n.account_id)
+    )
+    if excluding is not None:
+        query = query.where(n.id != excluding)
+    return {a: int(total) for a, total in session.execute(query).tuples()}
+
+
 def _balances(session: Session, accounts: Mapping[UUID, Any]) -> dict[UUID, int]:
     if not accounts:
         return {}
@@ -106,7 +152,7 @@ def _sources(
     return list(row.payment_ids), row.reported_at
 
 
-EVAL_PROFILE = "eval"
+EVAL_PROFILE: bank.DatasetProfile = "eval"  # checked against the profiles by mypy
 
 
 def visibility_lag(session: Session, kb: KnowledgeBase) -> float:
@@ -139,6 +185,7 @@ def create_operation(
     kb = version.kb
     now = clock.now()
     ids, complained_at = _sources(session, complaint_id, payment_ids)
+    bound_trace(session)
     sources, moves = load_trace_inputs(
         session.connection(), ids, until=visible_until(now, visibility_lag(session, kb))
     )
@@ -265,6 +312,7 @@ def approve_liens(
         raise NotFoundError("A candidate is not in this operation.")
     now = clock.now()
     # The taint's path for the evidence refs: re-traced as of now (docs/10 §5 step 2).
+    bound_trace(session)
     sources, moves = load_trace_inputs(
         session.connection(),
         list(op.source_payment_ids),
@@ -276,7 +324,15 @@ def approve_liens(
         min_trace_paise=round(kb.config.chase.min_trace_inr * PAISE_PER_INR),
         cash_out_channel=CASH_OUT_CHANNEL,
     )
-    balances = _balances(session, {r.account_id: None for r in rows})
+    accounts = [r.account_id for r in rows]
+    # FR-CHS-05 across operations: a lien is capped by the balance less what other liens on
+    # the account already hold, under a per-account lock (#250 review).
+    lock_lien_accounts(session, accounts)
+    held = active_liens_paise(session, accounts)
+    balances = {
+        a: max(b - held.get(a, 0), 0)
+        for a, b in _balances(session, {a: None for a in accounts}).items()
+    }
     a = bank.accounts.c
     banks = dict(
         session.execute(
@@ -292,6 +348,7 @@ def approve_liens(
         account = str(row.account_id)
         taint_now = traced.taint_now.get(account, 0)
         amount = lien_amount(taint_now, balances.get(row.account_id, 0))
+        balances[row.account_id] = balances.get(row.account_id, 0) - amount
         refs = _path(traced.flows, account) or [str(p) for p in op.source_payment_ids]
         internal = banks[row.account_id] == bank.HOME_BANK
         p_mule = f"{row.p_mule:.2f}" if row.p_mule is not None else "not scored"
