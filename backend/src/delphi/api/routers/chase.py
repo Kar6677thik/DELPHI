@@ -219,4 +219,7 @@ def approve(
         )
         return HTTPStatus.OK, _view(session, operation_id).model_dump(mode="json")
 
-    return run_idempotent(request, raw, principal, key, run)
+    reply = run_idempotent(request, raw, principal, key, run)
+    if reply.status_code == HTTPStatus.OK:
+        reply.headers["ETag"] = f'"{json.loads(bytes(reply.body))["version"]}"'
+    return reply

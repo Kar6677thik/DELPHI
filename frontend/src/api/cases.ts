@@ -80,3 +80,61 @@ export function useDispose(id: string) {
     },
   });
 }
+
+// ---------------------------------------------------------------- the case DD pack
+
+/** One section of a DD pack (docs/09 §7). */
+export interface DdPackSection {
+  number: number;
+  title: string;
+  required: boolean;
+  /** What the section holds: text, a list or a table; "Not applicable" when it does not apply. */
+  content: unknown;
+  /** Why a section is empty or does not apply. */
+  note: string | null;
+}
+
+export interface DdPack {
+  caseId: string;
+  complete: boolean;
+  sections: DdPackSection[];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Reads `GET /cases/{id}/dd-pack` (docs/16). The api types the body as an open object (it serves
+ * HTML too), so each field is checked here rather than cast; a malformed section is skipped.
+ */
+export function parseDdPack(body: unknown): DdPack {
+  const data = isRecord(body) ? body : {};
+  const sections = Array.isArray(data.sections) ? data.sections : [];
+  return {
+    caseId: typeof data.case_id === 'string' ? data.case_id : '',
+    complete: data.complete === true,
+    sections: sections.flatMap((s): DdPackSection[] =>
+      isRecord(s) && typeof s.number === 'number' && typeof s.title === 'string'
+        ? [
+            {
+              number: s.number,
+              title: s.title,
+              required: s.required === true,
+              content: s.content,
+              note: typeof s.note === 'string' ? s.note : null,
+            },
+          ]
+        : [],
+    ),
+  };
+}
+
+/** The case's DD pack. Reading it records DD_PACK_VIEWED on the server (docs/09 §5). */
+export function useCaseDdPack(id: string) {
+  return useQuery({
+    queryKey: [...caseQueryKey(id), 'dd-pack'],
+    queryFn: async () =>
+      parseDdPack(await getJson<unknown>(`/cases/${encodeURIComponent(id)}/dd-pack`)),
+  });
+}

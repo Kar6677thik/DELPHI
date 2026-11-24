@@ -16,6 +16,10 @@ DATASET_WRITE_LOCK_KEY = 46  # writing a generated dataset into the bank
 KB_SEED_LOCK_KEY = 47  # delphi migrate inserting KB v1 (docs/07 §1)
 MODEL_ARTIFACT_LOCK_KEY = 48  # storing a sensing artifact and switching the ACTIVE one
 LABEL_DELIVERY_LOCK_KEY = 49  # delivering due labels from the simulator's schedule (docs/14 §7)
+# Two-key locks (class, hashtext(id)): one per bank account while its liens are set, so two
+# approvals or acknowledgements cannot both use the same headroom (FR-CHS-05). The class is a
+# separate namespace from the one-key locks above (their high half is 0).
+LIEN_ACCOUNT_LOCK_CLASS = 52
 
 ALL_LOCK_KEYS: dict[str, int] = {
     "audit": AUDIT_LOCK_KEY,

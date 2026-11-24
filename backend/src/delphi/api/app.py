@@ -22,6 +22,7 @@ from delphi.api.routers import (
     cases,
     chase,
     datasets,
+    demo,
     events,
     guardian,
     jobs,
@@ -117,6 +118,7 @@ def create_app(
     app.include_router(jobs.router)
     app.include_router(admin.router)
     app.include_router(datasets.router)
+    app.include_router(demo.router)
     app.include_router(kb.router)
     app.include_router(sensing.router)
     app.include_router(cases.router)
