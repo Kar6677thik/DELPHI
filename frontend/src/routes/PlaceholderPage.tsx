@@ -11,7 +11,6 @@ const ARRIVES: Readonly<Record<string, string>> = {
   '/kb/questions': 'the question bank review, for reviewing translated questions',
   '/learning': 'the learning loop, which updates the knowledge base from outcomes',
   '/evaluation': 'the evaluation, which compares DELPHI with the bank’s rules on the same payments',
-  '/cases/:id/dd-pack': 'the case DD pack page',
 };
 
 /** A screen from docs/18 §2 that is routed and permission-gated but not built yet. */

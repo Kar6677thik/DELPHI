@@ -2,7 +2,13 @@ import { act, screen, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { describe, expect, it } from 'vitest';
 
-import type { Persona, ProbeRequest } from '../src/api/phone';
+import {
+  CALM,
+  MAX_SESSION_S,
+  type Persona,
+  type ProbeRequest,
+  telemetryFor,
+} from '../src/api/phone';
 import type { GuardianSessionView, KbVersionView } from '../src/api/types';
 import { FakeEventSource } from './fakeEventSource';
 import { MOCK_KB_CONTENT, problem, setMockSession } from './mocks/handlers';
@@ -16,15 +22,40 @@ const RUN = '01930000-0000-7000-8000-0000000000e9';
 
 const PERSONA: Persona = {
   customer_id: 'c-ramesh',
+  persona_key: 'RAMESH',
   name: 'Ramesh Rao',
   language: 'te',
   vulnerable: true,
-  accounts: [{ id: 'a-ramesh', label: 'Savings ·· 4821', balance_paise: 1_250_000_00 }],
-  payees: [
-    { account_id: 'a-cbi', label: 'CBI Safe Account', note: 'New today' },
-    { account_id: 'a-anita', label: 'Anita Rao', note: 'Saved 2 years ago' },
+  accounts: [
+    {
+      id: 'a-ramesh',
+      label: 'Savings ·· 4821',
+      vpa: 'customer004821@dlph',
+      balance_paise: 1_250_000_00,
+    },
   ],
-  devices: [{ id: 'd-ramesh', label: 'Ramesh’s phone' }],
+  payees: [
+    {
+      account_id: 'a-cbi',
+      label: 'CBI Safe Account',
+      vpa: 'person000042@xbk2',
+      added_at: '2026-11-22T09:00:00Z',
+    },
+    {
+      account_id: 'a-anita',
+      label: 'Anita Rao',
+      vpa: null,
+      added_at: '2024-11-22T09:00:00Z',
+    },
+  ],
+  devices: [
+    {
+      id: 'd-ramesh',
+      label: 'Ramesh’s phone',
+      os: 'ANDROID',
+      first_seen_at: '2023-01-01T00:00:00Z',
+    },
+  ],
 };
 
 function view(overrides: Partial<GuardianSessionView> = {}): GuardianSessionView {
@@ -133,13 +164,14 @@ function phoneStream(): FakeEventSource {
 
 function mockApi() {
   let current = view();
-  const sent: { payment?: unknown; answer?: unknown } = {};
+  const sent: { payment?: unknown; answer?: unknown; idempotencyKey?: string | null } = {};
   server.use(
     http.get('/api/v1/phone/personas', () => HttpResponse.json([PERSONA])),
     http.get('/api/v1/kb/versions/1', () => HttpResponse.json(KB)),
     http.get('/api/v1/kb/versions', () => HttpResponse.json({ items: [KB], next_cursor: null })),
     http.post('/api/v1/guardian/sessions', async ({ request }) => {
       sent.payment = await request.json();
+      sent.idempotencyKey = request.headers.get('Idempotency-Key');
       return HttpResponse.json(current, { status: 201 });
     }),
     http.get(`/api/v1/guardian/sessions/${SESSION}`, () => HttpResponse.json(current)),
@@ -166,16 +198,24 @@ describe('/phone', () => {
 
     await user.type(within(phone).getByLabelText('Amount'), '480000');
     await user.click(within(phone).getByRole('button', { name: 'Pay ₹4,80,000.00' }));
-    expect(sent.payment).toEqual({
+    expect(sent.payment).toMatchObject({
       payment: {
         payer_account_id: 'a-ramesh',
         payee_account_id: 'a-cbi',
         amount_paise: 4_80_000_00,
         channel: 'UPI_PUSH',
         device_id: 'd-ramesh',
-        telemetry: {},
+        // Calm by default: no call, no shared screen, natural typing.
+        telemetry: {
+          on_call: false,
+          call_counterparty_known: null,
+          remote_access_active: false,
+          screen_share_active: false,
+          paste_on_account_field: false,
+        },
       },
     });
+    expect(sent.idempotencyKey).toMatch(/^[0-9a-f-]{36}$/);
     expect(await within(phone).findByText('Checking this payment')).toBeInTheDocument();
     // The DELPHI side: the leading hypothesis leads, and why this question.
     const belief = await screen.findByRole('heading', { name: 'What DELPHI believes' });
@@ -196,6 +236,49 @@ describe('/phone', () => {
     ).toBeInTheDocument();
     await user.click(within(phone).getByRole('button', { name: 'Done' }));
     expect(within(phone).getByLabelText('Amount')).toHaveValue('');
+  });
+
+  it('sends what the presenter set around the customer as the telemetry', async () => {
+    setMockSession('investigator');
+    const sent = mockApi();
+    const { user } = renderApp('/phone');
+    const phone = await screen.findByRole('region', { name: 'Customer’s phone' });
+    const around = screen.getByRole('group', { name: 'Around the customer' });
+    await user.click(within(around).getByRole('button', { name: 'On a call, unknown number' }));
+    await user.click(within(around).getByLabelText('Screen shared or remote access'));
+    await user.click(within(around).getByRole('button', { name: 'Not their rhythm' }));
+    await user.type(within(phone).getByLabelText('Amount'), '480000');
+    await user.click(within(phone).getByRole('button', { name: /Pay/ }));
+    await within(phone).findByText('Checking this payment');
+    expect(sent.payment).toMatchObject({
+      payment: {
+        telemetry: {
+          on_call: true,
+          call_counterparty_known: false,
+          remote_access_active: true,
+          screen_share_active: true,
+          paste_on_account_field: false,
+        },
+      },
+    });
+  });
+
+  it('puts each typing preset on the intended side of the KB thresholds', () => {
+    // kb/engine.yaml classifiers: dwell > 20 s or a paste → hesitant; cadence z > 3.0 → mismatch.
+    const natural = telemetryFor(CALM, 42);
+    expect(natural.paste_on_account_field || natural.max_field_dwell_s > 20).toBe(false);
+    expect(natural.typing_cadence_z).toBeLessThanOrEqual(3);
+    expect(natural.session_duration_s).toBe(42);
+    const hesitant = telemetryFor({ ...CALM, typing: 'HESITANT' }, 0.2);
+    expect(hesitant.paste_on_account_field && hesitant.max_field_dwell_s > 20).toBe(true);
+    // A session lasts at least its longest dwell, and at most the API's 24 h bound.
+    expect(hesitant.session_duration_s).toBe(hesitant.max_field_dwell_s);
+    expect(telemetryFor(CALM, 2 * MAX_SESSION_S).session_duration_s).toBe(MAX_SESSION_S);
+    expect(
+      telemetryFor({ ...CALM, typing: 'NOT_THEIR_RHYTHM' }, 5).typing_cadence_z,
+    ).toBeGreaterThan(3);
+    const contact = telemetryFor({ ...CALM, call: 'CONTACT' }, 5);
+    expect([contact.on_call, contact.call_counterparty_known]).toEqual([true, true]);
   });
 
   it('shows the mock SMS and a wrong-code result for an OTP', async () => {
@@ -244,14 +327,22 @@ describe('/phone', () => {
     expect(await screen.findByRole('heading', { name: 'Mock phone' })).toBeInTheDocument();
   });
 
-  it('says the phone needs the Guardian API while its endpoints are missing', async () => {
+  it('shows the problem when the customers cannot load', async () => {
     setMockSession('investigator');
     server.use(
       http.get('/api/v1/phone/personas', ({ request }) =>
-        problem(404, 'Not Found', 'NOT_FOUND', 'No such route.', request.url),
+        problem(
+          503,
+          'Service Unavailable',
+          'NOT_INITIALISED',
+          'DELPHI is still initialising.',
+          request.url,
+        ),
       ),
     );
     renderApp('/phone');
-    expect(await screen.findByText(/arrive with the Guardian API \(#98\)/)).toBeInTheDocument();
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('The phone could not load its customers');
+    expect(alert).toHaveTextContent('DELPHI is still initialising.');
   });
 });

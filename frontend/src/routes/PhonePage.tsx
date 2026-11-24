@@ -1,7 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { ApiError } from '../api/client';
 import {
   GUARDIAN_QUERY_KEY,
   useActiveKbDisplay,
@@ -9,6 +8,8 @@ import {
   useKbDisplay,
 } from '../api/guardian';
 import {
+  CALM,
+  type CallSituation,
   CHANNELS,
   CHANNEL_LABEL,
   type PayChannel,
@@ -17,6 +18,9 @@ import {
   type ProbeAnswer,
   type ClientSignals,
   type ProbeRequest,
+  type Situation,
+  telemetryFor,
+  type TypingSituation,
   useAnswerProbe,
   usePersonas,
   useStartPayment,
@@ -65,6 +69,7 @@ export function PhonePage() {
   const [personaId, setPersonaId] = useState<string | null>(null);
   const [phoneOnly, setPhoneOnly] = useState(false);
   const [flight, setFlight] = useState<Flight | null>(null);
+  const [situation, setSituation] = useState<Situation>(CALM);
   const queryClient = useQueryClient();
 
   const persona =
@@ -103,7 +108,13 @@ export function PhonePage() {
   }, [phoneOnly]);
 
   const phone = persona ? (
-    <Phone key={persona.customer_id} persona={persona} flight={flight} onFlight={setFlight} />
+    <Phone
+      key={persona.customer_id}
+      persona={persona}
+      situation={situation}
+      flight={flight}
+      onFlight={setFlight}
+    />
   ) : null;
 
   if (phoneOnly && phone) {
@@ -174,11 +185,6 @@ export function PhonePage() {
       {personas.isError && (
         <div className="mt-8 max-w-xl space-y-2">
           <ProblemAlert error={personas.error} title="The phone could not load its customers" />
-          {personas.error instanceof ApiError && personas.error.status === 404 && (
-            <p className="text-[13px] text-muted">
-              The phone’s endpoints arrive with the Guardian API (#98).
-            </p>
-          )}
         </div>
       )}
       {personas.isSuccess && personas.data.length === 0 && (
@@ -187,8 +193,10 @@ export function PhonePage() {
         </p>
       )}
 
+      {phone && <SituationControl value={situation} onChange={setSituation} />}
+
       {phone && (
-        <div className="mt-8 grid items-start gap-8 lg:grid-cols-[372px_minmax(0,1fr)]">
+        <div className="mt-6 grid items-start gap-8 lg:grid-cols-[372px_minmax(0,1fr)]">
           {phone}
           <DelphiPanel sessionId={flight?.sessionId ?? null} persona={persona} />
         </div>
@@ -200,10 +208,12 @@ export function PhonePage() {
 /** The phone itself: the payment form, then each probe, then the decision. */
 function Phone({
   persona,
+  situation,
   flight,
   onFlight,
 }: {
   persona: Persona;
+  situation: Situation;
   flight: Flight | null;
   onFlight: (next: Flight | null) => void;
 }) {
@@ -244,19 +254,22 @@ function Phone({
         persona={persona}
         busy={start.isPending}
         error={start.error}
-        onPay={(draft) => {
-          start.mutate(draft, {
-            onSuccess: (session) => {
-              remember(session);
-              onFlight({
-                sessionId: session.id,
-                probe: null,
-                sms: null,
-                attemptsRemaining: null,
-                decided: session.decision ?? undefined,
-              });
+        onPay={(draft, sessionSeconds) => {
+          start.mutate(
+            { payment: draft, telemetry: telemetryFor(situation, sessionSeconds) },
+            {
+              onSuccess: (session) => {
+                remember(session);
+                onFlight({
+                  sessionId: session.id,
+                  probe: null,
+                  sms: null,
+                  attemptsRemaining: null,
+                  decided: session.decision ?? undefined,
+                });
+              },
             },
-          });
+          );
         }}
       />
     );
@@ -319,14 +332,22 @@ function PayScreen({
   persona: Persona;
   busy: boolean;
   error: Error | null;
-  onPay: (draft: {
-    payer_account_id: string;
-    payee_account_id: string;
-    amount_paise: number;
-    channel: PayChannel;
-    device_id: string;
-  }) => void;
+  onPay: (
+    draft: {
+      payer_account_id: string;
+      payee_account_id: string;
+      amount_paise: number;
+      channel: PayChannel;
+      device_id: string;
+    },
+    sessionSeconds: number,
+  ) => void;
 }) {
+  // When the customer opened the payment form: the session's length goes with the telemetry.
+  const openedAt = useRef(0);
+  useEffect(() => {
+    openedAt.current = Date.now();
+  }, []);
   const account = persona.accounts[0];
   const device = persona.devices[0];
   const [payee, setPayee] = useState(persona.payees[0]?.account_id ?? '');
@@ -341,13 +362,16 @@ function PayScreen({
       onSubmit={(event) => {
         event.preventDefault();
         if (valid && account && device) {
-          onPay({
-            payer_account_id: account.id,
-            payee_account_id: payee,
-            amount_paise: amount,
-            channel,
-            device_id: device.id,
-          });
+          onPay(
+            {
+              payer_account_id: account.id,
+              payee_account_id: payee,
+              amount_paise: amount,
+              channel,
+              device_id: device.id,
+            },
+            elapsedSeconds(openedAt.current),
+          );
         }
       }}
     >
@@ -385,7 +409,7 @@ function PayScreen({
               </span>
               <span className="min-w-0">
                 <span className="block truncate text-[15px]">{p.label}</span>
-                {p.note && <span className="block text-[12px] text-white/55">{p.note}</span>}
+                {p.vpa && <span className="block text-[12px] text-white/55">{p.vpa}</span>}
               </span>
             </label>
           ))}
@@ -654,5 +678,91 @@ function Thinking({ session, styles }: { session: GuardianSessionView; styles: H
         </section>
       )}
     </div>
+  );
+}
+
+/** Seconds since `since` (ms since the epoch), read when the customer pays. */
+function elapsedSeconds(since: number): number {
+  return (Date.now() - since) / 1000;
+}
+
+const CALLS: readonly { value: CallSituation; label: string }[] = [
+  { value: 'NONE', label: 'No call' },
+  { value: 'UNKNOWN_NUMBER', label: 'On a call, unknown number' },
+  { value: 'CONTACT', label: 'On a call, a contact' },
+];
+
+const TYPINGS: readonly { value: TypingSituation; label: string }[] = [
+  { value: 'NATURAL', label: 'Natural' },
+  { value: 'HESITANT', label: 'Pasted, hesitant' },
+  { value: 'NOT_THEIR_RHYTHM', label: 'Not their rhythm' },
+];
+
+/**
+ * The presenter's control for what the bank app's SDK would see around the customer (docs/08 §5):
+ * a call, a shared screen, how they type. A browser cannot see these, so the presenter sets them
+ * before paying; the payment carries them as its telemetry. Hidden in "Phone only".
+ */
+function SituationControl({
+  value,
+  onChange,
+}: {
+  value: Situation;
+  onChange: (next: Situation) => void;
+}) {
+  const chip = (on: boolean) =>
+    `h-[30px] rounded-full px-3.5 text-[13px] transition-colors ${
+      on ? 'bg-raised text-ink ring-1 ring-soft' : 'text-muted hover:text-ink'
+    }`;
+  return (
+    <fieldset className="mt-6 flex flex-wrap items-center gap-x-8 gap-y-3 rounded-md bg-surface px-5 py-3.5">
+      <legend className="sr-only">Around the customer</legend>
+      <p className="text-[12px] text-muted">
+        Around the customer
+        <span className="block text-[11px]">what the bank app’s SDK reports</span>
+      </p>
+      <div role="group" aria-label="Call" className="flex flex-wrap gap-1">
+        {CALLS.map((c) => (
+          <button
+            key={c.value}
+            type="button"
+            aria-pressed={value.call === c.value}
+            className={chip(value.call === c.value)}
+            onClick={() => {
+              onChange({ ...value, call: c.value });
+            }}
+          >
+            {c.label}
+          </button>
+        ))}
+      </div>
+      <label className="flex items-center gap-2 text-[13px] text-soft">
+        <input
+          type="checkbox"
+          checked={value.screenShared}
+          onChange={(e) => {
+            onChange({ ...value, screenShared: e.target.checked });
+          }}
+          className="size-4 accent-[var(--color-accent)]"
+        />
+        Screen shared or remote access
+      </label>
+      <div role="group" aria-label="Typing" className="flex flex-wrap items-center gap-1">
+        <span className="mr-1 text-[12px] text-muted">Typing</span>
+        {TYPINGS.map((t) => (
+          <button
+            key={t.value}
+            type="button"
+            aria-pressed={value.typing === t.value}
+            className={chip(value.typing === t.value)}
+            onClick={() => {
+              onChange({ ...value, typing: t.value });
+            }}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+    </fieldset>
   );
 }

@@ -32,3 +32,10 @@ class FixedClock:
         if delta < timedelta(0):
             raise ValueError("time does not run backwards")
         self._now += delta
+
+
+class VirtualClock(FixedClock):
+    """The evaluation harness's clock (docs/22 §1, #123): moved to each event's time."""
+
+    def advance_to(self, at: datetime) -> None:
+        self.advance(at - self.now())

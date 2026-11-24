@@ -163,8 +163,11 @@ them.
 
 - **Claim:** one statement, `UPDATE … WHERE id = (SELECT … FOR UPDATE SKIP LOCKED LIMIT 1)`. It
   takes the due job with the earliest `run_after` (then `created_at`) among the types this lane
-  has handlers for. Due means QUEUED with `run_after` ≤ now, or RUNNING with an expired lease
-  and attempts left (its worker died). Claiming increments `attempts`.
+  has handlers for. Due means QUEUED with `run_after` ≤ now, or RUNNING with attempts left
+  whose lease expired at least the retry backoff ago (`30 s · 2^(attempt−1)`, as for a recorded
+  failure): its worker died, perhaps because the attempt took the database down, so it is not
+  re-claimed straight into the same crash (the 2026-11-22 incident). Claiming increments
+  `attempts`.
 - **Lease:** `locked_until = now + job_lease_s` (60 s). A background thread renews it every
   third of the lease while the handler runs, and progress reports also renew it. Every write
   after the claim is guarded by `locked_by = <worker slot> AND status = RUNNING`, so a worker
@@ -179,7 +182,7 @@ them.
   (1) fast-lane slot (SIM_TICK, CHASE_RETRACE). Each polls every `worker_poll_interval_s` (1 s)
   when idle.
 - **Shutdown:** on SIGTERM each slot finishes its current job and exits. A job cut off by
-  SIGKILL is claimed again after its lease expires.
+  SIGKILL is claimed again after its lease expires and the retry backoff has passed.
 - **Health:** the worker's `GET :9000/health` returns 200 while every loop (the slots and the
   scheduler) has beaten within `worker_heartbeat_max_age_s` (30 s), else 503 (doc 20 §3).
 
@@ -199,7 +202,7 @@ them.
 | `LLM_QUESTION_VARIANTS` | `POST /question-bank/generate` |
 | `LLM_TYPOLOGY_DESCRIPTION` | Scout run |
 | `SIM_OUTREACH_CALL` | outreach in autoplay/simulation (doc 09 §3) |
-| `DEMO_STORY` | `POST /admin/demo/scenarios/{story}/run` |
+| `DEMO_STORY` | `POST /admin/demo/scenarios/{story}/run` (needs the simulator's pool, doc 14 §10) |
 | `DEMO_RESET` | `POST /admin/demo/reset` |
 
 **Recurring jobs.** A scheduler loop in the worker enqueues these with idempotency key

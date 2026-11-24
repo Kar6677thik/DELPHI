@@ -729,6 +729,81 @@
         }
       }
     },
+    "/api/v1/admin/demo/scenarios/{story}/run": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Run Story",
+        "description": "Queue a `DEMO_STORY` job for S1 or S2 (202 with the job). Its result names the story's\ncustomer and, in `autoplay`, the payment and its WORKER session; in `interactive`, the\n`payment` to pay from the mock phone. 422 for S3 and S4 (a later release) or an unknown\nmode; 503 NOT_INITIALISED until the dataset and models are ready, while the simulation is\noff, or (interactive) while this process has no Guardian runner.",
+        "operationId": "run_story_api_v1_admin_demo_scenarios__story__run_post",
+        "parameters": [
+          {
+            "name": "story",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "enum": [
+                "S1",
+                "S2",
+                "S3",
+                "S4"
+              ],
+              "type": "string",
+              "title": "Story"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StoryRunRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobView"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An RFC 9457 problem (docs/16 §1)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/kb/versions": {
       "get": {
         "tags": [
@@ -1353,13 +1428,67 @@
         }
       }
     },
+    "/api/v1/cases/{case_id}/trace-events": {
+      "post": {
+        "tags": [
+          "cases"
+        ],
+        "summary": "Post Trace Events",
+        "description": "The console's view events, batched (docs/09 §5, FR-NAV-08): CASE_VIEWED,\nEVIDENCE_VIEWED, NARRATIVE_EXPANDED and WCMM_VIEWED. The server records the actions itself,\nso any other type is 422, as is an evidence-record event naming a record of another case;\nthe whole batch is then refused. 404 for an unknown case.",
+        "operationId": "post_trace_events_api_v1_cases__case_id__trace_events_post",
+        "parameters": [
+          {
+            "name": "case_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Case Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TraceBatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TraceBatchResult"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An RFC 9457 problem (docs/16 §1)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/cases/{case_id}/dd-pack": {
       "get": {
         "tags": [
           "cases"
         ],
         "summary": "Read Case Dd Pack",
-        "description": "The case's due-diligence pack (docs/09 §7, FR-NAV-11): JSON, or a printable HTML page.\nComputed on read, so it is authoritative over the stored ``dd_pack_complete``.",
+        "description": "The case's due-diligence pack (docs/09 §7, FR-NAV-11): JSON, or a printable HTML page.\nComputed on read, so it is authoritative over the stored ``dd_pack_complete``. Reading it\nrecords a ``DD_PACK_VIEWED`` trace event for the viewer (docs/09 §5).",
         "operationId": "read_case_dd_pack_api_v1_cases__case_id__dd_pack_get",
         "parameters": [
           {
@@ -1565,6 +1694,64 @@
             }
           }
         }
+      },
+      "post": {
+        "tags": [
+          "guardian"
+        ],
+        "summary": "Start Session",
+        "description": "The customer pressed Pay on the mock phone (docs/08 §1): the payment is created\nPENDING_GUARDIAN and its LIVE session starts. The session comes back as it stands after\nsteps 1–3 (decided already on the fast path); the rest reaches the phone over\n`/phone/stream` and the monitor over `/events/stream`. 503 NOT_INITIALISED while the\nGuardian does not run in this process, or no KB is ACTIVE.",
+        "operationId": "start_session_api_v1_guardian_sessions_post",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartSessionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GuardianSessionView"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An RFC 9457 problem (docs/16 §1)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/guardian/sessions/{session_id}": {
@@ -1649,6 +1836,196 @@
                 }
               },
               "text/html": {}
+            }
+          },
+          "default": {
+            "description": "An RFC 9457 problem (docs/16 §1)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/guardian/sessions/{session_id}/probe-responses": {
+      "post": {
+        "tags": [
+          "guardian"
+        ],
+        "summary": "Respond To Probe",
+        "description": "The phone's answer (docs/08 §4). 404 for a run that is not this session's, 409\nPROBE_NOT_AWAITING for one that no longer waits, 409 INVALID_STATE_TRANSITION past its\ndeadline or for a session the simulation drives, 400 INVALID_CLIENT_SIGNALS for\nimplausible timings, 422 for an answer the screen could not give.",
+        "operationId": "respond_to_probe_api_v1_guardian_sessions__session_id__probe_responses_post",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Session Id"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProbeResponseRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProbeResponseView"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An RFC 9457 problem (docs/16 §1)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/guardian/sessions/{session_id}/cancel": {
+      "post": {
+        "tags": [
+          "guardian"
+        ],
+        "summary": "Cancel Session",
+        "description": "The customer cancelled the payment (FR-GDN-07): the session ends CANCELLED_BY_CUSTOMER\nand the payment is CANCELLED. 409 for a finished session or one the simulation drives.",
+        "operationId": "cancel_session_api_v1_guardian_sessions__session_id__cancel_post",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GuardianSessionView"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An RFC 9457 problem (docs/16 §1)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/phone/personas": {
+      "get": {
+        "tags": [
+          "phone"
+        ],
+        "summary": "Read Personas",
+        "description": "The persona customers (docs/14 §6), by persona key; empty until a dataset with personas\nis seeded. Accounts are the customer's own at this bank; devices newest first.",
+        "operationId": "read_personas_api_v1_phone_personas_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PersonaView"
+                  },
+                  "type": "array",
+                  "title": "Response Read Personas Api V1 Phone Personas Get"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An RFC 9457 problem (docs/16 §1)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/phone/stream": {
+      "get": {
+        "tags": [
+          "phone"
+        ],
+        "summary": "Stream",
+        "description": "The customer's phone channel. 404 for an unknown customer; 503 NOT_INITIALISED while the\nGuardian does not run in this process.",
+        "operationId": "stream_api_v1_phone_stream_get",
+        "parameters": [
+          {
+            "name": "customer_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Customer Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "An SSE stream",
+            "content": {
+              "text/event-stream": {}
             }
           },
           "default": {
@@ -1809,6 +2186,25 @@
         ],
         "title": "Baselines",
         "description": "What B1 and B2 (docs/22 §2) would have done with this payment (docs/08 §6). B2's\n``OTP_STEP_UP`` releases only if the OTP passes."
+      },
+      "BiometricAnswer": {
+        "properties": {
+          "biometric": {
+            "type": "string",
+            "enum": [
+              "MATCH",
+              "NO_MATCH",
+              "CANCEL"
+            ],
+            "title": "Biometric"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "biometric"
+        ],
+        "title": "BiometricAnswer"
       },
       "CaseDetail": {
         "properties": {
@@ -2440,6 +2836,91 @@
           "status"
         ],
         "title": "CheckView"
+      },
+      "ClientSignalsIn": {
+        "properties": {
+          "shown_at_ms": {
+            "type": "integer",
+            "maximum": 9007199254740991.0,
+            "minimum": 0.0,
+            "title": "Shown At Ms"
+          },
+          "answered_at_ms": {
+            "type": "integer",
+            "maximum": 9007199254740991.0,
+            "minimum": 0.0,
+            "title": "Answered At Ms"
+          },
+          "visibility_hidden_count": {
+            "type": "integer",
+            "maximum": 10000.0,
+            "minimum": 0.0,
+            "title": "Visibility Hidden Count",
+            "default": 0
+          },
+          "paste_count": {
+            "type": "integer",
+            "maximum": 10000.0,
+            "minimum": 0.0,
+            "title": "Paste Count",
+            "default": 0
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "shown_at_ms",
+          "answered_at_ms"
+        ],
+        "title": "ClientSignalsIn"
+      },
+      "CoolingOffAnswer": {
+        "properties": {
+          "cooling_off": {
+            "$ref": "#/components/schemas/CoolingOffIn"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "cooling_off"
+        ],
+        "title": "CoolingOffAnswer"
+      },
+      "CoolingOffIn": {
+        "properties": {
+          "cancelled": {
+            "type": "boolean",
+            "title": "Cancelled"
+          },
+          "other_channel_attempts": {
+            "type": "integer",
+            "maximum": 10000.0,
+            "minimum": 0.0,
+            "title": "Other Channel Attempts",
+            "default": 0
+          },
+          "limit_increase_requests": {
+            "type": "integer",
+            "maximum": 10000.0,
+            "minimum": 0.0,
+            "title": "Limit Increase Requests",
+            "default": 0
+          },
+          "send_now_presses": {
+            "type": "integer",
+            "maximum": 10000.0,
+            "minimum": 0.0,
+            "title": "Send Now Presses",
+            "default": 0
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "cancelled"
+        ],
+        "title": "CoolingOffIn"
       },
       "CreateUser": {
         "properties": {
@@ -3858,6 +4339,126 @@
         ],
         "title": "ModelStatus"
       },
+      "NewPayeeIn": {
+        "properties": {
+          "vpa": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Vpa"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "vpa"
+        ],
+        "title": "NewPayeeIn",
+        "description": "A payee the customer typed in: the bank resolves the VPA to its account."
+      },
+      "OptionAnswer": {
+        "properties": {
+          "option_key": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Option Key"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "option_key"
+        ],
+        "title": "OptionAnswer"
+      },
+      "OtpAnswer": {
+        "properties": {
+          "otp": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Otp"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "otp"
+        ],
+        "title": "OtpAnswer"
+      },
+      "PaymentIn": {
+        "properties": {
+          "payer_account_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Payer Account Id"
+          },
+          "payee_account_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payee Account Id"
+          },
+          "new_payee": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NewPayeeIn"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "amount_paise": {
+            "type": "integer",
+            "maximum": 1000000000.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Amount Paise"
+          },
+          "channel": {
+            "type": "string",
+            "enum": [
+              "UPI_PUSH",
+              "UPI_COLLECT_APPROVAL",
+              "IMPS",
+              "NEFT"
+            ],
+            "title": "Channel"
+          },
+          "device_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Device Id"
+          },
+          "telemetry": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TelemetryIn"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "payer_account_id",
+          "amount_paise",
+          "channel",
+          "device_id"
+        ],
+        "title": "PaymentIn"
+      },
       "PaymentSummary": {
         "properties": {
           "id": {
@@ -3930,6 +4531,168 @@
         ],
         "title": "Permission",
         "description": "docs/19 §3."
+      },
+      "PersonaAccountView": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "vpa": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vpa"
+          },
+          "balance_paise": {
+            "type": "integer",
+            "title": "Balance Paise"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "vpa",
+          "balance_paise"
+        ],
+        "title": "PersonaAccountView"
+      },
+      "PersonaDeviceView": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "os": {
+            "type": "string",
+            "title": "Os"
+          },
+          "first_seen_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "First Seen At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "os",
+          "first_seen_at"
+        ],
+        "title": "PersonaDeviceView"
+      },
+      "PersonaPayeeView": {
+        "properties": {
+          "account_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Account Id"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "vpa": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vpa"
+          },
+          "added_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Added At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "account_id",
+          "label",
+          "vpa",
+          "added_at"
+        ],
+        "title": "PersonaPayeeView"
+      },
+      "PersonaView": {
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Customer Id"
+          },
+          "persona_key": {
+            "type": "string",
+            "title": "Persona Key"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "language": {
+            "type": "string",
+            "title": "Language"
+          },
+          "vulnerable": {
+            "type": "boolean",
+            "title": "Vulnerable"
+          },
+          "accounts": {
+            "items": {
+              "$ref": "#/components/schemas/PersonaAccountView"
+            },
+            "type": "array",
+            "title": "Accounts"
+          },
+          "payees": {
+            "items": {
+              "$ref": "#/components/schemas/PersonaPayeeView"
+            },
+            "type": "array",
+            "title": "Payees"
+          },
+          "devices": {
+            "items": {
+              "$ref": "#/components/schemas/PersonaDeviceView"
+            },
+            "type": "array",
+            "title": "Devices"
+          }
+        },
+        "type": "object",
+        "required": [
+          "customer_id",
+          "persona_key",
+          "name",
+          "language",
+          "vulnerable",
+          "accounts",
+          "payees",
+          "devices"
+        ],
+        "title": "PersonaView",
+        "description": "A demo customer (docs/14 §6) as the phone's picker shows them."
       },
       "PoliceAlertView": {
         "properties": {
@@ -4052,6 +4815,220 @@
           "top_features"
         ],
         "title": "PriorView"
+      },
+      "ProbeResponseRequest": {
+        "properties": {
+          "probe_run_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Probe Run Id"
+          },
+          "answer": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OptionAnswer"
+              },
+              {
+                "$ref": "#/components/schemas/OtpAnswer"
+              },
+              {
+                "$ref": "#/components/schemas/BiometricAnswer"
+              },
+              {
+                "$ref": "#/components/schemas/CoolingOffAnswer"
+              }
+            ],
+            "title": "Answer"
+          },
+          "client_signals": {
+            "$ref": "#/components/schemas/ClientSignalsIn"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "probe_run_id",
+          "answer",
+          "client_signals"
+        ],
+        "title": "ProbeResponseRequest",
+        "description": "docs/08 §4: one answer to the probe on the phone's screen."
+      },
+      "ProbeResponseView": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "payment": {
+            "$ref": "#/components/schemas/PaymentSummary"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "decision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision"
+          },
+          "terminal_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Terminal Reason"
+          },
+          "kb_version_id": {
+            "type": "integer",
+            "title": "Kb Version Id"
+          },
+          "leading_hypothesis": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Leading Hypothesis"
+          },
+          "posterior": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "number"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Posterior"
+          },
+          "unexplained": {
+            "type": "boolean",
+            "title": "Unexplained"
+          },
+          "baselines": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Baselines"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Started At"
+          },
+          "decided_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided At"
+          },
+          "case_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Case Id"
+          },
+          "dd_pack_complete": {
+            "type": "boolean",
+            "title": "Dd Pack Complete"
+          },
+          "version": {
+            "type": "integer",
+            "title": "Version"
+          },
+          "prior": {
+            "$ref": "#/components/schemas/PriorView"
+          },
+          "risk_by_decision": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Risk By Decision"
+          },
+          "probe_runs": {
+            "items": {
+              "$ref": "#/components/schemas/ProbeRunView"
+            },
+            "type": "array",
+            "title": "Probe Runs"
+          },
+          "attempts_remaining": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attempts Remaining"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "payment",
+          "status",
+          "decision",
+          "terminal_reason",
+          "kb_version_id",
+          "leading_hypothesis",
+          "posterior",
+          "unexplained",
+          "baselines",
+          "started_at",
+          "decided_at",
+          "case_id",
+          "dd_pack_complete",
+          "version",
+          "prior",
+          "risk_by_decision",
+          "probe_runs"
+        ],
+        "title": "ProbeResponseView",
+        "description": "The session after the answer. ``attempts_remaining`` is set only for a wrong OTP with\nattempts left: the run still waits (docs/08 §4 OTP protocol step 3)."
       },
       "ProbeRunView": {
         "properties": {
@@ -4389,6 +5366,20 @@
         ],
         "title": "SessionStatus"
       },
+      "StartSessionRequest": {
+        "properties": {
+          "payment": {
+            "$ref": "#/components/schemas/PaymentIn"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "payment"
+        ],
+        "title": "StartSessionRequest",
+        "description": "docs/16: `POST /guardian/sessions`."
+      },
       "StatusView": {
         "properties": {
           "dataset_ready": {
@@ -4450,6 +5441,172 @@
           "models_below_gate"
         ],
         "title": "StatusView"
+      },
+      "StoryRunRequest": {
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "interactive",
+              "autoplay"
+            ],
+            "title": "Mode"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "mode"
+        ],
+        "title": "StoryRunRequest"
+      },
+      "TelemetryIn": {
+        "properties": {
+          "typing_cadence_z": {
+            "type": "number",
+            "title": "Typing Cadence Z"
+          },
+          "paste_on_account_field": {
+            "type": "boolean",
+            "title": "Paste On Account Field"
+          },
+          "max_field_dwell_s": {
+            "type": "number",
+            "maximum": 86400.0,
+            "minimum": 0.0,
+            "title": "Max Field Dwell S"
+          },
+          "remote_access_active": {
+            "type": "boolean",
+            "title": "Remote Access Active"
+          },
+          "screen_share_active": {
+            "type": "boolean",
+            "title": "Screen Share Active"
+          },
+          "on_call": {
+            "type": "boolean",
+            "title": "On Call"
+          },
+          "call_counterparty_known": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Call Counterparty Known"
+          },
+          "session_duration_s": {
+            "type": "number",
+            "maximum": 86400.0,
+            "minimum": 0.0,
+            "title": "Session Duration S"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "typing_cadence_z",
+          "paste_on_account_field",
+          "max_field_dwell_s",
+          "remote_access_active",
+          "screen_share_active",
+          "on_call",
+          "session_duration_s"
+        ],
+        "title": "TelemetryIn",
+        "description": "The app session's signals, as the mobile SDK reports them (docs/08 §5)."
+      },
+      "TraceBatch": {
+        "properties": {
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/TraceEventIn"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Events"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "events"
+        ],
+        "title": "TraceBatch"
+      },
+      "TraceBatchResult": {
+        "properties": {
+          "recorded": {
+            "type": "integer",
+            "title": "Recorded"
+          }
+        },
+        "type": "object",
+        "required": [
+          "recorded"
+        ],
+        "title": "TraceBatchResult"
+      },
+      "TraceEventIn": {
+        "properties": {
+          "type": {
+            "$ref": "#/components/schemas/TraceType"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/TracePayload"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "type",
+          "at"
+        ],
+        "title": "TraceEventIn"
+      },
+      "TracePayload": {
+        "properties": {
+          "evidence_record_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Record Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "TracePayload",
+        "description": "What a view event may carry: the evidence record it is about, for EVIDENCE_VIEWED and\nNARRATIVE_EXPANDED. Nothing else is stored from a browser."
+      },
+      "TraceType": {
+        "type": "string",
+        "enum": [
+          "CASE_OPENED",
+          "CASE_VIEWED",
+          "EVIDENCE_REQUESTED",
+          "EVIDENCE_VIEWED",
+          "NARRATIVE_EXPANDED",
+          "WCMM_VIEWED",
+          "DISPOSITION",
+          "DD_PACK_VIEWED"
+        ],
+        "title": "TraceType"
       },
       "UpdateUser": {
         "properties": {

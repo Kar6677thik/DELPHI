@@ -21,33 +21,57 @@ from delphi.api.routers import (
     auth,
     cases,
     datasets,
+    demo,
     events,
     guardian,
     jobs,
     kb,
     metrics,
+    phone,
     platform,
     sensing,
     status,
 )
 from delphi.api.spa import install_spa
 from delphi.api.web_security import WebSecurityMiddleware
+from delphi.guardian.api import LiveGuardian
 from delphi.platform.auth_sessions import LoginThrottle
 from delphi.platform.events import EventHub
+from delphi.platform.logging import get_logger
 from delphi.platform.rate_limit import TokenBuckets
 from delphi.platform.wiring import Platform
 
+log = get_logger(__name__)
 
-def create_app(resources: Platform, *, event_hub: EventHub | None = None) -> FastAPI:
+
+def create_app(
+    resources: Platform,
+    *,
+    event_hub: EventHub | None = None,
+    guardian_runner: LiveGuardian | None = None,
+) -> FastAPI:
     """``event_hub`` is the api process's live-event fan-out (docs/04 §5.5). Without one (tests,
-    contract generation) GET /events/stream answers 503 NOT_INITIALISED."""
+    contract generation) GET /events/stream answers 503 NOT_INITIALISED.
+
+    ``guardian_runner`` is the runner slot (#98): the LIVE sessions of the mock phone, driven
+    in this process. Without it the Guardian's write endpoints and the phone stream answer 503
+    NOT_INITIALISED. Tests put one in with a fixture prior; ``delphi api`` fills it at start-up
+    (#95, ``cli.live_guardian_for``), and the lifespan resumes its interrupted sessions first.
+    The slot can also be set later, on ``app.state.guardian_runner``."""
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         task = asyncio.create_task(event_hub.run()) if event_hub is not None else None
+        live_at_start: LiveGuardian | None = _app.state.guardian_runner
+        if live_at_start is not None:  # FR-GDN-14: finish the sessions a restart interrupted
+            resumed = await live_at_start.runner.resume_all()
+            log.info("guardian.resumed", sessions=len(resumed))
         try:
             yield
         finally:
+            live: LiveGuardian | None = _app.state.guardian_runner
+            if live is not None:  # its sessions resume on the next start-up (FR-GDN-14)
+                await live.runner.shutdown()
             if task is not None:
                 task.cancel()
                 with suppress(asyncio.CancelledError):
@@ -64,6 +88,7 @@ def create_app(resources: Platform, *, event_hub: EventHub | None = None) -> Fas
     )
     app.state.platform = resources
     app.state.event_hub = event_hub
+    app.state.guardian_runner = guardian_runner
     s = resources.settings
     app.state.login_throttle = LoginThrottle(
         resources.clock, max_failures=s.login_max_failures, window=s.login_window
@@ -91,10 +116,12 @@ def create_app(resources: Platform, *, event_hub: EventHub | None = None) -> Fas
     app.include_router(jobs.router)
     app.include_router(admin.router)
     app.include_router(datasets.router)
+    app.include_router(demo.router)
     app.include_router(kb.router)
     app.include_router(sensing.router)
     app.include_router(cases.router)
     app.include_router(guardian.router)
+    app.include_router(phone.router)
     app.include_router(metrics.router)
     # Last: the SPA catch-all must not shadow any API route.
     install_spa(app, resources.settings.static_dir)

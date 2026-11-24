@@ -42,6 +42,7 @@ ACCESS: dict[tuple[str, str], str | Permission] = {
     ("PATCH", "/api/v1/admin/users/{user_id}"): Permission.ADMIN,
     ("GET", "/api/v1/admin/audit/verify"): Permission.ADMIN,
     ("POST", "/api/v1/admin/datasets"): Permission.ADMIN,
+    ("POST", "/api/v1/admin/demo/scenarios/{story}/run"): Permission.DEMO_DRIVE,
     ("POST", "/api/v1/admin/sensing/train"): Permission.ADMIN,
     ("GET", "/api/v1/kb/versions"): Permission.VIEW,
     ("GET", "/api/v1/kb/versions/{version_id}"): Permission.VIEW,
@@ -53,9 +54,15 @@ ACCESS: dict[tuple[str, str], str | Permission] = {
     ("POST", "/api/v1/cases/{case_id}/disposition"): Permission.CASE_WRITE,
     ("POST", "/api/v1/cases/{case_id}/evidence-requests"): Permission.CASE_WRITE,
     ("POST", "/api/v1/cases/{case_id}/police-alert/{action}"): Permission.CASE_WRITE,
+    ("POST", "/api/v1/cases/{case_id}/trace-events"): Permission.VIEW,
     ("GET", "/api/v1/guardian/sessions"): Permission.VIEW,
     ("GET", "/api/v1/guardian/sessions/{session_id}"): Permission.VIEW,
     ("GET", "/api/v1/guardian/sessions/{session_id}/dd-pack"): Permission.VIEW,
+    ("POST", "/api/v1/guardian/sessions"): Permission.DEMO_DRIVE,
+    ("POST", "/api/v1/guardian/sessions/{session_id}/probe-responses"): Permission.DEMO_DRIVE,
+    ("POST", "/api/v1/guardian/sessions/{session_id}/cancel"): Permission.DEMO_DRIVE,
+    ("GET", "/api/v1/phone/personas"): Permission.DEMO_DRIVE,
+    ("GET", "/api/v1/phone/stream"): Permission.DEMO_DRIVE,
 }
 PASSWORD = "correct horse battery"
 BROWSER = {"X-Delphi-Csrf": "1", "Origin": "https://testserver"}
@@ -134,6 +141,7 @@ def test_access(
         .replace("{case_id}", str(uuid4()))
         .replace("{action}", "send")
         .replace("{session_id}", str(uuid4()))
+        .replace("{story}", "S1")
     )
     if (method, path) in {("POST", "/api/v1/auth/logout")}:
         # Signing out would end this module's shared session; check access with a probe
