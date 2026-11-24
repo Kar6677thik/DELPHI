@@ -223,7 +223,10 @@ def approve(
         )
         return HTTPStatus.OK, _view(session, operation_id).model_dump(mode="json")
 
-    return run_idempotent(request, raw, principal, key, run)
+    reply = run_idempotent(request, raw, principal, key, run)
+    if reply.status_code == HTTPStatus.OK:
+        reply.headers["ETag"] = f'"{json.loads(bytes(reply.body))["version"]}"'
+    return reply
 
 
 class ReleaseLien(BaseModel):
@@ -252,7 +255,10 @@ def release(
         )
         return HTTPStatus.OK, _view(session, operation_id).model_dump(mode="json")
 
-    return run_idempotent(request, raw, principal, key, run)
+    reply = run_idempotent(request, raw, principal, key, run)
+    if reply.status_code == HTTPStatus.OK:
+        reply.headers["ETag"] = f'"{json.loads(bytes(reply.body))["version"]}"'
+    return reply
 
 
 @router.post("/chase/operations/{operation_id}/close", response_model=ChaseView)
@@ -271,4 +277,7 @@ def close(
         close_operation(session, platform.clock, operation_id, by=principal.user_id)
         return HTTPStatus.OK, _view(session, operation_id).model_dump(mode="json")
 
-    return run_idempotent(request, raw, principal, key, run)
+    reply = run_idempotent(request, raw, principal, key, run)
+    if reply.status_code == HTTPStatus.OK:
+        reply.headers["ETag"] = f'"{json.loads(bytes(reply.body))["version"]}"'
+    return reply

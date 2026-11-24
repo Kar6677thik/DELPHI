@@ -173,3 +173,43 @@ def test_tickets_expire_with_no_seeded_dataset_a_capped_batch_at_a_time(
     assert job(ctx)["expired"] == 1
     assert job(ctx)["expired"] == 0
     assert _lien(client, first["id"])["status"] == "FAILED_NO_RESPONSE"
+
+
+def test_an_acknowledged_lien_leaves_room_for_the_accounts_other_liens(
+    env: Env,  # noqa: F811
+    writer: tuple[TestClient, Principal],  # noqa: F811
+) -> None:
+    """FR-CHS-05 at acknowledgement (#250 review). Ticket A is sent for ₹40,000; new money
+    (₹20,000) reaches the mule and ticket B is sent for it; then the mule moves ₹30,000 out.
+    Settled, A and B together hold at most the ₹30,000 left: A gets what B leaves."""
+    client, _ = writer
+    mule = _account(env, "XBK1", 0)
+    sink = _account(env, "XBK2", 0)
+    first = _pay(env, _account(env, "DLPH", 100_000, customer=True), mule, 40_000, minutes=50)
+    statuses = []
+    for n in range(2):
+        source = (
+            first
+            if n == 0
+            else _pay(env, _account(env, "DLPH", 100_000, customer=True), mule, 20_000, minutes=45)
+        )
+        op = _post(client, "/chase/operations", {"payment_ids": [str(source)]}).json()
+        [candidate] = [c for c in op["candidates"] if c["account_id"] == str(mule)]
+        view = _post(
+            client, f"/chase/operations/{op['id']}/liens", {"candidate_ids": [candidate["id"]]}
+        ).json()
+        [lien] = view["liens"]
+        statuses.append((lien["status"], lien["amount_paise"]))
+    assert statuses == [("TICKET_SENT", 40_000 * INR), ("TICKET_SENT", 20_000 * INR)]
+    _pay(env, mule, sink, 30_000, minutes=40)  # ₹30,000 left
+    env.clock.advance(ACK_AFTER)
+    assert _settle(env, ACK_AFTER) == {"acknowledged": 2, "expired": 0}
+    with env.owner.connect() as conn:
+        held = conn.execute(
+            text(
+                "SELECT coalesce(sum(amount_paise), 0) FROM delphi.liens"
+                " WHERE account_id = :a AND status = 'PLACED'"
+            ),
+            {"a": mule},
+        ).scalar_one()
+    assert held == 30_000 * INR
