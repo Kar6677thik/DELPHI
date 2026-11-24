@@ -3,9 +3,12 @@ excluded, the 7-day window, and ids that survive recomputes and merges."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from itertools import count
 from uuid import UUID
+
+import pytest
 
 from delphi.navigator.campaigns import CaseFacts, assign_ids, groups
 
@@ -25,7 +28,7 @@ def _case(
     )
 
 
-def _ids() -> object:
+def _ids() -> Callable[[], UUID]:
     numbers = count(5000)
     return lambda: UUID(int=next(numbers))
 
@@ -87,3 +90,77 @@ def test_ids_are_stable_and_the_oldest_survives_a_merge() -> None:
     assert set(m.campaign_of.values()) == {UUID(int=1001)}
     assert m.merged_into == {UUID(int=1002): UUID(int=1001)}
     assert m.dissolved == frozenset()
+
+
+def test_a_large_bucket_links_by_neighbours_only() -> None:
+    """A busy entity: 5,000 same-hypothesis cases on one /24, an hour apart. Joining only
+    time-adjacent neighbours gives one campaign, as joining every pair would."""
+    cases = [_case(n, "ATO", "ip24:10.0.0", day=n / 24) for n in range(1, 5001)]
+    [group] = groups(cases, window_days=WINDOW)
+    assert len(group) == 5000
+    gap = [_case(1, "ATO", "ip24:10.0.0", day=0), _case(2, "ATO", "ip24:10.0.0", day=7.5)]
+    assert groups(gap, window_days=WINDOW) == []  # neighbours more than 7 days apart
+
+
+def test_a_split_keeps_the_id_for_one_group_and_numbers_the_other() -> None:
+    """Two cases leave the link that held the campaign together (the bridge case's entity
+    changed): one group keeps the id, the other gets a new one. Which group keeps it is the
+    owner's to decide (asked on #259); this pins the current rule, the group sorted first."""
+    stored = [
+        _case(1, "ATO", "device:F", campaign=1),
+        _case(2, "ATO", "device:F", campaign=1),
+        _case(3, "ATO", "account:Y", campaign=1),
+        _case(4, "ATO", "account:Y", campaign=1),
+    ]
+    created = {UUID(int=1001): T0}
+    a = assign_ids(stored, groups(stored, window_days=WINDOW), created_at=created, new_id=_ids())
+    assert a.campaign_of[UUID(int=1)] == a.campaign_of[UUID(int=2)] == UUID(int=1001)
+    [new] = a.new_campaigns
+    assert a.campaign_of[UUID(int=3)] == a.campaign_of[UUID(int=4)] == new
+    assert a.dissolved == frozenset() and a.unassigned == frozenset()
+
+
+def test_a_campaign_left_with_no_group_is_dissolved_and_its_cases_unassigned() -> None:
+    stored = [_case(1, "ATO", "device:F", campaign=1), _case(2, "ATO", "device:G", campaign=1)]
+    a = assign_ids(
+        stored,
+        groups(stored, window_days=WINDOW),
+        created_at={UUID(int=1001): T0},
+        new_id=_ids(),
+    )
+    assert a.campaign_of == {} and a.dissolved == frozenset({UUID(int=1001)})
+    assert a.unassigned == frozenset({UUID(int=1), UUID(int=2)})
+
+
+def test_a_three_way_merge_keeps_the_oldest() -> None:
+    cases = [
+        _case(1, "MULE", "account:A", campaign=1),
+        _case(2, "MULE", "account:B", campaign=2),
+        _case(3, "MULE", "account:C", campaign=3),
+        _case(4, "MULE", "account:A", "account:B", "account:C"),
+    ]
+    created = {
+        UUID(int=1001): T0 + timedelta(hours=2),
+        UUID(int=1002): T0,  # the oldest
+        UUID(int=1003): T0 + timedelta(hours=1),
+    }
+    a = assign_ids(cases, groups(cases, window_days=WINDOW), created_at=created, new_id=_ids())
+    assert set(a.campaign_of.values()) == {UUID(int=1002)}
+    assert a.merged_into == {UUID(int=1001): UUID(int=1002), UUID(int=1003): UUID(int=1002)}
+
+
+def test_equal_creation_times_keep_the_smaller_id() -> None:
+    cases = [
+        _case(1, "ATO", "device:F", campaign=7),
+        _case(2, "ATO", "device:F", campaign=3),
+    ]
+    created = {UUID(int=1007): T0, UUID(int=1003): T0}
+    a = assign_ids(cases, groups(cases, window_days=WINDOW), created_at=created, new_id=_ids())
+    assert set(a.campaign_of.values()) == {UUID(int=1003)}
+    assert a.merged_into == {UUID(int=1007): UUID(int=1003)}
+
+
+def test_a_campaign_the_caller_did_not_load_is_a_clear_error() -> None:
+    cases = [_case(1, "ATO", "device:F", campaign=1), _case(2, "ATO", "device:F")]
+    with pytest.raises(ValueError, match="no time for campaign"):
+        assign_ids(cases, groups(cases, window_days=WINDOW), created_at={}, new_id=_ids())

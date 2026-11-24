@@ -106,7 +106,10 @@ disposition and every new case.
   vulnerability_weight (count of vulnerable victims), rank_score =
   expected_loss_paise × (1 + 0.5 · vulnerable_victim_share).
 - Campaign ids are stable. When campaigns merge, the oldest id survives and the other is marked
-  `merged_into`.
+  `merged_into`. Equal creation times keep the smaller id.
+- A campaign whose cases no longer link to one another is **dissolved**: no group keeps its id,
+  and its cases leave every campaign (`cases.campaign_id` is cleared). Which group keeps the id
+  when a campaign **splits** is the owner's to decide (asked on #259).
 
 ## 6. Chase operation (aggregate root: `ChaseOperation`)
 

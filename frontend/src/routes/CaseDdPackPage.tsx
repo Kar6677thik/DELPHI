@@ -35,14 +35,14 @@ export function Value({ value }: { value: unknown }) {
   }
   if (isRecord(value)) {
     return (
-      <table className="text-left text-sm">
+      <table className="text-left text-[13px]">
         <tbody>
           {Object.entries(value).map(([key, item]) => (
-            <tr key={key} className="border-b border-slate-100 align-top">
-              <th scope="row" className="py-1 pr-4 font-normal text-slate-600">
+            <tr key={key} className="border-b border-line align-top last:border-0">
+              <th scope="row" className="py-1.5 pr-6 font-normal text-muted">
                 {humanise(key)}
               </th>
-              <td className="py-1">
+              <td className="py-1.5 text-soft">
                 <Value value={item} />
               </td>
             </tr>
@@ -61,18 +61,23 @@ function Section({ section }: { section: DdPackSection }) {
   const titleId = `dd-section-${String(section.number)}`;
   const empty = section.required && (section.content === null || section.content === undefined);
   return (
-    <section aria-labelledby={titleId} className="break-inside-avoid">
-      <h2 id={titleId} className="text-lg font-semibold">
-        {section.number}. {section.title}
-        <span className="ml-2 text-xs font-normal text-slate-600">
+    <section
+      aria-labelledby={titleId}
+      className="break-inside-avoid rounded-md bg-surface p-8 print:bg-transparent print:p-0"
+    >
+      <h2 id={titleId} className="flex flex-wrap items-baseline gap-x-3 text-[18px] text-ink">
+        <span>
+          <span className="figure text-muted">{section.number}.</span> {section.title}
+        </span>
+        <span className={`text-[12px] ${empty ? 'text-negative' : 'text-muted'}`}>
           {section.required ? 'Required' : 'Optional'}
           {empty && ' · missing'}
         </span>
       </h2>
-      {section.note && <p className="mt-1 text-sm italic text-slate-600">{section.note}</p>}
-      <div className="mt-2 text-sm">
+      {section.note && <p className="mt-1 text-[13px] text-muted">{section.note}</p>}
+      <div className="mt-4 text-[14px] text-soft">
         {section.content === NOT_APPLICABLE ? (
-          <span className="text-slate-600">{NOT_APPLICABLE}</span>
+          <span className="text-muted">{NOT_APPLICABLE}</span>
         ) : (
           <Value value={section.content} />
         )}
@@ -85,38 +90,46 @@ export function CaseDdPackPage() {
   const { id = '' } = useParams();
   const pack = useCaseDdPack(id);
   return (
-    <section aria-labelledby="ddpack-title" className="print:text-black">
-      <p className="text-sm print:hidden">
-        <Link to={`/cases/${id}`} className="underline">
-          Back to the case
-        </Link>
+    <section aria-labelledby="ddpack-title" className="max-w-[1040px] print:text-black">
+      <p className="text-[13px] text-muted print:hidden">
+        <Link to="/cases" className="transition-colors hover:text-ink">
+          Case queue
+        </Link>{' '}
+        /{' '}
+        <Link to={`/cases/${id}`} className="transition-colors hover:text-ink">
+          Case
+        </Link>{' '}
+        /
       </p>
-      <h1 id="ddpack-title" className="mt-1 text-2xl font-semibold">
+      <h1 id="ddpack-title" className="mt-1 text-[26px] font-semibold tracking-tight">
         Due-diligence pack
       </h1>
-      {pack.isPending && <p className="mt-4 text-slate-600">Loading the pack…</p>}
+      {pack.isPending && <p className="mt-4 text-[14px] text-muted">Loading the pack…</p>}
       {pack.isError && (
         <div className="mt-4">
           <ProblemAlert error={pack.error} title="Could not load the DD pack" />
         </div>
       )}
       {pack.isSuccess && (
-        <div className="mt-4 space-y-6">
-          <div className="flex flex-wrap items-center gap-3 text-sm">
-            <p role="status" className="font-medium">
-              Case {pack.data.caseId} · {pack.data.complete ? 'Complete' : 'Incomplete'}
+        <div className="mt-1 space-y-6">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-[14px]">
+            <p role="status" className="text-muted">
+              Case <span className="figure text-soft">{pack.data.caseId}</span> ·{' '}
+              <span className={pack.data.complete ? 'text-positive' : 'text-warning'}>
+                {pack.data.complete ? 'Complete' : 'Incomplete'}
+              </span>
             </p>
             <button
               type="button"
               onClick={() => {
                 window.print();
               }}
-              className="rounded-full bg-ink px-3 py-1 font-semibold text-ground hover:bg-soft print:hidden"
+              className="ml-auto rounded-full bg-ink px-4 py-1.5 text-[13px] font-semibold text-ground transition-colors hover:bg-soft print:hidden"
             >
               Print or save as PDF
             </button>
             <a
-              className="underline print:hidden"
+              className="text-[13px] text-soft underline decoration-control underline-offset-4 transition-colors hover:text-ink print:hidden"
               href={`${API_BASE}/cases/${encodeURIComponent(id)}/dd-pack?format=html`}
               target="_blank"
               rel="noreferrer"

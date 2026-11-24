@@ -120,6 +120,60 @@ export interface PaymentDraft {
   device_id: string;
 }
 
+/**
+ * What is happening around the customer while they pay, which the bank app's SDK would report
+ * (docs/08 §5). A browser cannot see the phone's call or screen, so the presenter sets it. Each
+ * preset sits clearly on one side of the KB's classifier thresholds (`kb/engine.yaml`
+ * `classifiers`: a field dwell over 20 s or a paste is HESITANT_OR_PASTED, a typing-cadence z
+ * over 3.0 is CADENCE_MISMATCH).
+ */
+export type CallSituation = 'NONE' | 'UNKNOWN_NUMBER' | 'CONTACT';
+export type TypingSituation = 'NATURAL' | 'HESITANT' | 'NOT_THEIR_RHYTHM';
+
+export interface Situation {
+  call: CallSituation;
+  /** Screen sharing or a remote-access app is running. */
+  screenShared: boolean;
+  typing: TypingSituation;
+}
+
+export const CALM: Situation = { call: 'NONE', screenShared: false, typing: 'NATURAL' };
+
+const TYPING: Readonly<
+  Record<TypingSituation, { typing_cadence_z: number; paste: boolean; dwell_s: number }>
+> = {
+  NATURAL: { typing_cadence_z: 0.4, paste: false, dwell_s: 6 },
+  // Pasted the payee's details, and lingered on a field (an instruction being read out).
+  HESITANT: { typing_cadence_z: 0.8, paste: true, dwell_s: 34 },
+  // Someone else's rhythm: dictated, or typed by another person.
+  NOT_THEIR_RHYTHM: { typing_cadence_z: 4.1, paste: false, dwell_s: 9 },
+};
+
+/** The API's bound on an app session's durations (`MAX_SESSION_S`, 24 h; docs/16). */
+export const MAX_SESSION_S = 24 * 60 * 60;
+
+/**
+ * The telemetry sent with the payment, for a situation and the time spent in the app. The
+ * session lasts at least as long as its longest field dwell, and at most the API's bound, so a
+ * form left open overnight is not refused.
+ */
+export function telemetryFor(situation: Situation, sessionSeconds: number): Schemas['TelemetryIn'] {
+  const typing = TYPING[situation.typing];
+  return {
+    typing_cadence_z: typing.typing_cadence_z,
+    paste_on_account_field: typing.paste,
+    max_field_dwell_s: typing.dwell_s,
+    remote_access_active: situation.screenShared,
+    screen_share_active: situation.screenShared,
+    on_call: situation.call !== 'NONE',
+    call_counterparty_known: situation.call === 'NONE' ? null : situation.call === 'CONTACT',
+    session_duration_s: Math.min(
+      MAX_SESSION_S,
+      Math.max(typing.dwell_s, Math.round(sessionSeconds)),
+    ),
+  };
+}
+
 export const PHONE_QUERY_KEY = ['phone'] as const;
 
 export function usePersonas() {
@@ -146,10 +200,10 @@ async function postForJson<T>(path: string, body: unknown): Promise<T> {
 /** Pay: `POST /guardian/sessions` starts the Guardian on the payment (docs/16). */
 export function useStartPayment() {
   return useMutation({
-    mutationFn: (payment: PaymentDraft) => {
-      // No telemetry yet: a browser cannot see the phone's call state, so the telemetry probes
-      // record ERROR and do not update (docs/08 §2 step 4).
-      const body: Schemas['StartSessionRequest'] = { payment };
+    mutationFn: (args: { payment: PaymentDraft; telemetry: Schemas['TelemetryIn'] }) => {
+      const body: Schemas['StartSessionRequest'] = {
+        payment: { ...args.payment, telemetry: args.telemetry },
+      };
       return postForJson<GuardianSessionView>('/guardian/sessions', body);
     },
   });
