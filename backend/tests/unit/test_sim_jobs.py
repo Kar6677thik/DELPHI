@@ -9,6 +9,8 @@ import pytest
 from sqlalchemy import create_engine
 
 from delphi.cli import worker_registry
+from delphi.guardian.api import WorkerGuardian
+from delphi.guardian.store import Runner
 from delphi.kb.loader import load_and_validate
 from delphi.kb.model import KnowledgeBase
 from delphi.platform.clock import SystemClock
@@ -17,6 +19,7 @@ from delphi.platform.jobs import JobType
 from delphi.platform.settings import Settings, SettingsError
 from delphi.platform.wiring import Platform
 from delphi.probes.registry import CLASSIFIER_NAMES
+from delphi.sensing.api import SensingInference
 from delphi.sim.generator_config import load_generator_config
 from delphi.sim.jobs import DatasetParams
 
@@ -42,18 +45,25 @@ def _platform(**settings: Any) -> Platform:
 
 
 def test_the_worker_registers_generate_dataset_only_with_its_sim_pool() -> None:
-    registry, sim = worker_registry(_platform())
-    assert sim is None and JobType.GENERATE_DATASET not in registry.handlers
-    assert JobType.TRAIN_SENSING in registry.handlers  # sensing needs no sim pool (#88)
-    registry, sim = worker_registry(
+    parts = worker_registry(_platform())
+    assert parts.sim_engine is None and JobType.GENERATE_DATASET not in parts.registry.handlers
+    assert JobType.TRAIN_SENSING in parts.registry.handlers  # sensing needs no sim pool (#88)
+    assert parts.guardian is None and JobType.DEMO_STORY not in parts.registry.handlers
+    parts.close()
+    parts = worker_registry(
         _platform(sim_database_url=URL.replace("app", "sim")), kb_source=lambda _: _repo_kb()
     )
     try:
-        assert JobType.GENERATE_DATASET in registry.handlers
-        assert JobType.RETENTION_SWEEP in registry.handlers  # the platform's are kept
+        assert JobType.GENERATE_DATASET in parts.registry.handlers
+        assert JobType.RETENTION_SWEEP in parts.registry.handlers  # the platform's are kept
+        # the WORKER Guardian runner, with the sensing prior, and the story runner (#95, #101)
+        assert isinstance(parts.guardian, WorkerGuardian)
+        assert isinstance(parts.guardian.runner._service._prior, SensingInference)
+        assert parts.guardian.runner._runner is Runner.WORKER
+        assert JobType.DEMO_STORY in parts.registry.handlers
     finally:
-        assert sim is not None
-        sim.dispose()
+        assert parts.sim_engine is not None
+        parts.close()  # never started: closing is still safe
 
 
 def test_a_worker_that_should_simulate_needs_the_sim_pool() -> None:

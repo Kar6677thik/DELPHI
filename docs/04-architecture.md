@@ -202,7 +202,7 @@ them.
 | `LLM_QUESTION_VARIANTS` | `POST /question-bank/generate` |
 | `LLM_TYPOLOGY_DESCRIPTION` | Scout run |
 | `SIM_OUTREACH_CALL` | outreach in autoplay/simulation (doc 09 §3) |
-| `DEMO_STORY` | `POST /admin/demo/scenarios/{story}/run` |
+| `DEMO_STORY` | `POST /admin/demo/scenarios/{story}/run` (needs the simulator's pool, doc 14 §10) |
 | `DEMO_RESET` | `POST /admin/demo/reset` |
 
 **Recurring jobs.** A scheduler loop in the worker enqueues these with idempotency key

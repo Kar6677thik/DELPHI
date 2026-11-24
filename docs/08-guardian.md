@@ -78,8 +78,18 @@ inference (`SensingInference`, #92), the passive probes use the simulated adapte
 `passive_statement_margin_ms`, and the passive pool has `passive_probe_threads` threads. The
 app's lifespan runs `resume_all` before it serves the first request (FR-GDN-14), and its
 shutdown stops the slot's tasks. Time runs REAL until `DELPHI_TIME_MODE` (doc 07) is a setting.
-The worker's own runner, which drives AUTOPLAY sessions with simulated customers, comes with the
-autoplay traffic (#101).
+**The worker's runner slot** (`delphi.guardian.autoplay.WorkerGuardian`, #95, #101) drives the
+AUTOPLAY sessions that simulated customers answer. It exists only in a worker with the simulator's
+`delphi_sim` pool (`DELPHI_SIM_DATABASE_URL`), because the simulated customer reads ground truth.
+`delphi worker` builds it in `cli.worker_registry` from the same service as the api's (the sensing
+prior and the simulated passive adapters), with a WORKER `SessionRunner` whose channel is
+`SimCustomerChannel` over `delphi.sim.customer.LiveCustomer`: a `SimulatedCustomer` that takes its
+seed and history start from the dataset in the bank when it answers, since the worker starts
+before the first seed. The runner has an event loop on its own thread; jobs (the worker's slots
+are threads) submit to it with `submit`, which returns the payment's existing session if it has
+one, so a retried job never starts a second. The worker runs `resume_all` before its job slots
+start (FR-GDN-14) and stops the tasks when asked to stop. The first user is `DEMO_STORY` (doc 14
+§10); the background autoplay traffic (`SIM_TICK`, doc 14 §8) follows.
 
 **Implementation** (`delphi.guardian.service.GuardianService`, #94). One method per step, each in
 its own transaction:
