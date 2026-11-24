@@ -4,11 +4,18 @@ unless the whole balance is taint."""
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from typing import cast
+
+import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
+from sqlalchemy.orm import Session
 
+from delphi.chase import operations
 from delphi.chase.operations import lien_amount
 from delphi.chase.tracer import SourcePayment, trace
+from delphi.kb.model import KnowledgeBase
 
 from .test_chase_tracer import CASH, MIN, Bank
 
@@ -54,3 +61,16 @@ def test_the_floor_and_the_edges() -> None:
     assert lien_amount(0, 1_000) == 0
     assert lien_amount(700, 500) == 500
     assert lien_amount(300, 500) == 300
+
+
+def test_the_visibility_lag_follows_the_dataset_profile(
+    monkeypatch: pytest.MonkeyPatch, kb: KnowledgeBase
+) -> None:
+    lags = kb.config.chase.visibility_lag_min
+    for profile, lag in (("eval", lags.eval), ("demo", lags.demo), ("test", lags.demo)):
+        monkeypatch.setattr(
+            operations.bank, "current_dataset", lambda _s, p=profile: SimpleNamespace(profile=p)
+        )
+        assert operations.visibility_lag(cast(Session, None), kb) == lag
+    monkeypatch.setattr(operations.bank, "current_dataset", lambda _s: None)
+    assert operations.visibility_lag(cast(Session, None), kb) == lags.demo

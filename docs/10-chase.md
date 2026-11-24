@@ -137,7 +137,7 @@ stable. The 30 days, the 80% and the 3-credit minimum are the definition above, 
 
 **Implementation (#113 PR 1).**
 - **Operations** (`delphi.chase.operations`): `POST /chase/operations` traces and stores
-  `chase_operations` and `chase_candidates` (migration 0015).
+  `chase_operations` and `chase_candidates` (migration 0016).
 - **Candidates** come through a `CandidateSource`. The default is the tracer's accounts above
   `min_trace_inr`, unscored; #112's scoring plugs in there and fills the score columns.
 - **Approval:** `POST /chase/operations/{id}/liens` re-traces as of now. Each approved candidate's
@@ -145,14 +145,19 @@ stable. The 30 days, the 80% and the 3-credit minimum are the definition above, 
   - An internal account's lien is PLACED, with `review_due_at`, or FAILED_FUNDS_MOVED at 0.
   - An external account's lien waits as TICKET_SENT, with its ticket SENT_SIMULATED.
 - **Tickets** (`delphi.chase.tickets`, #113 PR 2): `CHASE_RETRACE` (every 20 s, the docs/04
-  floor) settles every SENT_SIMULATED ticket.
+  floor) settles the SENT_SIMULATED tickets, oldest sent first, at most
+  `DELPHI_CHASE_TICKETS_PER_RUN` (200) per run (bounded after #263); the next run carries on.
   - **Acknowledged** after the simulator's CFCFRMS latency (doc 14 §9,
     `sim.external.cfcfrms_ack_delay`, seeded by the bank's dataset). The lien is then PLACED for
     min(approved amount, balance now), or FAILED_FUNDS_MOVED at 0.
-  - **Expired** after `ticket_expiry_min`: the lien is FAILED_NO_RESPONSE.
+  - **Expired** after `ticket_expiry_min`: the lien is FAILED_NO_RESPONSE. Expiry needs no
+    simulator, so tickets also expire while no dataset is seeded (none is then acknowledged).
 - **Closing:** the same job closes OPEN operations past their golden hour with no pending ticket.
   `POST …/close` closes one by hand, and `POST …/liens/{id}/release` releases a PLACED lien with a
-  reason.
+  reason (`ChaseView` shows `released_at` and `release_reason`).
+- **A ticket settles after a manual close too.** This is intended: the external bank acts on the
+  request it was sent, whatever happens to the operation afterwards. A lien it places stays
+  under periodic review and is released with the release endpoint.
 - **Time:** all latencies run in real time until the DEMO time mode is wired.
 - **Re-trace and live movement (#114):**
   - `CHASE_RETRACE` re-traces each OPEN operation once `retrace_interval_min` has passed since its

@@ -82,6 +82,8 @@ class LienView(BaseModel):
     approved_at: datetime
     placed_at: datetime | None
     review_due_at: datetime | None
+    released_at: datetime | None
+    release_reason: str | None
 
 
 class TicketView(BaseModel):

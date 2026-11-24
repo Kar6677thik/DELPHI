@@ -459,6 +459,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/cases/{case_id}/trace-events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Trace Events
+         * @description The console's view events, batched (docs/09 §5, FR-NAV-08): CASE_VIEWED,
+         *     EVIDENCE_VIEWED, NARRATIVE_EXPANDED and WCMM_VIEWED. The server records the actions itself,
+         *     so any other type is 422, as is an evidence-record event naming a record of another case;
+         *     the whole batch is then refused. 404 for an unknown case.
+         */
+        post: operations["post_trace_events_api_v1_cases__case_id__trace_events_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/cases/{case_id}/dd-pack": {
         parameters: {
             query?: never;
@@ -469,7 +492,8 @@ export interface paths {
         /**
          * Read Case Dd Pack
          * @description The case's due-diligence pack (docs/09 §7, FR-NAV-11): JSON, or a printable HTML page.
-         *     Computed on read, so it is authoritative over the stored ``dd_pack_complete``.
+         *     Computed on read, so it is authoritative over the stored ``dd_pack_complete``. Reading it
+         *     records a ``DD_PACK_VIEWED`` trace event for the viewer (docs/09 §5).
          */
         get: operations["read_case_dd_pack_api_v1_cases__case_id__dd_pack_get"];
         put?: never;
@@ -593,7 +617,15 @@ export interface paths {
          */
         get: operations["read_sessions_api_v1_guardian_sessions_get"];
         put?: never;
-        post?: never;
+        /**
+         * Start Session
+         * @description The customer pressed Pay on the mock phone (docs/08 §1): the payment is created
+         *     PENDING_GUARDIAN and its LIVE session starts. The session comes back as it stands after
+         *     steps 1–3 (decided already on the fast path); the rest reaches the phone over
+         *     `/phone/stream` and the monitor over `/events/stream`. 503 NOT_INITIALISED while the
+         *     Guardian does not run in this process, or no KB is ACTIVE.
+         */
+        post: operations["start_session_api_v1_guardian_sessions_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -629,6 +661,92 @@ export interface paths {
          * @description The session's due-diligence pack (docs/09 §7): JSON, or a printable HTML page.
          */
         get: operations["read_dd_pack_api_v1_guardian_sessions__session_id__dd_pack_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/guardian/sessions/{session_id}/probe-responses": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Respond To Probe
+         * @description The phone's answer (docs/08 §4). 404 for a run that is not this session's, 409
+         *     PROBE_NOT_AWAITING for one that no longer waits, 409 INVALID_STATE_TRANSITION past its
+         *     deadline or for a session the simulation drives, 400 INVALID_CLIENT_SIGNALS for
+         *     implausible timings, 422 for an answer the screen could not give.
+         */
+        post: operations["respond_to_probe_api_v1_guardian_sessions__session_id__probe_responses_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/guardian/sessions/{session_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel Session
+         * @description The customer cancelled the payment (FR-GDN-07): the session ends CANCELLED_BY_CUSTOMER
+         *     and the payment is CANCELLED. 409 for a finished session or one the simulation drives.
+         */
+        post: operations["cancel_session_api_v1_guardian_sessions__session_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/phone/personas": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Personas
+         * @description The persona customers (docs/14 §6), by persona key; empty until a dataset with personas
+         *     is seeded. Accounts are the customer's own at this bank; devices newest first.
+         */
+        get: operations["read_personas_api_v1_phone_personas_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/phone/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Stream
+         * @description The customer's phone channel. 404 for an unknown customer; 503 NOT_INITIALISED while the
+         *     Guardian does not run in this process.
+         */
+        get: operations["stream_api_v1_phone_stream_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -707,6 +825,14 @@ export interface components {
             B1: string;
             /** B2 */
             B2: string;
+        };
+        /** BiometricAnswer */
+        BiometricAnswer: {
+            /**
+             * Biometric
+             * @enum {string}
+             */
+            biometric: "MATCH" | "NO_MATCH" | "CANCEL";
         };
         /** CandidateView */
         CandidateView: {
@@ -996,6 +1122,47 @@ export interface components {
             status: components["schemas"]["CheckStatus"];
             /** Detail */
             detail?: string | null;
+        };
+        /** ClientSignalsIn */
+        ClientSignalsIn: {
+            /** Shown At Ms */
+            shown_at_ms: number;
+            /** Answered At Ms */
+            answered_at_ms: number;
+            /**
+             * Visibility Hidden Count
+             * @default 0
+             */
+            visibility_hidden_count: number;
+            /**
+             * Paste Count
+             * @default 0
+             */
+            paste_count: number;
+        };
+        /** CoolingOffAnswer */
+        CoolingOffAnswer: {
+            cooling_off: components["schemas"]["CoolingOffIn"];
+        };
+        /** CoolingOffIn */
+        CoolingOffIn: {
+            /** Cancelled */
+            cancelled: boolean;
+            /**
+             * Other Channel Attempts
+             * @default 0
+             */
+            other_channel_attempts: number;
+            /**
+             * Limit Increase Requests
+             * @default 0
+             */
+            limit_increase_requests: number;
+            /**
+             * Send Now Presses
+             * @default 0
+             */
+            send_now_presses: number;
         };
         /** CreateUser */
         CreateUser: {
@@ -1461,6 +1628,10 @@ export interface components {
             placed_at: string | null;
             /** Review Due At */
             review_due_at: string | null;
+            /** Released At */
+            released_at: string | null;
+            /** Release Reason */
+            release_reason: string | null;
         };
         /** LoginRequest */
         LoginRequest: {
@@ -1506,6 +1677,48 @@ export interface components {
             /** Gate Passed */
             gate_passed: boolean;
         };
+        /**
+         * NewPayeeIn
+         * @description A payee the customer typed in: the bank resolves the VPA to its account.
+         */
+        NewPayeeIn: {
+            /** Vpa */
+            vpa: string;
+        };
+        /** OptionAnswer */
+        OptionAnswer: {
+            /** Option Key */
+            option_key: string;
+        };
+        /** OtpAnswer */
+        OtpAnswer: {
+            /** Otp */
+            otp: string;
+        };
+        /** PaymentIn */
+        PaymentIn: {
+            /**
+             * Payer Account Id
+             * Format: uuid
+             */
+            payer_account_id: string;
+            /** Payee Account Id */
+            payee_account_id?: string | null;
+            new_payee?: components["schemas"]["NewPayeeIn"] | null;
+            /** Amount Paise */
+            amount_paise: number;
+            /**
+             * Channel
+             * @enum {string}
+             */
+            channel: "UPI_PUSH" | "UPI_COLLECT_APPROVAL" | "IMPS" | "NEFT";
+            /**
+             * Device Id
+             * Format: uuid
+             */
+            device_id: string;
+            telemetry?: components["schemas"]["TelemetryIn"] | null;
+        };
         /** PaymentSummary */
         PaymentSummary: {
             /**
@@ -1543,6 +1756,79 @@ export interface components {
          * @enum {string}
          */
         Permission: "view" | "demo:drive" | "case:write" | "chase:write" | "fde" | "admin";
+        /** PersonaAccountView */
+        PersonaAccountView: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Label */
+            label: string;
+            /** Vpa */
+            vpa: string | null;
+            /** Balance Paise */
+            balance_paise: number;
+        };
+        /** PersonaDeviceView */
+        PersonaDeviceView: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Label */
+            label: string;
+            /** Os */
+            os: string;
+            /**
+             * First Seen At
+             * Format: date-time
+             */
+            first_seen_at: string;
+        };
+        /** PersonaPayeeView */
+        PersonaPayeeView: {
+            /**
+             * Account Id
+             * Format: uuid
+             */
+            account_id: string;
+            /** Label */
+            label: string;
+            /** Vpa */
+            vpa: string | null;
+            /**
+             * Added At
+             * Format: date-time
+             */
+            added_at: string;
+        };
+        /**
+         * PersonaView
+         * @description A demo customer (docs/14 §6) as the phone's picker shows them.
+         */
+        PersonaView: {
+            /**
+             * Customer Id
+             * Format: uuid
+             */
+            customer_id: string;
+            /** Persona Key */
+            persona_key: string;
+            /** Name */
+            name: string;
+            /** Language */
+            language: string;
+            /** Vulnerable */
+            vulnerable: boolean;
+            /** Accounts */
+            accounts: components["schemas"]["PersonaAccountView"][];
+            /** Payees */
+            payees: components["schemas"]["PersonaPayeeView"][];
+            /** Devices */
+            devices: components["schemas"]["PersonaDeviceView"][];
+        };
         /**
          * PoliceAlertView
          * @description docs/09 §6: the coercion case's police alert draft and what a human did with it.
@@ -1581,6 +1867,72 @@ export interface components {
             top_features: {
                 [key: string]: unknown;
             }[];
+        };
+        /**
+         * ProbeResponseRequest
+         * @description docs/08 §4: one answer to the probe on the phone's screen.
+         */
+        ProbeResponseRequest: {
+            /**
+             * Probe Run Id
+             * Format: uuid
+             */
+            probe_run_id: string;
+            /** Answer */
+            answer: components["schemas"]["OptionAnswer"] | components["schemas"]["OtpAnswer"] | components["schemas"]["BiometricAnswer"] | components["schemas"]["CoolingOffAnswer"];
+            client_signals: components["schemas"]["ClientSignalsIn"];
+        };
+        /**
+         * ProbeResponseView
+         * @description The session after the answer. ``attempts_remaining`` is set only for a wrong OTP with
+         *     attempts left: the run still waits (docs/08 §4 OTP protocol step 3).
+         */
+        ProbeResponseView: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            payment: components["schemas"]["PaymentSummary"];
+            /** Status */
+            status: string;
+            /** Decision */
+            decision: string | null;
+            /** Terminal Reason */
+            terminal_reason: string | null;
+            /** Kb Version Id */
+            kb_version_id: number;
+            /** Leading Hypothesis */
+            leading_hypothesis: string | null;
+            /** Posterior */
+            posterior: {
+                [key: string]: number;
+            } | null;
+            /** Unexplained */
+            unexplained: boolean;
+            baselines: components["schemas"]["Baselines"] | null;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /** Decided At */
+            decided_at: string | null;
+            /** Case Id */
+            case_id: string | null;
+            /** Dd Pack Complete */
+            dd_pack_complete: boolean;
+            /** Version */
+            version: number;
+            prior: components["schemas"]["PriorView"];
+            /** Risk By Decision */
+            risk_by_decision: {
+                [key: string]: number;
+            } | null;
+            /** Probe Runs */
+            probe_runs: components["schemas"]["ProbeRunView"][];
+            /** Attempts Remaining */
+            attempts_remaining?: number | null;
         };
         /** ProbeRunView */
         ProbeRunView: {
@@ -1705,6 +2057,13 @@ export interface components {
             /** Payment Ids */
             payment_ids?: string[];
         };
+        /**
+         * StartSessionRequest
+         * @description docs/16: `POST /guardian/sessions`.
+         */
+        StartSessionRequest: {
+            payment: components["schemas"]["PaymentIn"];
+        };
         /** StatusView */
         StatusView: {
             /** Dataset Ready */
@@ -1721,6 +2080,28 @@ export interface components {
             };
             /** Models Below Gate */
             models_below_gate: components["schemas"]["ArtifactKind"][];
+        };
+        /**
+         * TelemetryIn
+         * @description The app session's signals, as the mobile SDK reports them (docs/08 §5).
+         */
+        TelemetryIn: {
+            /** Typing Cadence Z */
+            typing_cadence_z: number;
+            /** Paste On Account Field */
+            paste_on_account_field: boolean;
+            /** Max Field Dwell S */
+            max_field_dwell_s: number;
+            /** Remote Access Active */
+            remote_access_active: boolean;
+            /** Screen Share Active */
+            screen_share_active: boolean;
+            /** On Call */
+            on_call: boolean;
+            /** Call Counterparty Known */
+            call_counterparty_known?: boolean | null;
+            /** Session Duration S */
+            session_duration_s: number;
         };
         /** TicketView */
         TicketView: {
@@ -1743,6 +2124,40 @@ export interface components {
             /** Acknowledged At */
             acknowledged_at: string | null;
         };
+        /** TraceBatch */
+        TraceBatch: {
+            /** Events */
+            events: components["schemas"]["TraceEventIn"][];
+        };
+        /** TraceBatchResult */
+        TraceBatchResult: {
+            /** Recorded */
+            recorded: number;
+        };
+        /** TraceEventIn */
+        TraceEventIn: {
+            type: components["schemas"]["TraceType"];
+            payload?: components["schemas"]["TracePayload"];
+            /**
+             * At
+             * Format: date-time
+             */
+            at: string;
+        };
+        /**
+         * TracePayload
+         * @description What a view event may carry: the evidence record it is about, for EVIDENCE_VIEWED and
+         *     NARRATIVE_EXPANDED. Nothing else is stored from a browser.
+         */
+        TracePayload: {
+            /** Evidence Record Id */
+            evidence_record_id?: string | null;
+        };
+        /**
+         * TraceType
+         * @enum {string}
+         */
+        TraceType: "CASE_OPENED" | "CASE_VIEWED" | "EVIDENCE_REQUESTED" | "EVIDENCE_VIEWED" | "NARRATIVE_EXPANDED" | "WCMM_VIEWED" | "DISPOSITION" | "DD_PACK_VIEWED";
         /**
          * UpdateUser
          * @description Only the fields present change.
@@ -2601,6 +3016,41 @@ export interface operations {
             };
         };
     };
+    post_trace_events_api_v1_cases__case_id__trace_events_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TraceBatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TraceBatchResult"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     read_case_dd_pack_api_v1_cases__case_id__dd_pack_get: {
         parameters: {
             query?: {
@@ -2848,6 +3298,41 @@ export interface operations {
             };
         };
     };
+    start_session_api_v1_guardian_sessions_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartSessionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GuardianSessionView"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     read_session_api_v1_guardian_sessions__session_id__get: {
         parameters: {
             query?: never;
@@ -2900,6 +3385,134 @@ export interface operations {
                 content: {
                     "application/json": unknown;
                     "text/html": unknown;
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    respond_to_probe_api_v1_guardian_sessions__session_id__probe_responses_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProbeResponseRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProbeResponseView"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    cancel_session_api_v1_guardian_sessions__session_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GuardianSessionView"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    read_personas_api_v1_phone_personas_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonaView"][];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    stream_api_v1_phone_stream_get: {
+        parameters: {
+            query: {
+                customer_id: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description An SSE stream */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": unknown;
                 };
             };
             /** @description An RFC 9457 problem (docs/16 §1) */

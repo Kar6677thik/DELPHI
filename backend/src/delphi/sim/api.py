@@ -1,6 +1,6 @@
 """The simulator's facade for the api, the CLI and the feature modules (docs/04 §4.1 rule 3):
 asking the worker for a dataset (docs/16 §2 `POST /admin/datasets`, docs/23 §4 `delphi seed`,
-#19), and the `bank` schema's table definitions.
+#19), the mock phone's payments and personas (#98), and the `bank` schema's table definitions.
 
 Feature modules read the simulated bank through these re-exported `bank` tables (the probes'
 sim adapters, sensing, the Navigator evidence rules), so the schema is defined once, in
@@ -46,7 +46,7 @@ from delphi.sim.bank import (
 from delphi.sim.baselines import Baseline, baseline_decisions
 from delphi.sim.catalog import datasets
 from delphi.sim.external import cfcfrms_ack_delay
-from delphi.sim.generator_config import history_end, load_generator_config
+from delphi.sim.generator_config import GeneratorConfig, history_end, load_generator_config
 from delphi.sim.payments import (
     STATUS_FOR_DECISION,
     PaymentStatus,
@@ -57,20 +57,36 @@ from delphi.sim.payments import (
     get_payment,
     get_payments,
 )
+from delphi.sim.phone import (
+    PHONE_CHANNELS,
+    PayChannel,
+    PaymentRequest,
+    Persona,
+    PhoneTelemetry,
+    customer_exists,
+    initiate_payment,
+    phone_personas,
+)
 from delphi.sim.population import HOME_BANK
 
 # The read-only `bank` tables re-exported for feature modules, and this facade's own API.
 __all__ = [
     "DATASET_REQUEST_LOCK_KEY",
     "HOME_BANK",
+    "PHONE_CHANNELS",
     "PROFILES",
     "STATUS_FOR_DECISION",
     "Baseline",
     "DatasetInfo",
     "DatasetProfile",
+    "GeneratorConfig",
     "HistoryWindow",
+    "PayChannel",
+    "PaymentRequest",
     "PaymentStatus",
     "PaymentView",
+    "Persona",
+    "PhoneTelemetry",
     "account_scores",
     "accounts",
     "apply_case_disposition",
@@ -81,18 +97,21 @@ __all__ = [
     "complaints",
     "crm_events",
     "current_dataset",
+    "customer_exists",
     "customers",
     "dataset_exists",
     "devices",
     "get_payment",
     "get_payments",
     "history_window",
+    "initiate_payment",
     "labels",
     "ledger_entries",
     "load_generator_config",
     "login_events",
     "payees",
     "payments",
+    "phone_personas",
     "request_dataset",
     "session_telemetry",
     "sim_phone_risk",

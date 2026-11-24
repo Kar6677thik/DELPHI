@@ -27,7 +27,8 @@ from delphi.api.app import create_app
 from delphi.api.contract import OPENAPI_FILE, openapi_document
 from delphi.chase.api import placed_lien_totals
 from delphi.chase.jobs import register_chase_jobs
-from delphi.guardian.api import case_trail
+from delphi.guardian.api import LiveGuardian, case_trail, live_guardian
+from delphi.guardian.service import GuardianService
 from delphi.kb.canonical import content_sha256
 from delphi.kb.issues import KbValidationError
 from delphi.kb.loader import load_and_validate
@@ -56,7 +57,15 @@ from delphi.platform.metrics import SSE_CLIENTS, metrics_server
 from delphi.platform.settings import Settings, SettingsError, libpq_url, load_settings
 from delphi.platform.wiring import Platform, build_platform
 from delphi.platform.worker import build_registry, install_stop_handlers, run_worker
+from delphi.probes.api import (
+    SimBeneficiaryIntel,
+    SimPhoneRisk,
+    SimSessionTelemetry,
+    passive_executor,
+    passive_fetchers,
+)
 from delphi.probes.registry import CLASSIFIER_NAMES
+from delphi.sensing.api import SensingInference
 from delphi.sensing.jobs import register_sensing_jobs
 from delphi.sim.api import PROFILES, dataset_exists, request_dataset
 from delphi.sim.dataset import generate_dataset
@@ -158,6 +167,7 @@ def _api(settings: Settings) -> int:
     _quiet_alembic()
     platform = build_platform(settings, process="api")
     hub = EventHub(platform.sessions, libpq_url(settings.database_url))
+    live, free_pool = live_guardian_for(platform)
     try:
         password = settings.bootstrap_admin_password
         with platform.sessions.begin() as session:
@@ -175,7 +185,7 @@ def _api(settings: Settings) -> int:
     threading.Thread(target=metrics.serve_forever, name="metrics", daemon=True).start()
     try:
         uvicorn.run(
-            create_app(platform, event_hub=hub),
+            create_app(platform, event_hub=hub, guardian_runner=live),
             host=settings.http_host,
             port=settings.http_port,
             log_config=None,  # logging is configured by configure_logging (docs/20 §1)
@@ -184,6 +194,7 @@ def _api(settings: Settings) -> int:
         )
     finally:
         metrics.shutdown()
+        free_pool()
         platform.close()
     return 0
 
@@ -197,6 +208,39 @@ def _active_kb(platform: Platform) -> KnowledgeBase:
     return active.kb
 
 
+def live_guardian_for(
+    platform: Platform, *, kb_source: Callable[[Platform], KnowledgeBase] = _active_kb
+) -> tuple[LiveGuardian, Callable[[], None]]:
+    """The api's Guardian runner slot (#95, docs/08 §2): the sensing inference as the prior
+    (#92), the simulated passive adapters over the bank (docs/08 §5), and an API runner for the
+    mock phone's LIVE sessions. Returns the slot and a function that frees its thread pool.
+
+    Time runs REAL (`demo_time=False`): `DELPHI_TIME_MODE` (docs/07) is not a setting yet."""
+    settings = platform.settings
+    kb = kb_source(platform)
+    timeout_ms = (
+        kb.config.guardrails.passive_adapter_timeout_ms + settings.passive_statement_margin_ms
+    )
+    inference = SensingInference(platform.engine, platform.clock)
+    telemetry = SimSessionTelemetry(platform.engine, timeout_ms)
+    fetchers = passive_fetchers(
+        SimBeneficiaryIntel(platform.engine, inference, timeout_ms),
+        SimPhoneRisk(platform.engine, timeout_ms),
+        telemetry,
+        telemetry,
+    )
+    executor = passive_executor(settings.passive_probe_threads)
+    service = GuardianService(
+        platform.sessions,
+        platform.clock,
+        inference,
+        fetchers,
+        executor,
+        otp_key=settings.otp_key,
+    )
+    return live_guardian(service, platform.sessions, platform.clock), executor.shutdown
+
+
 def worker_registry(
     platform: Platform, *, kb_source: Callable[[Platform], KnowledgeBase] = _active_kb
 ) -> tuple[JobRegistry, Engine | None]:
@@ -208,7 +252,12 @@ def worker_registry(
     register_sensing_jobs(
         registry, engine=platform.engine, sessions=platform.sessions, clock=platform.clock
     )
-    register_chase_jobs(registry, sessions=platform.sessions, clock=platform.clock)
+    register_chase_jobs(
+        registry,
+        sessions=platform.sessions,
+        clock=platform.clock,
+        tickets_per_run=platform.settings.chase_tickets_per_run,
+    )
     settings = platform.settings
     llm = LlmService(
         platform.sessions,

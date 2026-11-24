@@ -544,7 +544,9 @@ The worker runs a `SIM_TICK` job every 10 s (wall clock). It:
 2. Emits background live payments at `demo_background_rate` (default 1 every 20 s), through
    Guardian with `SimCustomerChannel` (runner `WORKER`), so the monitor always shows traffic and
    shadow mode accumulates sessions.
-3. Acknowledges CFCFRMS tickets whose latency has elapsed, and expires overdue ones.
+
+The CFCFRMS tickets (§9) are settled by `CHASE_RETRACE`, not here: it acknowledges the tickets
+whose simulated latency has elapsed and expires overdue ones (doc 10 §5, #113).
 
 Label arrivals are delivered by the separate `LABEL_DELIVERY` job from
 `sim_truth.label_schedule` (doc 04 §5.4). `bank.sim_schedule` never holds labels, so the app
@@ -573,6 +575,12 @@ payment.
 **Time scale**: in `DEMO` mode every *simulated duration* (dwell, latencies, cooling-off,
 golden hour, SLA timers) is multiplied by `demo_time_scale` = 1/30. The UI shows durations in
 "sim minutes" = real seconds × 30 / 60.
+
+
+**Bounded delivery** (2026-11-22 incident): `LABEL_DELIVERY` delivers at most 50 batches of 1,000
+labels per run, one transaction per batch, with `statement_timeout` 30 s and `work_mem` 16 MB. A
+run that finds another holding the delivery lock skips. A backlog (a fresh seed, or labels due
+while the worker was down) is cleared over several runs.
 
 ## 9. Simulated external systems
 

@@ -10,7 +10,14 @@ from delphi.platform.jobs import JobRegistry, JobType
 
 
 def register_chase_jobs(
-    registry: JobRegistry, *, sessions: sessionmaker[Session], clock: Clock
+    registry: JobRegistry,
+    *,
+    sessions: sessionmaker[Session],
+    clock: Clock,
+    tickets_per_run: int,
 ) -> None:
     # The latencies run in real time until the DEMO time mode is wired, as the Guardian's do.
-    registry.register(JobType.CHASE_RETRACE, ChaseRetraceJob(sessions, clock, simulated_ack_delay))
+    registry.register(
+        JobType.CHASE_RETRACE,
+        ChaseRetraceJob(sessions, clock, simulated_ack_delay, tickets_per_run=tickets_per_run),
+    )

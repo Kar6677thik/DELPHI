@@ -18,6 +18,7 @@ import pytest
 from sqlalchemy import Engine, func, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
+from delphi.guardian import procedure as procedure_module
 from delphi.guardian import service as service_module
 from delphi.guardian.service import Decided, GuardianService, NextProbe, PriorInputs
 from delphi.guardian.store import (
@@ -343,7 +344,10 @@ def test_passive_probes_update_in_kb_order_and_a_slow_adapter_does_not_block(env
 
 def test_planning_issues_a_pending_active_probe_with_its_candidates(env: Env) -> None:
     payment = env.payment(50_000)
-    result = _run(env, env.service(FixedPrior(GENUINE, q=1.0, p_mule=None), UNSURE), payment)
+    # Greedy only: the payment id seeds exploration, and a fresh random id would explore in about
+    # 1 run in 20 (exploration_epsilon 0.05) and pick another probe (#207).
+    svc = env.service(FixedPrior(GENUINE, q=1.0, p_mule=None), UNSURE, explore=False)
+    result = _run(env, svc, payment)
     assert isinstance(result, NextProbe) and result.probe_key == "PURPOSE_QUESTION"
     with env.sessions() as s:
         active = [r for r in list_probe_runs(s, result.session.id) if r.mode is ProbeMode.ACTIVE]
@@ -352,7 +356,7 @@ def test_planning_issues_a_pending_active_probe_with_its_candidates(env: Env) ->
     ]
     with env.owner.connect() as conn:
         run = conn.execute(select(probe_runs).where(probe_runs.c.id == result.probe_run_id)).one()
-    assert run.selected_by in {"GREEDY", "EXPLORE"} and 0 < run.propensity <= 1
+    assert run.selected_by == "GREEDY" and run.propensity is None  # nothing was randomised
     assert run.candidates[0]["source_key"] == "PURPOSE_QUESTION" and run.candidates[0]["selected"]
     assert "PURPOSE_QUESTION" in run.eligible_set and run.lookahead_depth >= 1
     assert run.posterior_before == result.session.posterior
@@ -446,7 +450,8 @@ def test_an_engine_error_while_planning_rolls_back_and_holds(
     def broken(*_args: object, **_kw: object) -> None:
         raise FloatingPointError("injected")
 
-    monkeypatch.setattr(service_module, "plan_next", broken)
+    # The planner runs in the pure procedure the service calls (#123).
+    monkeypatch.setattr(procedure_module, "plan_next", broken)
     result = svc.plan(started.id)
     assert isinstance(result, Decided)
     assert result.session.terminal_reason is TerminalReason.ENGINE_ERROR

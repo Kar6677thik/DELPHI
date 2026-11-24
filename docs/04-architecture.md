@@ -163,8 +163,11 @@ them.
 
 - **Claim:** one statement, `UPDATE … WHERE id = (SELECT … FOR UPDATE SKIP LOCKED LIMIT 1)`. It
   takes the due job with the earliest `run_after` (then `created_at`) among the types this lane
-  has handlers for. Due means QUEUED with `run_after` ≤ now, or RUNNING with an expired lease
-  and attempts left (its worker died). Claiming increments `attempts`.
+  has handlers for. Due means QUEUED with `run_after` ≤ now, or RUNNING with attempts left
+  whose lease expired at least the retry backoff ago (`30 s · 2^(attempt−1)`, as for a recorded
+  failure): its worker died, perhaps because the attempt took the database down, so it is not
+  re-claimed straight into the same crash (the 2026-11-22 incident). Claiming increments
+  `attempts`.
 - **Lease:** `locked_until = now + job_lease_s` (60 s). A background thread renews it every
   third of the lease while the handler runs, and progress reports also renew it. Every write
   after the claim is guarded by `locked_by = <worker slot> AND status = RUNNING`, so a worker
@@ -179,7 +182,7 @@ them.
   (1) fast-lane slot (SIM_TICK, CHASE_RETRACE). Each polls every `worker_poll_interval_s` (1 s)
   when idle.
 - **Shutdown:** on SIGTERM each slot finishes its current job and exits. A job cut off by
-  SIGKILL is claimed again after its lease expires.
+  SIGKILL is claimed again after its lease expires and the retry backoff has passed.
 - **Health:** the worker's `GET :9000/health` returns 200 while every loop (the slots and the
   scheduler) has beaten within `worker_heartbeat_max_age_s` (30 s), else 503 (doc 20 §3).
 
@@ -210,8 +213,8 @@ A type is scheduled only once its handler is registered:
 
 | Type | Interval | Does |
 |---|---|---|
-| `SIM_TICK` | 10 s real (only when `DELPHI_TIME_MODE=DEMO`) | doc 14 §8: due mule transfers, background payments, ticket acks/expiry |
-| `CHASE_RETRACE` | `retrace_interval_min` time-scaled, floor 20 s | re-trace open operations; auto-close (doc 10 §5) |
+| `SIM_TICK` | 10 s real (only when `DELPHI_TIME_MODE=DEMO`) | doc 14 §8: due mule transfers, background payments |
+| `CHASE_RETRACE` | `retrace_interval_min` time-scaled, floor 20 s | settle due CFCFRMS tickets (acknowledge or expire; at most `DELPHI_CHASE_TICKETS_PER_RUN`, oldest sent first); re-trace open operations; auto-close (doc 10 §5) |
 | `MULE_SWEEP` | `mule_sweep_interval_min` time-scaled | recompute `account_scores`; open ACCOUNT_REVIEW cases (doc 09 §1, from M5) |
 | `SESSION_TIMEOUT_SWEEP` | 30 s | resolve sessions past their timeouts whose owner process is gone |
 | `SCOUT_AUTO_TRIGGER` | 5 min | enqueue `RUN_SCOUT` if ≥ `auto_trigger_new_items` new queue items |

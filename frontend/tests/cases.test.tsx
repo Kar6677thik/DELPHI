@@ -2,7 +2,7 @@ import { act, screen, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { describe, expect, it } from 'vitest';
 
-import { slaLabel } from '../src/routes/CasesPage';
+import { expectedLoss, slaLabel } from '../src/routes/CasesPage';
 import { FakeEventSource } from './fakeEventSource';
 import { mockCase, problem, setMockSession } from './mocks/handlers';
 import { server } from './mocks/node';
@@ -91,9 +91,60 @@ describe('queue order (docs/18 §2)', () => {
     expect(
       await screen.findByRole('table', { name: 'Cases, soonest SLA first' }),
     ).toBeInTheDocument();
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Order' }),
+      'Highest expected loss',
+    );
+    expect(
+      await screen.findByRole('table', { name: 'Cases, highest expected loss first' }),
+    ).toBeInTheDocument();
     await user.selectOptions(screen.getByRole('combobox', { name: 'Order' }), 'Newest');
     expect(await screen.findByRole('table', { name: 'Cases, newest first' })).toBeInTheDocument();
-    expect(sorts).toEqual(['sla_due_at', 'opened_at']);
+    expect(sorts).toEqual(['sla_due_at', 'expected_loss', 'opened_at']);
+  });
+});
+
+describe('expected loss (docs/18 §2, #208)', () => {
+  it("shows an open case's stored recommendation's expected loss", async () => {
+    setMockSession('viewer');
+    server.use(
+      http.get('/api/v1/cases', () =>
+        HttpResponse.json({
+          items: [
+            mockCase({
+              recommended_decision: 'CONFIRM_FRAUD',
+              risk_by_decision: { CONFIRM_FRAUD: 1_200_000.4, RELEASE: 30_000_000 },
+            }),
+            mockCase({ id: '01930000-0000-7000-8000-000000000002' }),
+          ],
+          next_cursor: null,
+        }),
+      ),
+    );
+    renderApp('/cases');
+    const rows = within(await screen.findByRole('table')).getAllByRole('row');
+    expect(rows[0]).toHaveTextContent('Expected loss');
+    expect(rows[1]).toHaveTextContent('₹12,000.00');
+    expect(rows[2]).toHaveTextContent('—'); // a row without a recommendation
+  });
+
+  it('reads the loss of the recommended decision, and nothing else', () => {
+    expect(expectedLoss(mockCase())).toBeNull();
+    expect(
+      expectedLoss(
+        mockCase({ recommended_decision: 'RELEASE', risk_by_decision: { RELEASE: 7.6 } }),
+      ),
+    ).toBe(8);
+    expect(
+      expectedLoss(
+        mockCase({ recommended_decision: 'RELEASE', risk_by_decision: { CONFIRM_FRAUD: 5 } }),
+      ),
+    ).toBeNull();
+    expect(
+      expectedLoss(
+        mockCase({ recommended_decision: 'RELEASE', risk_by_decision: { RELEASE: 'x' } }),
+      ),
+    ).toBeNull();
   });
 });
 
