@@ -72,6 +72,18 @@ test.
 | E2E-RESET | Demo reset returns personas to their initial state; S-1 can run again |
 | E2E-A11Y | axe scan on every route: no serious or critical violations |
 
+**Implementation (#131).** `frontend/e2e/rbac.spec.ts` and `frontend/e2e/a11y.spec.ts` run with the
+login smoke test, against the same stack.
+- **E2E-RBAC** creates a VIEWER through `POST /admin/users`. It checks that the navigation hides
+  Admin and Phone, that those routes show "No access", and that no screen the viewer opens has an
+  enabled submit control. Every POST/PATCH in `openapi.json` except login and logout then returns
+  403 to the viewer.
+- **E2E-A11Y** runs axe (`@axe-core/playwright`, WCAG 2 A and AA) on `/login`, the Overview and
+  every route in `SCREENS`, signed in as the admin. A route with an id opens with one that does not
+  exist, so its not-found state is scanned. The stack has no seeded dataset, so the pages are
+  empty; scans with data come with the story journeys.
+- **E2E-RESET** waits for DEMO_RESET, which is not built yet.
+
 ## 5. Load test (Locust, M9)
 
 The scenario keeps 20 Guardian sessions/s for 10 minutes using autoplay customers (60%

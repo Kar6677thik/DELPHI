@@ -424,8 +424,10 @@ function SignalDetail({
                   return (
                     <td
                       key={h.key}
-                      className="figure rounded-sm px-3 py-2"
-                      style={{ background: p === undefined ? undefined : wash(h.color, p * 0.6) }}
+                      // White on a wash of at most 45%: AA contrast whatever the hypothesis
+                      // colour (E2E-A11Y, #131).
+                      className="figure rounded-sm px-3 py-2 text-ink"
+                      style={{ background: p === undefined ? undefined : wash(h.color, p * 0.45) }}
                     >
                       {p === undefined ? '—' : pct(p)}
                     </td>
