@@ -13,6 +13,7 @@ import { SCREENS } from './screens';
 const PAGES: Partial<Record<string, () => Promise<ComponentType>>> = {
   '/cases': () => import('./CasesPage').then((m) => m.CasesPage),
   '/cases/:id': () => import('./CaseConsolePage').then((m) => m.CaseConsolePage),
+  '/cases/:id/dd-pack': () => import('./CaseDdPackPage').then((m) => m.CaseDdPackPage),
   '/phone': () => import('./PhonePage').then((m) => m.PhonePage),
   '/guardian': () => import('./GuardianPage').then((m) => m.GuardianPage),
   '/guardian/:id': () => import('./GuardianSessionPage').then((m) => m.GuardianSessionPage),
