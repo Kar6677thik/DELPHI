@@ -17,29 +17,41 @@ only when the ``PaymentOutcome`` is written.
 from __future__ import annotations
 
 import heapq
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Protocol
 from uuid import UUID
 
-from delphi.evaluation.outcomes import Decision, FinalStatus, PaymentOutcome
+from delphi.engine.types import CompiledProfile
+from delphi.evaluation.outcomes import (
+    Decision,
+    FinalStatus,
+    PaymentOutcome,
+    ProbeMode,
+    ProbeRecord,
+)
 from delphi.evaluation.stream import (
+    OTP_PASSED,
+    OTP_STEP_UP,
     PaymentTruth,
     StreamItem,
+    customer_rng,
     eval_stream,
     otp_would_pass,
     stream_truth,
 )
+from delphi.guardian.api import PriorInputs, session_prior
 from delphi.platform.clock import VirtualClock
 from delphi.sim.dataset import Dataset
 from delphi.sim.generator_config import GeneratorConfig
 from delphi.sim.labels import PaymentDecision
-from delphi.sim.legacy_policy import decide_b1, payee_is_new
+from delphi.sim.legacy_policy import Baseline, decide_b1, decide_b2, payee_is_new
 from delphi.sim.response_models import ResponseModels
 from delphi.sim.telemetry import SessionTelemetry
 
 EXECUTED = "EXECUTED"
+GENUINE = "GENUINE"
 _TRANSFER, _PAYMENT = 0, 1  # same instant: money arriving first, as the bank books it
 
 
@@ -68,12 +80,17 @@ class PolicyView:
 class PolicyDecision:
     decision: Decision
     decided_at: datetime
+    probes: tuple[ProbeRecord, ...] = ()
+
+
+Ask = Callable[[str], str]
+"""Ask the customer a probe; returns the outcome they give (their own stream, #123 plan §3)."""
 
 
 class Policy(Protocol):
     name: str
 
-    def decide(self, view: PolicyView) -> PolicyDecision: ...
+    def decide(self, view: PolicyView, ask: Ask) -> PolicyDecision: ...
 
 
 @dataclass
@@ -153,7 +170,7 @@ class B1:
     new_device_days: int
     name: str = "B1"
 
-    def decide(self, view: PolicyView) -> PolicyDecision:
+    def decide(self, view: PolicyView, ask: Ask) -> PolicyDecision:
         legacy = self.config.legacy_policy
         first_seen = view.device_first_seen_at
         device_is_new = (
@@ -175,6 +192,36 @@ class B1:
             device_is_new=device_is_new,
         )
         return PolicyDecision(B1_DECISIONS[verdict], view.initiated_at)
+
+
+@dataclass(frozen=True, slots=True)
+class B2:
+    """docs/22 §2, score plus fixed friction: r = 1 − p0(GENUINE) from the same sensing prior
+    the Guardian builds (``session_prior``). r < 0.20 releases; 0.20 ≤ r < 0.60 asks for an OTP
+    and releases if it passes, else holds; r ≥ 0.60 holds. Thresholds: ``score_policy``."""
+
+    config: GeneratorConfig
+    profile: CompiledProfile
+    sensing: Mapping[UUID, PriorInputs]
+    name: str = "B2"
+
+    def decide(self, view: PolicyView, ask: Ask) -> PolicyDecision:
+        prior = session_prior(self.profile, self.sensing[view.payment_id])
+        p_genuine = float(prior.prior[self.profile.hypotheses.index(GENUINE)])
+        verdict = decide_b2(self.config.score_policy, p_genuine=p_genuine)
+        if verdict is Baseline.RELEASE:
+            return PolicyDecision(Decision.RELEASE, view.initiated_at)
+        if verdict is Baseline.HOLD_FOR_REVIEW:
+            return PolicyDecision(Decision.HOLD_FOR_REVIEW, view.initiated_at)
+        outcome = ask(OTP_STEP_UP)
+        otp = ProbeRecord(
+            OTP_STEP_UP,
+            ProbeMode.ACTIVE,
+            friction_paise=round(self.profile.sources[OTP_STEP_UP].cost_paise),
+            info_yield_bits=None,
+        )
+        decision = Decision.RELEASE if outcome == OTP_PASSED else Decision.HOLD_FOR_REVIEW
+        return PolicyDecision(decision, view.initiated_at, (otp,))
 
 
 B1_DECISIONS = {
@@ -229,7 +276,16 @@ def replay(
             continue
         assert event.item is not None
         view = bank.view(event.item)
-        decided = policy.decide(view)
+        t = truth[view.payment_id]
+
+        def ask(probe: str, payment_id: UUID = view.payment_id, t: PaymentTruth = t) -> str:
+            rng = customer_rng(seed, payment_id, probe)
+            # t.sim_day: a coaching adaptation (docs/14 §5.3) applies on the session's day.
+            return models.sample_answer(
+                rng, t.scenario, probe, coached=t.coached, sim_day=t.sim_day
+            )
+
+        decided = policy.decide(view, ask)
         outcomes.append(_outcome(bank, view, decided, truth, seed=seed, models=models))
     return tuple(outcomes)
 
@@ -265,4 +321,5 @@ def _outcome(
         decided_at=decided.decided_at,
         final_status=status,
         held_at=decided.decided_at if status is FinalStatus.HELD else None,
+        probes=decided.probes,
     )
