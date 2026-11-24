@@ -29,6 +29,38 @@ Runtime target: ≤ 30 minutes for `eval` on the home server (4 cores), ≤ 2 mi
 Engine work is parallelised across customers with `multiprocessing` (4 workers). Results must
 not depend on the number of workers (per-customer RNG streams).
 
+**Implementation (#123).**
+- **Stream** (`delphi.evaluation.stream`): the window's sessions in initiation order (ties by
+  payment id), each with its session telemetry. Every customer draw comes from
+  `keyed_rng(seed, "eval", payment_id, what…)`, including "would the OTP pass"
+  (`otp_would_pass`, the same draw for B2, DELPHI and the coercion-catch metric).
+- **Replay** (`delphi.evaluation.replay`): a discrete-event loop over the stream's payments and
+  the window's scheduled transfers (salaries, mule forwarding), in time order. Its `VirtualClock`
+  keeps the replay's time; a policy reads the time from the view's `initiated_at`.
+  - Mule forwarding covers only the transfers already scheduled when the history ends. A payment
+    a policy releases into a mule account in the window starts no new forwarding.
+  - The registry listings are fixed when the dataset is generated, whatever each policy decides:
+    a hold does not delay a listing, and a release does not bring one forward.
+  - A transfer at the same instant as a payment is booked first.
+  - Each policy has its own `BankState`, starting from the history's end: balances, pairs already
+    paid, saved payees, devices first seen and registry listings.
+  - A policy is shown a `PolicyView` of bank-visible fields only, and returns its decision.
+  - A release executes when the payer can fund it. An unfunded release moves no money but still
+    counts as not stopped.
+  - A hold is HELD from the decision time until the queue (§3, #124) settles it.
+- **Output:** one `PaymentOutcome` per stream payment (`delphi.evaluation.outcomes`).
+- **Sensing** (`delphi.evaluation.sensing`, step 2): the prior and anomaly models are trained
+  in memory through `TRAIN_SENSING`'s own `prior_data` core.
+  - Labels: the history's labels due by its end, mapped as delivered (doc 14 §7).
+  - Frames: the dataset's rows (`sensing.offline.frames_from_records`).
+  - Every stream payment is scored once, as of its initiation; the scores are the same for every
+    policy. There is no mule scorer, so MULE is KB-only (doc 06 §11).
+- **Asking the customer:** a policy asks through the replay's `ask(probe)`. The outcome comes from
+  the payment's own stream, `customer_rng(seed, payment, probe)`, so an OTP asked by B2 is the
+  same draw as `otp_would_pass`.
+- **B2:** `r = 1 − p0(GENUINE)` from the Guardian's `session_prior`, with `score_policy`'s bands.
+  The OTP band records one OTP_STEP_UP probe (friction = the KB source's cost).
+
 ## 2. Policies
 
 | ID | Name | Rule |

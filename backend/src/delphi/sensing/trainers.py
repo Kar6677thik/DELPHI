@@ -16,6 +16,7 @@ the GENUINE rows of the same training split, with the same feature list (docs/13
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
@@ -35,7 +36,12 @@ from delphi.sensing.features import (
     to_us,
 )
 from delphi.sensing.mule import MuleSplit, train_mule
-from delphi.sensing.offline import OfflineAccountHistories, OfflineHistories, load_bank_frames
+from delphi.sensing.offline import (
+    BankFrames,
+    OfflineAccountHistories,
+    OfflineHistories,
+    load_bank_frames,
+)
 from delphi.sensing.prior import (
     TEST,
     TRAIN,
@@ -107,19 +113,33 @@ def load_prior_data(
     cutoff = cutoff or window.end
     labels = observed_payment_labels(conn, cutoff, settings)
     p, a = bank.payments, bank.accounts
-    rows = [
-        r
+    payments = [
+        (str(r.id), r.initiated_at)
         for r in conn.execute(
             select(p.c.id, p.c.initiated_at)
             .join(a, a.c.id == p.c.payer_account_id)
             .where(a.c.customer_id.is_not(None))
-            .order_by(p.c.initiated_at, p.c.id)
         )
-        if str(r.id) in labels
     ]
-    ids = [str(r.id) for r in rows]
+    return prior_data(labels, payments, load_bank_frames(conn), window, settings, cutoff=cutoff)
+
+
+def prior_data(
+    labels: Mapping[str, str],
+    payments: Sequence[tuple[str, datetime]],
+    frames: BankFrames,
+    window: bank.HistoryWindow,
+    settings: SensingConfig,
+    *,
+    cutoff: datetime,
+) -> PriorData:
+    """``load_prior_data``'s core, from the observed labels, the customers' payments (id,
+    initiation) and the bank frames: the database path and the evaluation harness's in-memory
+    path (#123) train the same way."""
+    rows = sorted((r for r in payments if r[0] in labels), key=lambda r: (r[1], r[0]))
+    ids = [i for i, _ in rows]
     split = matured_split(
-        np.array([to_us(r.initiated_at) for r in rows], dtype=np.int64),
+        np.array([to_us(at) for _, at in rows], dtype=np.int64),
         history_start_us=to_us(window.start),
         cutoff_us=to_us(cutoff),
         maturity_days=window.maturity_days,
@@ -127,7 +147,7 @@ def load_prior_data(
     )
     codes, known = encode_labels([labels[i] for i in ids], settings.prior.classes)
     names = prior_feature_names(settings.features)
-    offline = OfflineHistories(load_bank_frames(conn), settings.features)
+    offline = OfflineHistories(frames, settings.features)
 
     def part(code: int) -> tuple[Split, tuple[str, ...]]:
         mask = (split == code) & known

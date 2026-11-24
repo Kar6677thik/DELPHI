@@ -77,7 +77,7 @@ export function AppShell() {
         Skip to main content
       </a>
       {/* Phone: a 48px bar with the product and a menu button; the nav opens as a sheet. */}
-      <header className="sticky top-0 z-30 flex h-12 items-center gap-3 border-b border-line bg-ground px-4 md:hidden">
+      <header className="sticky top-0 z-30 flex h-12 items-center gap-3 border-b border-line bg-ground px-4 md:hidden print:hidden">
         <Brand />
         <button
           type="button"
@@ -101,7 +101,7 @@ export function AppShell() {
         </div>
       )}
       <div className="flex">
-        <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r border-line px-6 py-7 md:flex">
+        <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r border-line px-6 py-7 md:flex print:hidden">
           <Brand />
           <p className="mt-1 pl-[30px] text-[12px] text-muted">{SCOPE}</p>
           <div className="mt-9 flex-1 overflow-y-auto">{nav}</div>

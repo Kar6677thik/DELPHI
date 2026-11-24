@@ -14,6 +14,7 @@ import os
 import sys
 import threading
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
@@ -25,7 +26,13 @@ from sqlalchemy import Engine, text
 
 from delphi.api.app import create_app
 from delphi.api.contract import OPENAPI_FILE, openapi_document
-from delphi.guardian.api import LiveGuardian, case_trail, live_guardian
+from delphi.guardian.api import (
+    LiveGuardian,
+    WorkerGuardian,
+    case_trail,
+    live_guardian,
+    worker_guardian,
+)
 from delphi.guardian.service import GuardianService
 from delphi.kb.canonical import content_sha256
 from delphi.kb.issues import KbValidationError
@@ -68,11 +75,19 @@ from delphi.sensing.api import SensingInference
 from delphi.sensing.config import load_sensing_config
 from delphi.sensing.jobs import register_sensing_jobs
 from delphi.sim.api import PROFILES, dataset_exists, request_dataset
+from delphi.sim.customer import LiveCustomer
 from delphi.sim.dataset import generate_dataset
 from delphi.sim.generator_config import load_generator_config
 from delphi.sim.jobs import register_sim_jobs
-from delphi.sim.response_models import GENERATED_FILE, dump_yaml, freeze, load_config
+from delphi.sim.response_models import (
+    GENERATED_FILE,
+    dump_yaml,
+    freeze,
+    load_config,
+    load_response_models,
+)
 from delphi.sim.stats import dataset_stats, format_report
+from delphi.sim.stories import register_story_job
 
 EXIT_CONFIG_ERROR = 2
 # src/delphi/cli.py → the repository's kb/ (KB v1)
@@ -208,16 +223,15 @@ def _active_kb(platform: Platform) -> KnowledgeBase:
     return active.kb
 
 
-def live_guardian_for(
-    platform: Platform, *, kb_source: Callable[[Platform], KnowledgeBase] = _active_kb
-) -> tuple[LiveGuardian, Callable[[], None]]:
-    """The api's Guardian runner slot (#95, docs/08 §2): the sensing inference as the prior
-    (#92), the simulated passive adapters over the bank (docs/08 §5), and an API runner for the
-    mock phone's LIVE sessions. Returns the slot and a function that frees its thread pool.
+def _guardian_service(
+    platform: Platform, kb: KnowledgeBase
+) -> tuple[GuardianService, Callable[[], None]]:
+    """The Guardian service both runners use (#95, docs/08 §2): the sensing inference as the
+    prior (#92) and the simulated passive adapters over the bank (docs/08 §5). Returns it with a
+    function that frees its thread pool.
 
     Time runs REAL (`demo_time=False`): `DELPHI_TIME_MODE` (docs/07) is not a setting yet."""
     settings = platform.settings
-    kb = kb_source(platform)
     timeout_ms = (
         kb.config.guardrails.passive_adapter_timeout_ms + settings.passive_statement_margin_ms
     )
@@ -238,16 +252,48 @@ def live_guardian_for(
         executor,
         otp_key=settings.otp_key,
     )
-    return live_guardian(service, platform.sessions, platform.clock), executor.shutdown
+    return service, executor.shutdown
+
+
+def live_guardian_for(
+    platform: Platform, *, kb_source: Callable[[Platform], KnowledgeBase] = _active_kb
+) -> tuple[LiveGuardian, Callable[[], None]]:
+    """The api's Guardian runner slot (#95, docs/08 §2): an API runner for the mock phone's
+    LIVE sessions. Returns the slot and a function that frees its thread pool."""
+    service, free_pool = _guardian_service(platform, kb_source(platform))
+    return live_guardian(service, platform.sessions, platform.clock), free_pool
+
+
+@dataclass
+class WorkerParts:
+    """What the worker's composition root builds: the job handlers, and with the simulator's
+    pool that pool and the WORKER Guardian runner (#95, #101)."""
+
+    registry: JobRegistry
+    sim_engine: Engine | None = None
+    guardian: WorkerGuardian | None = None
+    free_pool: Callable[[], None] | None = None
+
+    def close(self) -> None:
+        if self.guardian is not None:
+            self.guardian.stop()
+        if self.free_pool is not None:
+            self.free_pool()
+        if self.sim_engine is not None:
+            self.sim_engine.dispose()
 
 
 def worker_registry(
     platform: Platform, *, kb_source: Callable[[Platform], KnowledgeBase] = _active_kb
-) -> tuple[JobRegistry, Engine | None]:
+) -> WorkerParts:
     """The worker's handlers: the platform's and sensing's, plus the simulator's when it has its
     `delphi_sim` pool (`DELPHI_SIM_DATABASE_URL`, docs/17 §2). The api never gets that pool.
-    The simulator's jobs use the ACTIVE KB (``kb_source``). Returns the sim engine too, for the
-    caller to dispose of."""
+    The simulator's jobs use the ACTIVE KB (``kb_source``).
+
+    With the pool comes the worker's Guardian runner (runner WORKER, docs/08 §1): simulated
+    customers answer its AUTOPLAY sessions, which read ground truth through `delphi_sim`, and
+    `DEMO_STORY` submits the story payments to it. The caller starts it (``guardian.start()``
+    resumes its unfinished sessions, FR-GDN-14) and closes the parts."""
     registry = build_registry(platform)
     register_sensing_jobs(
         registry, engine=platform.engine, sessions=platform.sessions, clock=platform.clock
@@ -277,7 +323,7 @@ def worker_registry(
         )
     if settings.sim_database_url is None:
         log.warning("worker.sim_jobs_disabled", reason="DELPHI_SIM_DATABASE_URL is not set")
-        return registry, None
+        return WorkerParts(registry)
     kb = kb_source(platform)
     sim_engine = make_engine(
         settings.sim_database_url,
@@ -293,7 +339,17 @@ def worker_registry(
         allowed_profiles=settings.allowed_dataset_profiles,
         record_outreach=_outreach_recorder(platform),
     )
-    return registry, sim_engine
+    service, free_pool = _guardian_service(platform, kb)
+    customer = LiveCustomer(sim_engine, load_response_models(), kb.config.classifiers)
+    guardian = worker_guardian(service, customer, platform.sessions, platform.clock)
+    register_story_job(
+        registry,
+        sim_engine=sim_engine,
+        clock=platform.clock,
+        customer=customer,
+        submit=guardian.submit,
+    )
+    return WorkerParts(registry, sim_engine, guardian, free_pool)
 
 
 def _outreach_recorder(platform: Platform) -> Callable[[UUID, str], None]:
@@ -320,13 +376,23 @@ def _worker(settings: Settings) -> int:
     stop = threading.Event()
     install_stop_handlers(stop)
     platform = build_platform(settings, process="worker")
-    registry, sim_engine = worker_registry(platform)
+    parts = worker_registry(platform)
     try:
-        run_worker(platform, stop, registry=registry)
+        if parts.guardian is not None:
+            parts.guardian.start()
+            # Stop the session tasks when asked to stop, before the platform's pool closes.
+            threading.Thread(
+                target=_on_stop, args=(stop, parts.guardian.stop), name="guardian-stop", daemon=True
+            ).start()
+        run_worker(platform, stop, registry=parts.registry)
     finally:
-        if sim_engine is not None:
-            sim_engine.dispose()
+        parts.close()
     return 0
+
+
+def _on_stop(stop: threading.Event, then: Callable[[], None]) -> None:
+    stop.wait()
+    then()
 
 
 def _seed(settings: Settings, args: argparse.Namespace) -> int:
