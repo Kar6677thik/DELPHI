@@ -7,8 +7,13 @@ customers, balances move), so splitting one policy's stream would change what it
 random quantity comes from per-payment streams (#123 plan §3), so the outcomes are the same for
 any number of workers; ``test_one_worker_and_four_give_the_same_outcomes`` checks it.
 
-The dataset and the trained sensing are built once in the parent and shared with the workers by
-``fork`` (copy-on-write), so the 4.5 GiB budget of docs/22 §1 holds.
+The dataset and the trained sensing are built once in the parent and handed to each worker by
+the pool's initializer. With ``fork`` (Linux, macOS) the workers inherit them without a copy at
+start; CPython's reference counts still touch the pages a worker reads, so walking the whole
+history copies part of them (the measured RSS is on #123). Where ``fork`` does not exist
+(Windows), ``spawn`` pickles them to each worker instead: correct, but slower and larger.
+
+The entry point (a CLI command and the evaluation job writing the report) comes with #124.
 """
 
 from __future__ import annotations
@@ -25,13 +30,17 @@ from delphi.sim.response_models import ResponseModels
 
 WORKERS = 4  # docs/22 §1
 
-# Set in the parent before the pool forks; each worker reads its copy.
+# Set in each worker by ``_share`` (and in the parent when running in-process).
 _SHARED: dict[str, object] = {}
 
 
 @dataclass(frozen=True, slots=True)
 class RunResult:
     outcomes: dict[str, tuple[PaymentOutcome, ...]]  # policy name → its outcomes
+
+
+def _share(dataset: Dataset, policies: list[Policy], models: ResponseModels, seed: int) -> None:
+    _SHARED.update(dataset=dataset, policies=policies, models=models, seed=seed)
 
 
 def _replay_one(index: int) -> tuple[str, tuple[PaymentOutcome, ...]]:
@@ -45,6 +54,11 @@ def _replay_one(index: int) -> tuple[str, tuple[PaymentOutcome, ...]]:
     return policy.name, replay(dataset, policy, seed=seed, models=models)
 
 
+def start_method() -> str:
+    """``fork`` where the platform has it, else ``spawn`` (Windows)."""
+    return "fork" if "fork" in multiprocessing.get_all_start_methods() else "spawn"
+
+
 def run_policies(
     dataset: Dataset,
     policies: Sequence[Policy],
@@ -53,17 +67,22 @@ def run_policies(
     models: ResponseModels,
     workers: int = WORKERS,
 ) -> RunResult:
-    """Replay every policy; ``workers`` > 1 runs them in forked processes."""
+    """Replay every policy; ``workers`` > 1 runs them in worker processes."""
     names = [p.name for p in policies]
     if len(set(names)) != len(names):
         raise ValueError("policy names must be unique")
-    _SHARED.update(dataset=dataset, policies=list(policies), models=models, seed=seed)
+    shared = (dataset, list(policies), models, seed)
     try:
         if workers <= 1:
+            _share(*shared)
             pairs = [_replay_one(i) for i in range(len(policies))]
         else:
-            context = multiprocessing.get_context("fork")
-            with ProcessPoolExecutor(max_workers=workers, mp_context=context) as pool:
+            with ProcessPoolExecutor(
+                max_workers=workers,
+                mp_context=multiprocessing.get_context(start_method()),
+                initializer=_share,
+                initargs=shared,
+            ) as pool:
                 pairs = list(pool.map(_replay_one, range(len(policies))))
     finally:
         _SHARED.clear()

@@ -3,6 +3,7 @@ the number of workers, and the `eval` runtime stays within the docs/22 §1 budge
 
 from __future__ import annotations
 
+import multiprocessing
 import os
 import time
 
@@ -10,7 +11,7 @@ import pytest
 
 from delphi.engine import compile_profile
 from delphi.evaluation.delphi_policy import Delphi
-from delphi.evaluation.harness import run_policies
+from delphi.evaluation.harness import run_policies, start_method
 from delphi.evaluation.replay import B1, B2, Policy
 from delphi.evaluation.sensing import train_and_score
 from delphi.kb.model import KnowledgeBase
@@ -25,7 +26,7 @@ RUNTIME_BUDGET_S = 30 * 60  # docs/22 §1: ≤ 30 minutes for `eval`
 def _policies(dataset: Dataset, kb: KnowledgeBase, config: GeneratorConfig) -> list[Policy]:
     sensing = train_and_score(dataset, kb, config)
     profile = compile_profile(kb, "GUARDIAN_PAYMENT")
-    kw = {"sensing": sensing.inputs, "p_mule_fallback": 0.10}
+    kw = {"sensing": sensing.inputs}
     return [
         B1(config, kb.config.classifiers.new_device_days),
         B2(config, profile, sensing.inputs),
@@ -47,10 +48,20 @@ def test_one_worker_and_four_give_the_same_outcomes(kb: KnowledgeBase) -> None:
     assert set(one.outcomes) == {"B1", "B2", "DELPHI", "DELPHI-myopic", "DELPHI-no-active"}
 
 
+def test_the_start_method_falls_back_to_spawn_without_fork(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Windows has no ``fork``; the workers then start with ``spawn``."""
+    assert start_method() in ("fork", "spawn")
+    monkeypatch.setattr(multiprocessing, "get_all_start_methods", lambda: ["spawn"])
+    assert start_method() == "spawn"
+
+
 @pytest.mark.slow
 def test_eval_runs_within_the_budget(kb: KnowledgeBase) -> None:
     """docs/22 §1: generate `eval`, train sensing, replay every policy on 4 workers, ≤ 30 min."""
-    assert os.environ.get("DELPHI_RUN_SLOW") == "1"
+    if os.environ.get("DELPHI_RUN_SLOW") != "1":
+        pytest.skip("set DELPHI_RUN_SLOW=1 to run the `eval` runtime check")
     started = time.monotonic()
     config = load_generator_config()
     dataset = generate_dataset(config, "eval", kb=kb)
