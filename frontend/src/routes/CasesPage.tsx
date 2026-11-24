@@ -62,103 +62,136 @@ const CAPTIONS: Readonly<Record<CaseSort, string>> = {
   opened_at: 'Cases, newest first',
 };
 
+const SELECT =
+  'rounded-md border border-control bg-raised px-3 py-1.5 text-[13px] text-ink transition-colors hover:border-soft focus:border-accent focus:outline-none';
+
+/** The queue's one-line summary: how many cases, and how many are past their SLA. */
+function summary(items: readonly CaseView[]): string {
+  const open = items.filter((c) => c.status !== 'DISPOSED').length;
+  const breached = items.filter((c) => c.sla_breached && c.status !== 'DISPOSED').length;
+  const cases = `${String(open)} open ${open === 1 ? 'case' : 'cases'}`;
+  return breached > 0
+    ? `${cases}, ${String(breached)} past their SLA.`
+    : `${cases}, none past SLA.`;
+}
+
 /** The case queue (docs/18 §2 `/cases`): soonest SLA, highest expected loss, or newest first. */
 export function CasesPage() {
   const [sort, setSort] = useState<CaseSort>('sla_due_at');
   const cases = useCases(sort);
   const now = useNow(TICK_MS);
   return (
-    <section aria-labelledby="cases-title">
-      <h1 id="cases-title" className="text-2xl font-semibold">
-        Case queue
-      </h1>
-      <label className="mt-2 inline-flex items-center gap-2 text-sm">
-        Order
-        <select
-          value={sort}
-          onChange={(event) => {
-            setSort(event.target.value as CaseSort);
-          }}
-          className="rounded-md border border-slate-300 px-2 py-1"
-        >
-          {SORTS.map((s) => (
-            <option key={s.value} value={s.value}>
-              {s.label}
-            </option>
-          ))}
-        </select>
-      </label>
-      <div className="mt-4">
-        {cases.isPending && <p className="text-slate-600">Loading cases…</p>}
+    <section aria-labelledby="cases-title" className="max-w-[1320px]">
+      <div className="flex flex-wrap items-end gap-x-6 gap-y-3">
+        <div className="min-w-0">
+          <h1 id="cases-title" className="text-[26px] font-semibold tracking-tight">
+            Case queue
+          </h1>
+          <p className="mt-1 text-[14px] text-muted">
+            {cases.isSuccess && cases.data.items.length > 0
+              ? summary(cases.data.items)
+              : 'The payments Guardian held, for an investigator to decide.'}
+          </p>
+        </div>
+        <label className="ml-auto flex items-center gap-2 text-[13px] text-muted">
+          Order
+          <select
+            value={sort}
+            onChange={(event) => {
+              setSort(event.target.value as CaseSort);
+            }}
+            className={SELECT}
+          >
+            {SORTS.map((s) => (
+              <option key={s.value} value={s.value}>
+                {s.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <div className="mt-6">
+        {cases.isPending && <p className="text-[14px] text-muted">Loading cases…</p>}
         {cases.isError && <ProblemAlert error={cases.error} title="Could not load the cases" />}
         {cases.isSuccess && cases.data.items.length === 0 && (
-          <p className="text-slate-600">No cases yet. Guardian holds open them.</p>
+          <p className="rounded-md border border-dashed border-control px-4 py-3 text-[13px] text-muted">
+            No cases yet. Guardian holds open them.
+          </p>
         )}
         {cases.isSuccess && cases.data.items.length > 0 && (
-          <table className="w-full text-left text-sm">
-            <caption className="sr-only">{CAPTIONS[sort]}</caption>
-            <thead className="border-b border-slate-300 text-slate-600">
-              <tr>
-                <th scope="col" className="py-2 pr-4">
-                  SLA
-                </th>
-                <th scope="col" className="py-2 pr-4">
-                  Leading hypothesis
-                </th>
-                <th scope="col" className="py-2 pr-4">
-                  Type
-                </th>
-                <th scope="col" className="py-2 pr-4">
-                  Protocol
-                </th>
-                <th scope="col" className="py-2 pr-4 text-right">
-                  At stake
-                </th>
-                <th scope="col" className="py-2 pr-4 text-right">
-                  Expected loss
-                </th>
-                <th scope="col" className="py-2 pr-4">
-                  Status
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {cases.data.items.map((item) => {
-                const loss = expectedLoss(item);
-                return (
-                  <tr key={item.id} className="border-b border-slate-100">
-                    <td
-                      className={`py-2 pr-4 ${item.sla_breached ? 'font-semibold text-red-700' : ''}`}
-                    >
-                      {slaLabel(item, now)}
-                    </td>
-                    <td className="py-2 pr-4">
-                      <Link to={`/cases/${item.id}`} className="underline">
-                        {item.leading_hypothesis_name}
-                      </Link>
-                    </td>
-                    <td className="py-2 pr-4">{humanise(item.type)}</td>
-                    <td className="py-2 pr-4">
-                      {item.protocol === 'COERCION' ? (
-                        <span className="rounded bg-amber-100 px-2 py-0.5 text-amber-900">
-                          Coercion
-                        </span>
-                      ) : (
-                        'Standard'
-                      )}
-                    </td>
-                    <td className="py-2 pr-4 text-right">
-                      <MoneyText paise={item.amount_at_stake_paise} />
-                    </td>
-                    <td className="py-2 pr-4 text-right">
-                      {loss === null ? '—' : <MoneyText paise={loss} />}
-                    </td>
-                    <td className="py-2 pr-4">{humanise(item.status)}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          <div className="overflow-x-auto rounded-md bg-surface px-8 py-5">
+            <table className="w-full min-w-[860px] text-left text-[14px]">
+              <caption className="sr-only">{CAPTIONS[sort]}</caption>
+              <thead className="text-[12px] text-muted">
+                <tr className="border-b border-line">
+                  <th scope="col" className="py-2 pr-6 font-normal">
+                    SLA
+                  </th>
+                  <th scope="col" className="py-2 pr-6 font-normal">
+                    Leading hypothesis
+                  </th>
+                  <th scope="col" className="py-2 pr-6 font-normal">
+                    Type
+                  </th>
+                  <th scope="col" className="py-2 pr-6 font-normal">
+                    Protocol
+                  </th>
+                  <th scope="col" className="py-2 pr-6 text-right font-normal">
+                    At stake
+                  </th>
+                  <th scope="col" className="py-2 pr-6 text-right font-normal">
+                    Expected loss
+                  </th>
+                  <th scope="col" className="py-2 font-normal">
+                    Status
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {cases.data.items.map((item) => {
+                  const loss = expectedLoss(item);
+                  return (
+                    <tr key={item.id} className="border-b border-line last:border-0">
+                      <td
+                        className={`py-3 pr-6 whitespace-nowrap ${
+                          item.sla_breached && item.status !== 'DISPOSED'
+                            ? 'text-negative'
+                            : 'text-soft'
+                        }`}
+                      >
+                        {slaLabel(item, now)}
+                      </td>
+                      <td className="py-3 pr-6">
+                        <Link
+                          to={`/cases/${item.id}`}
+                          className="text-ink underline decoration-control underline-offset-4 transition-colors hover:decoration-soft"
+                        >
+                          {item.leading_hypothesis_name}
+                        </Link>
+                      </td>
+                      <td className="py-3 pr-6 text-soft">{humanise(item.type)}</td>
+                      <td className="py-3 pr-6">
+                        {item.protocol === 'COERCION' ? (
+                          <span className="rounded-sm bg-warning-bg px-2 py-0.5 text-[12px] text-warning">
+                            Coercion
+                          </span>
+                        ) : (
+                          <span className="text-soft">Standard</span>
+                        )}
+                      </td>
+                      <td className="figure py-3 pr-6 text-right text-ink">
+                        <MoneyText paise={item.amount_at_stake_paise} />
+                      </td>
+                      <td className="figure py-3 pr-6 text-right text-soft">
+                        {loss === null ? '—' : <MoneyText paise={loss} />}
+                      </td>
+                      <td className="py-3 text-soft">{humanise(item.status)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </section>
