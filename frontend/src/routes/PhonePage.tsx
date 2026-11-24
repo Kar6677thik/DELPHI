@@ -209,8 +209,15 @@ export function PhonePage() {
                 disabled={staging}
                 onChange={(e) => {
                   const story = STORIES.find((s) => s.name === e.target.value);
-                  if (story) stage(story.name);
-                  else setStoryJobId(null);
+                  if (story) {
+                    stage(story.name);
+                    return;
+                  }
+                  // Free play: a fresh, empty form (the key changes) and a calm situation.
+                  setStoryJobId(null);
+                  setAppliedJobId(null);
+                  setSituation(CALM);
+                  setFlight(null);
                 }}
                 className="mt-1 block h-[34px] rounded-full border border-control bg-surface px-4 text-[13px] text-ink"
               >

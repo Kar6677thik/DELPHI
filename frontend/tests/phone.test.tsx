@@ -445,6 +445,28 @@ describe('/phone demo stories', () => {
     });
   });
 
+  it('clears the story for free play', async () => {
+    setMockSession('investigator');
+    mockApi();
+    server.use(
+      http.post('/api/v1/admin/demo/scenarios/S1/run', () =>
+        HttpResponse.json(storyJob({ status: 'QUEUED', result: null }), { status: 202 }),
+      ),
+      http.get(`/api/v1/jobs/${JOB}`, () => HttpResponse.json(storyJob())),
+    );
+    const { user } = renderApp('/phone?story=S1');
+    await screen.findByText(/S-1 Kamala is staged/);
+    await user.selectOptions(screen.getByLabelText('Story'), '');
+    const phone = screen.getByRole('region', { name: 'Customer’s phone' });
+    expect(within(phone).queryByRole('radio', { name: 'New payee' })).toBeNull();
+    expect(within(phone).getByLabelText('Amount')).toHaveValue('');
+    const around = screen.getByRole('group', { name: 'Around the customer' });
+    expect(within(around).getByRole('button', { name: 'No call' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+  });
+
   it('says when the story could not be staged', async () => {
     setMockSession('investigator');
     mockApi();
