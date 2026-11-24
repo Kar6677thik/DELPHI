@@ -385,7 +385,7 @@ function PayScreen({
               </span>
               <span className="min-w-0">
                 <span className="block truncate text-[15px]">{p.label}</span>
-                {p.note && <span className="block text-[12px] text-white/55">{p.note}</span>}
+                {p.vpa && <span className="block text-[12px] text-white/55">{p.vpa}</span>}
               </span>
             </label>
           ))}

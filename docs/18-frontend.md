@@ -48,10 +48,10 @@ and error states. `case.opened` and `case.updated` invalidate the `['cases']` qu
 (`lib/liveQueries.ts`, the first SSE → query-key map). Sorting controls, expected loss and
 campaign arrive with the console and campaigns (#103, M5).
 
-**M5 case queue and Navigator console (#105):** `/cases` gains an order control (soonest SLA or
-newest, `GET /cases?sort=`). The expected-loss column can now be filled: the backend stores an
-open case's recommendation and risks from the moment it opens (#208), and `GET /cases` sorts by
-`expected_loss`; the campaign column arrives with campaigns (#107). The console does not show
+**M5 case queue and Navigator console (#105):** `/cases` gains an order control (soonest SLA,
+highest expected loss or newest, `GET /cases?sort=`) and an "Expected loss" column: the loss of
+the case's `recommended_decision` in its `risk_by_decision`, which the backend stores from the
+moment a case opens (#208), and "—" for a row without one; the campaign column arrives with campaigns (#107). The console does not show
 the police alert yet (its own issue). `/cases/:id` follows doc 09 §2 from `GET /cases/{id}`:
 - the posterior `HypothesisBar` and the `RiskTable`;
 - the "Evidence sufficient — recommend {decision} (expected loss ₹X)" banner while
@@ -76,6 +76,24 @@ showing as `If-Match`. On 412 the panel shows "This case changed — reload" wit
 changed (status, leading hypothesis, recommendation, evidence count, disposition), and locks the
 form until "Reload". `evidence.narrative_ready` invalidates the `['cases']` queries, like
 `case.*`.
+
+**Console view events and the DD pack page (#264):** the console sends the investigator's view
+events (doc 09 §5) through `api/traces.ts`. It queues them and sends at most one batch per 5 s to
+`POST /cases/{id}/trace-events` (at most 100 events per batch), plus whatever is left when the
+console unmounts. A failed send is dropped: analytics never block the console. The events:
+- `CASE_VIEWED` once when the console opens;
+- `EVIDENCE_VIEWED` and `WCMM_VIEWED` the first time an evidence card or "What would change my
+  mind" is at least half on screen (`IntersectionObserver`; without it, when shown). Each counts
+  once per page;
+- `NARRATIVE_EXPANDED` each time the investigator opens one of a narrative's citations, for the
+  narrative's record.
+
+The console links to `/cases/:id/dd-pack`. That page reads `GET /cases/{id}/dd-pack` with field
+checks, which records `DD_PACK_VIEWED` on the server. It shows "Complete" or "Incomplete", then
+the nine sections in order: each with "Required" or "Optional" ("· missing" for an empty required
+one), its note, and its content as tables, lists and text, or "Not applicable". "Print or save as
+PDF" prints the page, with the app's navigation and the page's buttons left out of print. "Open
+the printable page" opens the server's HTML version.
 
 **The knowledge base, read-only (part of #119):** `/kb` lists `GET /kb/versions` (status, change
 summary, "From vN" lineage) and opens the ACTIVE version, or the one in `?v=`. For it: the
@@ -152,9 +170,10 @@ Each probe `ui` type has its own screen (doc 08 §4); the protective hold turns 
 paper-white with a red shield (doc 08 §7). The DELPHI side leads with the leading hypothesis's
 share as the largest figure and the posterior as a tall bar, then what the customer said, why
 this question (the candidates) and the risk table. "Phone only" shows the handset alone on black
-for the projector (Escape returns). Until the Guardian API (#98) lands, the phone's endpoints are
-typed by hand in `src/api/phone.ts` from doc 08 §4 and doc 16, and the page says so when they
-404.
+for the projector (Escape returns). The phone's requests and personas use the generated types;
+the phone stream's events (doc 16 §3) are typed by hand in `src/api/phone.ts` from doc 08 §4,
+since an SSE body has no OpenAPI schema. The phone sends no telemetry yet (a browser cannot see
+the call state), so its telemetry probes record ERROR.
 
 **The Theatre (`/theatre`).** The judges' view, full-screen on black and outside the app
 shell. It is the one place the quiet rules above give way to spectacle (bloom, light,
