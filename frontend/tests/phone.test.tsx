@@ -7,9 +7,10 @@ import {
   MAX_SESSION_S,
   type Persona,
   type ProbeRequest,
+  situationOf,
   telemetryFor,
 } from '../src/api/phone';
-import type { GuardianSessionView, KbVersionView } from '../src/api/types';
+import type { GuardianSessionView, JobView, KbVersionView } from '../src/api/types';
 import { FakeEventSource } from './fakeEventSource';
 import { MOCK_KB_CONTENT, problem, setMockSession } from './mocks/handlers';
 import { server } from './mocks/node';
@@ -344,5 +345,121 @@ describe('/phone', () => {
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent('The phone could not load its customers');
     expect(alert).toHaveTextContent('DELPHI is still initialising.');
+  });
+});
+
+describe('/phone demo stories', () => {
+  const JOB = '01930000-0000-7000-8000-0000000000d1';
+  const STORY_TELEMETRY = {
+    typing_cadence_z: 0.3,
+    paste_on_account_field: false,
+    max_field_dwell_s: 6,
+    remote_access_active: false,
+    screen_share_active: false,
+    on_call: true,
+    call_counterparty_known: false,
+    session_duration_s: 95,
+  };
+
+  function storyJob(overrides: Partial<JobView> = {}): JobView {
+    return {
+      id: JOB,
+      type: 'DEMO_STORY',
+      status: 'SUCCEEDED',
+      progress: 1,
+      result: {
+        story: 'S1',
+        mode: 'interactive',
+        customer_id: 'c-ramesh',
+        payment: {
+          payer_account_id: 'a-ramesh',
+          payee_account_id: 'a-story-payee',
+          amount_paise: 4_80_000_00,
+          channel: 'IMPS',
+          device_id: 'd-story',
+          telemetry: STORY_TELEMETRY,
+        },
+      },
+      error: null,
+      attempts: 1,
+      created_at: '2026-11-24T10:00:00Z',
+      finished_at: '2026-11-24T10:00:01Z',
+      ...overrides,
+    };
+  }
+
+  it('reads where a story starts from its scripted telemetry', () => {
+    expect(situationOf(undefined)).toEqual(CALM);
+    expect(situationOf(STORY_TELEMETRY)).toEqual({
+      call: 'UNKNOWN_NUMBER',
+      screenShared: false,
+      typing: 'NATURAL',
+    });
+    expect(
+      situationOf({
+        ...STORY_TELEMETRY,
+        on_call: false,
+        call_counterparty_known: null,
+        remote_access_active: true,
+        typing_cadence_z: 4.1,
+      }),
+    ).toEqual({ call: 'NONE', screenShared: true, typing: 'NOT_THEIR_RHYTHM' });
+    expect(situationOf({ ...STORY_TELEMETRY, max_field_dwell_s: 34 }).typing).toBe('HESITANT');
+  });
+
+  it('stages an interactive story from ?story=, then pays its payment', async () => {
+    setMockSession('investigator');
+    const sent = mockApi();
+    const runs: unknown[] = [];
+    server.use(
+      http.post('/api/v1/admin/demo/scenarios/S1/run', async ({ request }) => {
+        runs.push(await request.json());
+        return HttpResponse.json(storyJob({ status: 'QUEUED', result: null }), { status: 202 });
+      }),
+      http.get(`/api/v1/jobs/${JOB}`, () => HttpResponse.json(storyJob())),
+    );
+    const { user, router } = renderApp('/phone?story=S1');
+    expect(await screen.findByText(/S-1 Kamala is staged/)).toBeVisible();
+    expect(runs).toEqual([{ mode: 'interactive' }]);
+    expect(router.state.location.search).toBe('');
+
+    const around = screen.getByRole('group', { name: 'Around the customer' });
+    expect(
+      within(around).getByRole('button', { name: 'On a call, unknown number' }),
+    ).toHaveAttribute('aria-pressed', 'true');
+    const phone = screen.getByRole('region', { name: 'Customer’s phone' });
+    expect(within(phone).getByRole('radio', { name: 'New payee' })).toBeChecked();
+    expect(within(phone).getByLabelText('Amount')).toHaveValue('480000');
+
+    await user.click(within(phone).getByRole('button', { name: /Pay/ }));
+    await within(phone).findByText('Checking this payment');
+    expect(sent.payment).toMatchObject({
+      payment: {
+        payer_account_id: 'a-ramesh',
+        payee_account_id: 'a-story-payee',
+        amount_paise: 4_80_000_00,
+        channel: 'IMPS',
+        device_id: 'd-story',
+        telemetry: { on_call: true, call_counterparty_known: false },
+      },
+    });
+  });
+
+  it('says when the story could not be staged', async () => {
+    setMockSession('investigator');
+    mockApi();
+    server.use(
+      http.post('/api/v1/admin/demo/scenarios/S2/run', () =>
+        HttpResponse.json(storyJob({ status: 'QUEUED', result: null }), { status: 202 }),
+      ),
+      http.get(`/api/v1/jobs/${JOB}`, () =>
+        HttpResponse.json(
+          storyJob({ status: 'FAILED', result: null, error: 'the bank holds no dataset' }),
+        ),
+      ),
+    );
+    const { user } = renderApp('/phone');
+    await user.selectOptions(await screen.findByLabelText('Story'), 'S2');
+    expect(await screen.findByRole('alert')).toHaveTextContent('the bank holds no dataset');
   });
 });

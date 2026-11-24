@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router';
 
 import {
   JOB_PAGE_SIZE,
@@ -9,6 +10,7 @@ import {
   useTrainSensing,
   useVerifyAudit,
 } from '../api/admin';
+import { STORIES, useRunStory } from '../api/demo';
 import { useStatus } from '../api/overview';
 import type { DatasetRequest, JobStatus, JobType, JobView, StatusView } from '../api/types';
 import { ProblemAlert } from '../components/ProblemAlert';
@@ -17,8 +19,8 @@ import { Users } from './AdminUsers';
 
 /**
  * Admin (docs/18 §2 `/admin`, docs/16 §2 "Admin and jobs", #231): is the demo set up, is the
- * audit trail intact, what are the background jobs doing, and who can sign in. The demo story
- * runner and the demo reset arrive with their endpoints (#101, #132).
+ * audit trail intact, run a demo story, what are the background jobs doing, and who can sign
+ * in. The demo reset arrives with its endpoint (#101).
  */
 
 const PERCENT = 100;
@@ -107,6 +109,8 @@ export function AdminPage() {
         <Setup status={status.data} />
         <AuditChain />
       </div>
+
+      <DemoStories ready={status.data?.models_ready ?? false} />
 
       <Jobs />
       <Users />
@@ -293,6 +297,67 @@ function Setup({ status }: { status: StatusView | undefined }) {
         </div>
       </div>
     </Card>
+  );
+}
+
+function DemoStories({ ready }: { ready: boolean }) {
+  const run = useRunStory();
+  return (
+    <div className="mt-6">
+      <Card
+        id="stories-title"
+        title="Demo stories"
+        note="Autoplay plays the story on the server: the simulated customer answers, and the Guardian monitor shows it live. On the phone, you are the customer."
+      >
+        <ul className="divide-y divide-line">
+          {STORIES.map((story) => (
+            <li
+              key={story.name}
+              className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 py-4 first:pt-0 last:pb-0"
+            >
+              <div className="min-w-0">
+                <h3 className="text-[14px] text-ink">{story.title}</h3>
+                <p className="mt-1 text-[12px] text-muted">{story.note}</p>
+              </div>
+              <div className="flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  className={PRIMARY}
+                  disabled={run.isPending || !ready}
+                  onClick={() => {
+                    run.mutate({ story: story.name, mode: 'autoplay' });
+                  }}
+                >
+                  Autoplay
+                </button>
+                <Link to={`/phone?story=${story.name}`} className={SECONDARY}>
+                  Play on the phone
+                </Link>
+              </div>
+            </li>
+          ))}
+        </ul>
+        {!ready && (
+          <p className="mt-4 text-[12px] text-muted">
+            The stories run once the dataset and the sensing models are ready.
+          </p>
+        )}
+        {run.isError && (
+          <div className="mt-4">
+            <ProblemAlert error={run.error} title="Could not start the story" />
+          </div>
+        )}
+        {run.data && (
+          <p role="status" className="mt-4 text-[13px] text-soft">
+            Queued: the story plays in a few seconds. Watch it on the{' '}
+            <Link to="/guardian" className="text-accent underline-offset-2 hover:underline">
+              Guardian monitor
+            </Link>
+            .
+          </p>
+        )}
+      </Card>
+    </div>
   );
 }
 

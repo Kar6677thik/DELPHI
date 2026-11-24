@@ -121,7 +121,10 @@ lists `GET /admin/users` (the signed-in admin marked "you"): a role select, "Dis
 (never offered on your own row) and "Reset password" each send `PATCH /admin/users/{id}` with the
 row's `version` as `If-Match`; a 412 or the last-admin 409 shows as a problem alert and the list is
 re-read. "Add a user" posts `POST /admin/users` (username pattern, display name, a password of at
-least 12 characters, role). The demo story runner and demo reset come with their endpoints.
+least 12 characters, role). "Demo stories" lists S-1 and S-2 (#101): "Autoplay" queues
+`POST /admin/demo/scenarios/{story}/run` with `mode: autoplay` (disabled until the dataset and
+models are ready) and points to the Guardian monitor; "Play on the phone" opens
+`/phone?story=S1`. The demo reset comes with its endpoint.
 
 **M4 Guardian screens (#100):** `/guardian` lists `GET /guardian/sessions` newest first, 50 at a
 time, with "Load more sessions" while `next_cursor` is set: start time (linking to
@@ -184,6 +187,14 @@ moment the form opened. Each preset sits clearly on one side of the KB's classif
 (a 20 s dwell, a cadence z of 3.0), so CALL_STATUS, DEVICE_POSTURE and SESSION_BEHAVIOUR observe
 what the presenter chose. The default is calm: no call, no shared screen, natural typing. S-1
 starts with "On a call, unknown number".
+
+**Interactive stories.** The **Story** select (or `?story=S1`, from Admin) queues the story's
+`DEMO_STORY` job in `mode: interactive` and reads `GET /jobs/{id}` each second until it
+finishes. The job's result names the story's customer and the payment: the phone switches to
+that customer, the form starts filled in (the story's payee, shown as "New payee" when it is not
+saved; its amount, channel and device, S-2's being the new phone the job staged), and "Around the
+customer" starts where the story's scripted telemetry puts it. The presenter can still change
+either, then pays and answers as the customer. A failed job shows its error.
 
 **The Theatre (`/theatre`).** The judges' view, full-screen on black and outside the app
 shell. It is the one place the quiet rules above give way to spectacle (bloom, light,

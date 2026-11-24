@@ -149,6 +149,31 @@ const TYPING: Readonly<
   NOT_THEIR_RHYTHM: { typing_cadence_z: 4.1, paste: false, dwell_s: 9 },
 };
 
+/**
+ * The situation a story's scripted telemetry describes (docs/14 §6), so "Around the customer"
+ * starts where the story does. The typing is read against the presets above: a cadence as far
+ * off as "not their rhythm", or a paste or a dwell as long as "hesitant".
+ */
+export function situationOf(telemetry: Schemas['TelemetryIn'] | undefined): Situation {
+  if (!telemetry) return CALM;
+  let call: CallSituation = 'NONE';
+  if (telemetry.on_call) call = telemetry.call_counterparty_known ? 'CONTACT' : 'UNKNOWN_NUMBER';
+  let typing: TypingSituation = 'NATURAL';
+  if (telemetry.typing_cadence_z >= TYPING.NOT_THEIR_RHYTHM.typing_cadence_z) {
+    typing = 'NOT_THEIR_RHYTHM';
+  } else if (
+    telemetry.paste_on_account_field ||
+    telemetry.max_field_dwell_s >= TYPING.HESITANT.dwell_s
+  ) {
+    typing = 'HESITANT';
+  }
+  return {
+    call,
+    screenShared: telemetry.screen_share_active || telemetry.remote_access_active,
+    typing,
+  };
+}
+
 /** The API's bound on an app session's durations (`MAX_SESSION_S`, 24 h; docs/16). */
 export const MAX_SESSION_S = 24 * 60 * 60;
 
