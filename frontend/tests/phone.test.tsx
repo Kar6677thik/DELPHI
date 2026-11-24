@@ -2,7 +2,13 @@ import { act, screen, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { describe, expect, it } from 'vitest';
 
-import { CALM, type Persona, type ProbeRequest, telemetryFor } from '../src/api/phone';
+import {
+  CALM,
+  MAX_SESSION_S,
+  type Persona,
+  type ProbeRequest,
+  telemetryFor,
+} from '../src/api/phone';
 import type { GuardianSessionView, KbVersionView } from '../src/api/types';
 import { FakeEventSource } from './fakeEventSource';
 import { MOCK_KB_CONTENT, problem, setMockSession } from './mocks/handlers';
@@ -265,7 +271,9 @@ describe('/phone', () => {
     expect(natural.session_duration_s).toBe(42);
     const hesitant = telemetryFor({ ...CALM, typing: 'HESITANT' }, 0.2);
     expect(hesitant.paste_on_account_field && hesitant.max_field_dwell_s > 20).toBe(true);
-    expect(hesitant.session_duration_s).toBe(1); // never zero
+    // A session lasts at least its longest dwell, and at most the API's 24 h bound.
+    expect(hesitant.session_duration_s).toBe(hesitant.max_field_dwell_s);
+    expect(telemetryFor(CALM, 2 * MAX_SESSION_S).session_duration_s).toBe(MAX_SESSION_S);
     expect(
       telemetryFor({ ...CALM, typing: 'NOT_THEIR_RHYTHM' }, 5).typing_cadence_z,
     ).toBeGreaterThan(3);

@@ -149,7 +149,14 @@ const TYPING: Readonly<
   NOT_THEIR_RHYTHM: { typing_cadence_z: 4.1, paste: false, dwell_s: 9 },
 };
 
-/** The telemetry sent with the payment, for a situation and the time spent in the app. */
+/** The API's bound on an app session's durations (`MAX_SESSION_S`, 24 h; docs/16). */
+export const MAX_SESSION_S = 24 * 60 * 60;
+
+/**
+ * The telemetry sent with the payment, for a situation and the time spent in the app. The
+ * session lasts at least as long as its longest field dwell, and at most the API's bound, so a
+ * form left open overnight is not refused.
+ */
 export function telemetryFor(situation: Situation, sessionSeconds: number): Schemas['TelemetryIn'] {
   const typing = TYPING[situation.typing];
   return {
@@ -160,7 +167,10 @@ export function telemetryFor(situation: Situation, sessionSeconds: number): Sche
     screen_share_active: situation.screenShared,
     on_call: situation.call !== 'NONE',
     call_counterparty_known: situation.call === 'NONE' ? null : situation.call === 'CONTACT',
-    session_duration_s: Math.max(1, Math.round(sessionSeconds)),
+    session_duration_s: Math.min(
+      MAX_SESSION_S,
+      Math.max(typing.dwell_s, Math.round(sessionSeconds)),
+    ),
   };
 }
 
