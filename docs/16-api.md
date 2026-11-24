@@ -128,8 +128,8 @@ The Chase mutations take no `If-Match`, and `ChaseView` has no ETag: lien approv
 | POST `/scout/queue/{item_id}/dismiss` | `fde` | `{reason}`: removes the item from the queue (audited). 404 if it is not in the queue; 409 if a concurrent dismissal of it won |
 | POST `/scout/runs` | `fde` | → job |
 | GET `/scout/clusters` | `view` | newest first, each with its draft; keyset paging (`limit` ≤ 200, default 50, `cursor`) → `{items, next_cursor}` |
-| GET `/typology-drafts`, GET `/typology-drafts/{id}` | `view` | |
-| PATCH `/typology-drafts/{id}` | `fde` | `If-Match`; partial update; validated against the KB rules |
+| GET `/typology-drafts`, GET `/typology-drafts/{id}` | `view` | most recently edited first, filter `status`, keyset paging → `{items, next_cursor}`; one draft has `ETag` and `issues` (what still breaks a KB rule) |
+| PATCH `/typology-drafts/{id}` | `fde` | `If-Match`; partial update; validated against the KB rules: 422 with `errors` `[{path, code, message}]`, nothing saved; 409 once in shadow, promoted or rejected |
 | POST `/typology-drafts/{id}/backtest` | `fde` | → job |
 | POST `/typology-drafts/{id}/shadow` | `fde` | requires BACKTESTED |
 | POST `/typology-drafts/{id}/promote` | `fde` | four-eyes; requires shadow count |

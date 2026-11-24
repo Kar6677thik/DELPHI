@@ -642,6 +642,49 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/typology-drafts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Drafts
+         * @description The drafts, most recently edited first; keyset paging (docs/16 §1).
+         */
+        get: operations["read_drafts_api_v1_typology_drafts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/typology-drafts/{draft_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Draft */
+        get: operations["read_draft_api_v1_typology_drafts__draft_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Patch Draft
+         * @description docs/11 §3: a partial edit, validated as ACTIVE + the draft; the next revision, back to
+         *     DRAFT. 412 on a stale If-Match; 422 with `errors` when it breaks KB rules (nothing saved);
+         *     409 for a draft in shadow, promoted or rejected.
+         */
+        patch: operations["patch_draft_api_v1_typology_drafts__draft_id__patch"];
+        trace?: never;
+    };
     "/api/v1/guardian/sessions": {
         parameters: {
             query?: never;
@@ -1302,6 +1345,105 @@ export interface components {
             /** Override Rationale */
             override_rationale?: string | null;
         };
+        /** DraftIssue */
+        DraftIssue: {
+            /** Path */
+            path: string;
+            /** Code */
+            code: string;
+            /** Message */
+            message: string;
+        };
+        /** DraftPage */
+        DraftPage: {
+            /** Items */
+            items: components["schemas"]["DraftView"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
+        /**
+         * DraftPatch
+         * @description A partial update: the fields given replace the spec's (docs/16: partial update).
+         */
+        DraftPatch: {
+            /** Name */
+            name?: string | null;
+            /** Key */
+            key?: string | null;
+            /** Description */
+            description?: string | null;
+            /** Color */
+            color?: string | null;
+            /** F3 Stages */
+            f3_stages?: ("INITIAL_ACCESS" | "POSITIONING" | "EXECUTION" | "MONETIZATION")[] | null;
+            /** Contexts */
+            contexts?: ("OUTBOUND_PAYMENT" | "ACCOUNT_REVIEW")[] | null;
+            /** Likelihoods */
+            likelihoods?: {
+                [key: string]: components["schemas"]["LikelihoodRow"];
+            } | null;
+            /** Open Mass Share */
+            open_mass_share?: number | null;
+            /** Loss */
+            loss?: {
+                [key: string]: {
+                    [key: string]: components["schemas"]["LossCell"];
+                };
+            } | null;
+            /** Enabled Sources */
+            enabled_sources?: {
+                [key: string]: {
+                    [key: string]: components["schemas"]["LikelihoodRow"];
+                };
+            } | null;
+        };
+        /**
+         * DraftStatus
+         * @enum {string}
+         */
+        DraftStatus: "CANDIDATE" | "DRAFT" | "BACKTESTED" | "IN_SHADOW" | "PROMOTED" | "REJECTED";
+        /** DraftView */
+        DraftView: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Cluster Id */
+            cluster_id: string | null;
+            /** Status */
+            status: string;
+            /** Revision */
+            revision: number;
+            /** Spec */
+            spec: {
+                [key: string]: unknown;
+            };
+            /** Editors */
+            editors: string[];
+            /** Last Edited By */
+            last_edited_by: string | null;
+            /** Backtest Report */
+            backtest_report: {
+                [key: string]: unknown;
+            } | null;
+            /** Backtested Revision */
+            backtested_revision: number | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Version */
+            version: number;
+            /** Issues */
+            issues: components["schemas"]["DraftIssue"][];
+        };
         /**
          * EvidenceRecordView
          * @description docs/09 §2 item 5: one fetched evidence record (an evidence card).
@@ -1718,12 +1860,36 @@ export interface components {
             /** Review Due At */
             review_due_at: string | null;
         };
+        /**
+         * LikelihoodRow
+         * @description One Dirichlet row: P(outcome | hypothesis) as probabilities plus an ESS (docs/06 §2).
+         */
+        LikelihoodRow: {
+            /** Probs */
+            probs: number[];
+            /** Ess */
+            ess: number;
+        };
         /** LoginRequest */
         LoginRequest: {
             /** Username */
             username: string;
             /** Password */
             password: string;
+        };
+        /**
+         * LossCell
+         * @description Loss(d, h) = (base_inr * 100 + rate * A) * m  (docs/06 §4).
+         *
+         *     YAML form: ``[base_inr, rate, vulnerability_scaled]``.
+         */
+        LossCell: {
+            /** Base Inr */
+            base_inr: number;
+            /** Rate */
+            rate: number;
+            /** Vulnerability Scaled */
+            vulnerability_scaled: boolean;
         };
         /** MeView */
         MeView: {
@@ -3425,6 +3591,107 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ClusterPage"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    read_drafts_api_v1_typology_drafts_get: {
+        parameters: {
+            query?: {
+                status?: components["schemas"]["DraftStatus"] | null;
+                limit?: number;
+                cursor?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DraftPage"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    read_draft_api_v1_typology_drafts__draft_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                draft_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DraftView"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    patch_draft_api_v1_typology_drafts__draft_id__patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                "If-Match"?: string | null;
+            };
+            path: {
+                draft_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DraftPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DraftView"];
                 };
             };
             /** @description An RFC 9457 problem (docs/16 §1) */

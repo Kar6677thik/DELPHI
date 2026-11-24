@@ -1875,6 +1875,195 @@
         }
       }
     },
+    "/api/v1/typology-drafts": {
+      "get": {
+        "tags": [
+          "scout"
+        ],
+        "summary": "Read Drafts",
+        "description": "The drafts, most recently edited first; keyset paging (docs/16 §1).",
+        "operationId": "read_drafts_api_v1_typology_drafts_get",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/DraftStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An RFC 9457 problem (docs/16 §1)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/typology-drafts/{draft_id}": {
+      "get": {
+        "tags": [
+          "scout"
+        ],
+        "summary": "Read Draft",
+        "operationId": "read_draft_api_v1_typology_drafts__draft_id__get",
+        "parameters": [
+          {
+            "name": "draft_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Draft Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftView"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An RFC 9457 problem (docs/16 §1)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "scout"
+        ],
+        "summary": "Patch Draft",
+        "description": "docs/11 §3: a partial edit, validated as ACTIVE + the draft; the next revision, back to\nDRAFT. 412 on a stale If-Match; 422 with `errors` when it breaks KB rules (nothing saved);\n409 for a draft in shadow, promoted or rejected.",
+        "operationId": "patch_draft_api_v1_typology_drafts__draft_id__patch",
+        "parameters": [
+          {
+            "name": "draft_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Draft Id"
+            }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DraftPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftView"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An RFC 9457 problem (docs/16 §1)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/guardian/sessions": {
       "get": {
         "tags": [
@@ -3772,6 +3961,349 @@
         "title": "DispositionRequest",
         "description": "docs/16: `{decision, typology?, confidence (1–5), note?, override_rationale?}`."
       },
+      "DraftIssue": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "path",
+          "code",
+          "message"
+        ],
+        "title": "DraftIssue"
+      },
+      "DraftPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DraftView"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "DraftPage"
+      },
+      "DraftPatch": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 120,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "key": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[A-Z][A-Z0-9]*(_[A-Z0-9]+)*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Key"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "color": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^#[0-9A-Fa-f]{6}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Color"
+          },
+          "f3_stages": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "INITIAL_ACCESS",
+                    "POSITIONING",
+                    "EXECUTION",
+                    "MONETIZATION"
+                  ]
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "F3 Stages"
+          },
+          "contexts": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "OUTBOUND_PAYMENT",
+                    "ACCOUNT_REVIEW"
+                  ]
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contexts"
+          },
+          "likelihoods": {
+            "anyOf": [
+              {
+                "patternProperties": {
+                  "^[A-Z][A-Z0-9]*(_[A-Z0-9]+)*$": {
+                    "$ref": "#/components/schemas/LikelihoodRow"
+                  }
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Likelihoods"
+          },
+          "open_mass_share": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Open Mass Share"
+          },
+          "loss": {
+            "anyOf": [
+              {
+                "patternProperties": {
+                  "^[A-Z][A-Z0-9]*(_[A-Z0-9]+)*$": {
+                    "patternProperties": {
+                      "^[A-Z][A-Z0-9]*(_[A-Z0-9]+)*$": {
+                        "$ref": "#/components/schemas/LossCell"
+                      }
+                    },
+                    "type": "object"
+                  }
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Loss"
+          },
+          "enabled_sources": {
+            "anyOf": [
+              {
+                "patternProperties": {
+                  "^[A-Z][A-Z0-9]*(_[A-Z0-9]+)*$": {
+                    "patternProperties": {
+                      "^[A-Z][A-Z0-9]*(_[A-Z0-9]+)*$": {
+                        "$ref": "#/components/schemas/LikelihoodRow"
+                      }
+                    },
+                    "type": "object"
+                  }
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled Sources"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "DraftPatch",
+        "description": "A partial update: the fields given replace the spec's (docs/16: partial update)."
+      },
+      "DraftStatus": {
+        "type": "string",
+        "enum": [
+          "CANDIDATE",
+          "DRAFT",
+          "BACKTESTED",
+          "IN_SHADOW",
+          "PROMOTED",
+          "REJECTED"
+        ],
+        "title": "DraftStatus"
+      },
+      "DraftView": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "cluster_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cluster Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "revision": {
+            "type": "integer",
+            "title": "Revision"
+          },
+          "spec": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Spec"
+          },
+          "editors": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "title": "Editors"
+          },
+          "last_edited_by": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Edited By"
+          },
+          "backtest_report": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Backtest Report"
+          },
+          "backtested_revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Backtested Revision"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "version": {
+            "type": "integer",
+            "title": "Version"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/components/schemas/DraftIssue"
+            },
+            "type": "array",
+            "title": "Issues"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "cluster_id",
+          "status",
+          "revision",
+          "spec",
+          "editors",
+          "last_edited_by",
+          "backtest_report",
+          "backtested_revision",
+          "created_at",
+          "updated_at",
+          "version",
+          "issues"
+        ],
+        "title": "DraftView"
+      },
       "EvidenceRecordView": {
         "properties": {
           "id": {
@@ -5009,6 +5541,29 @@
         ],
         "title": "LienView"
       },
+      "LikelihoodRow": {
+        "properties": {
+          "probs": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "title": "Probs"
+          },
+          "ess": {
+            "type": "number",
+            "title": "Ess"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "probs",
+          "ess"
+        ],
+        "title": "LikelihoodRow",
+        "description": "One Dirichlet row: P(outcome | hypothesis) as probabilities plus an ESS (docs/06 §2)."
+      },
       "LoginRequest": {
         "properties": {
           "username": {
@@ -5030,6 +5585,33 @@
           "password"
         ],
         "title": "LoginRequest"
+      },
+      "LossCell": {
+        "properties": {
+          "base_inr": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Base Inr"
+          },
+          "rate": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Rate"
+          },
+          "vulnerability_scaled": {
+            "type": "boolean",
+            "title": "Vulnerability Scaled"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "base_inr",
+          "rate",
+          "vulnerability_scaled"
+        ],
+        "title": "LossCell",
+        "description": "Loss(d, h) = (base_inr * 100 + rate * A) * m  (docs/06 §4).\n\nYAML form: ``[base_inr, rate, vulnerability_scaled]``."
       },
       "MeView": {
         "properties": {

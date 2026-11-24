@@ -110,6 +110,22 @@ An FDE_ENGINEER opens a candidate and edits:
 
 Every save increments `revision` (with an optimistic lock) and returns the draft to `DRAFT`.
 
+**Implementation (#118).** `delphi.scout.drafts` and `GET`/`PATCH /typology-drafts`:
+- **The spec.** A draft's `spec` holds:
+  - `name` (the display name), `key`, `description`, `color`, `f3_stages` and `contexts`;
+  - `likelihoods`: the new hypothesis's rows, starting from the cluster's;
+  - `open_mass_share` (0.5), and `loss` (null means `APP_INVESTMENT`'s block);
+  - `enabled_sources`: each source ACTIVE has disabled, with a row for every hypothesis;
+  - the cluster's `outcome_profile`.
+- **Validation.** Every save builds the candidate KB, ACTIVE plus the new hypothesis appended to
+  the order and its enabled sources switched on, and runs the KB's own rules (`kb.validate`).
+  - A draft that breaks one is a 422 listing the issues in `errors`, and nothing is saved.
+  - A draft that is valid but unsaved shows its issues in `GET` (a CANDIDATE lacks a key and a
+    colour).
+- **A save** needs `If-Match` with the draft's `version` (412 when stale). It is the next
+  `revision`, the status returns to DRAFT, and the editor is added to `editors`; it is audited.
+- **Not editable:** a draft that is IN_SHADOW, PROMOTED or REJECTED (409).
+
 ## 4. Backtest (`RUN_BACKTEST` job) → `BACKTESTED`
 
 Replays, under candidate KB = (ACTIVE + draft), every Guardian session and case from the last 30
