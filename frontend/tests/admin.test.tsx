@@ -191,6 +191,52 @@ describe('/admin', () => {
   });
 });
 
+describe('/admin demo stories', () => {
+  it('plays a story on autoplay, and sends the other mode to the phone', async () => {
+    setMockSession('admin');
+    const sent: { body?: unknown; key?: string | null } = {};
+    server.use(
+      http.get('/api/v1/jobs', () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.post('/api/v1/admin/demo/scenarios/S2/run', async ({ request }) => {
+        sent.body = await request.json();
+        sent.key = request.headers.get('Idempotency-Key');
+        return HttpResponse.json(job({ type: 'DEMO_STORY', status: 'QUEUED' }), { status: 202 });
+      }),
+    );
+    const { user } = renderApp('/admin');
+    const card = await screen.findByRole('region', { name: 'Demo stories' });
+    const arjun = within(card).getByText('S-2 Arjun').closest('li');
+    if (!arjun) throw new Error('no S-2 row');
+    await waitFor(() => {
+      expect(within(arjun).getByRole('button', { name: 'Autoplay' })).toBeEnabled();
+    });
+    await user.click(within(arjun).getByRole('button', { name: 'Autoplay' }));
+    expect(await within(card).findByText(/Queued: the story plays/)).toBeVisible();
+    expect(sent.body).toEqual({ mode: 'autoplay' });
+    expect(sent.key).toMatch(/^[0-9a-f-]{36}$/);
+    expect(within(arjun).getByRole('link', { name: 'Play on the phone' })).toHaveAttribute(
+      'href',
+      '/phone?story=S2',
+    );
+  });
+
+  it('waits for the dataset and the models', async () => {
+    setMockSession('admin');
+    server.use(
+      http.get('/api/v1/status', () =>
+        HttpResponse.json({ ...MOCK_STATUS, dataset_ready: false, models_ready: false }),
+      ),
+      http.get('/api/v1/jobs', () => HttpResponse.json({ items: [], next_cursor: null })),
+    );
+    renderApp('/admin');
+    const card = await screen.findByRole('region', { name: 'Demo stories' });
+    expect(within(card).getByText(/run once the dataset and the sensing models/)).toBeVisible();
+    for (const button of within(card).getAllByRole('button', { name: 'Autoplay' })) {
+      expect(button).toBeDisabled();
+    }
+  });
+});
+
 describe('/admin users', () => {
   it('lists the users, marks you, and never offers to disable you', async () => {
     setMockSession('admin');
