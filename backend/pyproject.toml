@@ -5,7 +5,7 @@ description = "DELPHI — Dynamic Evidence-Led Probing of fraud Hypotheses & Int
 requires-python = ">=3.12,<3.13"
 dependencies = [
   "alembic>=1.14",
-  "anthropic>=2.10.0",
+  "anthropic>=2.12.0",
   "argon2-cffi>=23.1",
   "fastapi>=0.165.0",
   "jinja2>=3.1",
@@ -29,8 +29,8 @@ delphi = "delphi.cli:main"
 [dependency-groups]
 dev = [
   "pytest>=8.3",
-  "hypothesis>=6.170.15",
-  "coverage[toml]>=7.17.3",
+  "hypothesis>=6.170.17",
+  "coverage[toml]>=7.17.4",
   "ruff>=0.17.6",
   "mypy>=1.13",
   "import-linter>=2.17",
