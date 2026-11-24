@@ -20,6 +20,7 @@ the steps through the same channel contract as the mock phone.
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -33,6 +34,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import Engine, select
 
 from delphi.kb.model import ClassifierThresholds
+from delphi.sim.api import current_dataset, history_window
 from delphi.sim.response_models import ResponseModels
 from delphi.sim.rng import keyed_rng
 from delphi.sim.scenarios import ScenarioType
@@ -156,6 +158,67 @@ class SimulatedCustomer:
         if row is None:
             raise LookupError(f"payment {payment_id} has no simulated truth")
         return _Truth(ScenarioType(row.scenario_type), bool(row.coached))
+
+
+@dataclass
+class LiveCustomer:
+    """The simulated customer of the live bank, for the worker's Guardian runner (#95, #101).
+
+    The worker starts before the bank holds a dataset, so the seed and the history's start that
+    ``SimulatedCustomer`` keys its draws by are read from the dataset in the bank when a probe
+    is answered (one bounded row), and the customer is rebuilt when that dataset changes. The
+    story scripts (``script``) are kept in memory across datasets: a worker restart forgets
+    them, and the story session's remaining probes are answered from the response models with
+    the story's ground truth (docs/14 §10)."""
+
+    sim_engine: Engine
+    models: ResponseModels
+    thresholds: ClassifierThresholds
+    scripts: dict[UUID, dict[str, Sequence[AnswerStep]]] = field(default_factory=dict)
+    _current: tuple[UUID, SimulatedCustomer] | None = None
+    _lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def script(self, payment_id: UUID, answers: Mapping[str, Sequence[AnswerStep]]) -> None:
+        """Scripted answers for one payment (a persona story, docs/14 §6)."""
+        with self._lock:
+            self.scripts[payment_id] = {k: tuple(v) for k, v in answers.items()}
+
+    def answer(
+        self,
+        *,
+        payment_id: UUID,
+        probe_key: str,
+        options: Sequence[str],
+        otp_code: str | None,
+        timeout_s: float,
+        at: datetime,
+    ) -> list[AnswerStep]:
+        return self._customer().answer(
+            payment_id=payment_id,
+            probe_key=probe_key,
+            options=options,
+            otp_code=otp_code,
+            timeout_s=timeout_s,
+            at=at,
+        )
+
+    def _customer(self) -> SimulatedCustomer:
+        with self.sim_engine.connect() as conn:
+            dataset = current_dataset(conn)
+        if dataset is None:
+            raise LookupError("the bank holds no dataset")
+        with self._lock:
+            if self._current is None or self._current[0] != dataset.id:
+                customer = SimulatedCustomer(
+                    sim_engine=self.sim_engine,
+                    models=self.models,
+                    thresholds=self.thresholds,
+                    seed=dataset.seed,
+                    history_start=history_window(dataset).start,
+                    scripts=self.scripts,  # shared: a script registered later still counts
+                )
+                self._current = (dataset.id, customer)
+            return self._current[1]
 
 
 def raw_answer(
