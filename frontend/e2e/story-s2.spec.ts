@@ -1,30 +1,29 @@
-import { expect, test } from '@playwright/test';
+import { expect, type Locator, test } from '@playwright/test';
 
-// E2E-S2 (docs/21 §4, #101): Arjun pays a hospital from a new phone; a fingerprint settles it,
-// so the payment is sent within 30 s, and the session shows the biometric chosen over the OTP.
-// The stack needs the test dataset with the personas and its trained models (ci.yml e2e job).
+// E2E-S2 (docs/21 §4, #101): Arjun pays a hospital from a new phone with the real sensing
+// prior, answering as his persona script does, and the payment is sent within 30 s after at
+// most two active probes. Which step-up runs follows the live prior (R-01, #281): ENG-S2 pins
+// the biometric-over-OTP choice on the fixture prior.
+// The stack needs the demo dataset with its personas and trained models (ci.yml e2e job).
 const USERNAME = process.env.E2E_USERNAME ?? 'admin';
 const PASSWORD = process.env.E2E_PASSWORD ?? 'dev-only-admin-pw';
 
 /** docs/21 E2E-S2: from paying to "Payment sent". */
 const SENT_WITHIN_MS = 30_000;
-/** Arjun's answer times, from `sim/config/personas.yaml` S2 (`after_s`). */
-const BIOMETRIC_AFTER_MS = 2_000;
+/** docs/21 ENG-S2: at most two active probes. */
+const MAX_ACTIVE_PROBES = 2;
+/** Arjun's answer times, from `sim/config/personas.yaml` S2 (`after_s`); the OTP likewise. */
+const STEP_UP_AFTER_MS = 2_000;
 const PURPOSE_AFTER_MS = 5_000;
 /** Staging the story is a worker job; the worker polls its queue. */
 const STAGED_WITHIN_MS = 60_000;
 
-interface Candidate {
-  source_key: string;
-  selected: boolean;
-}
 interface SessionView {
-  id: string;
   decision: string | null;
-  probe_runs: { probe_key: string; candidates: Candidate[] | null }[];
+  probe_runs: { probe_key: string; mode: string }[];
 }
 
-test('E2E-S2: Arjun confirms with a fingerprint and the payment is sent', async ({ page }) => {
+test('E2E-S2: Arjun answers as scripted and the payment is sent', async ({ page }) => {
   test.setTimeout(3 * 60_000);
   await page.goto('/');
   await page.getByLabel('Username').fill(USERNAME);
@@ -40,39 +39,47 @@ test('E2E-S2: Arjun confirms with a fingerprint and the payment is sent', async 
     (r) => r.url().endsWith('/api/v1/guardian/sessions') && r.request().method() === 'POST',
   );
   const started = Date.now();
+  const left = () => Math.max(SENT_WITHIN_MS - (Date.now() - started), 1);
   await phone.getByRole('button', { name: /^Pay/ }).click();
-  const session = (await (await paid).json()) as SessionView;
+  const { id } = (await (await paid).json()) as { id: string };
 
-  // Answer as Arjun's persona script does (docs/14 §6), whatever the Guardian asks, in its
-  // order: the fingerprint matches, and the payment is for a hospital.
+  // Answer whatever the Guardian asks, at the script's pace: an instant answer reads as a
+  // timing anomaly (docs/08 §4). The fingerprint matches; the payment is for a hospital; an
+  // OTP is typed from the mock SMS.
   const sent = phone.getByText('Payment sent');
   const sensor = phone.getByRole('button', { name: 'Touch the sensor' });
   const purpose = phone.getByRole('button', { name: 'Medical / hospital' });
-  const left = () => Math.max(SENT_WITHIN_MS - (Date.now() - started), 1);
+  const otp = phone.getByLabel('One-time code');
+  const answer = async (screen: Locator, afterMs: number, act: () => Promise<void>) => {
+    await page.waitForTimeout(afterMs);
+    await act();
+    await expect(screen).toBeHidden({ timeout: left() }); // the answered screen goes
+  };
   while (!(await sent.isVisible())) {
-    await expect(sent.or(sensor).or(purpose)).toBeVisible({ timeout: left() });
-    for (const [answer, afterMs] of [
-      [sensor, BIOMETRIC_AFTER_MS],
-      [purpose, PURPOSE_AFTER_MS],
-    ] as const) {
-      if (await answer.isVisible()) {
-        // As the script does: an instant answer reads as a timing anomaly (docs/08 §4).
-        await page.waitForTimeout(afterMs);
-        await answer.click();
-        await expect(answer).toBeHidden({ timeout: left() }); // the answered screen goes
-      }
+    await expect(sent.or(sensor).or(purpose).or(otp)).toBeVisible({ timeout: left() });
+    if (await sensor.isVisible()) {
+      await answer(sensor, STEP_UP_AFTER_MS, () => sensor.click());
+    } else if (await purpose.isVisible()) {
+      await answer(purpose, PURPOSE_AFTER_MS, () => purpose.click());
+    } else if (await otp.isVisible()) {
+      const sms = await phone.getByRole('status').filter({ hasText: 'one-time code' }).innerText();
+      const code = /\b(\d{6})\b/.exec(sms)?.[1] ?? '';
+      expect(code, 'the mock SMS carries the code').toHaveLength(6);
+      await answer(otp, STEP_UP_AFTER_MS, async () => {
+        await otp.fill(code);
+        await phone.getByRole('button', { name: 'Confirm' }).click();
+      });
     }
   }
   expect(Date.now() - started).toBeLessThanOrEqual(SENT_WITHIN_MS);
 
-  const view = await page.request.get(`/api/v1/guardian/sessions/${session.id}`);
+  const view = await page.request.get(`/api/v1/guardian/sessions/${id}`);
   expect(view.ok()).toBe(true);
-  const decided = (await view.json()) as SessionView;
-  expect(decided.decision).toBe('RELEASE');
-  const first = decided.probe_runs.find((r) => r.probe_key === 'BIOMETRIC_STEP_UP');
-  expect(first, 'the Guardian ran the biometric').toBeDefined();
-  const otp = first?.candidates?.find((c) => c.source_key === 'OTP_STEP_UP');
-  expect(otp, 'the OTP was a candidate').toBeDefined();
-  expect(otp?.selected).toBe(false);
-  expect(decided.probe_runs.some((r) => r.probe_key === 'OTP_STEP_UP')).toBe(false);
+  const session = (await view.json()) as SessionView;
+  expect(session.decision).toBe('RELEASE');
+  const active = session.probe_runs.filter((r) => r.mode === 'ACTIVE');
+  expect(active.length).toBeLessThanOrEqual(MAX_ACTIVE_PROBES);
+  // STEP_UP_AUTH is exclusive (docs/06 §17): never both the biometric and the OTP.
+  const stepUps = active.filter((r) => ['BIOMETRIC_STEP_UP', 'OTP_STEP_UP'].includes(r.probe_key));
+  expect(stepUps.length).toBeLessThanOrEqual(1);
 });
