@@ -39,6 +39,7 @@ FULL_SHARE = 0.4  # docs/21 §5: 40% of the payments look like a full session
 # §1, 20 requests/s by default) on a schedule that is exactly 20/s.
 CLIENTS = 2
 FIRST_EVENT_WAIT_S = 30.0  # a session with no response by then counts as a failure
+RECONNECT_S = 1.0  # a dropped or refused phone stream is opened again after this
 REQUEST_TIMEOUT_S = 30.0
 API = "/api/v1"
 
@@ -82,6 +83,7 @@ class Tally:
     fast: int = 0
     full: int = 0
     statuses: dict[int | str, int] = field(default_factory=dict)  # HTTP status or error
+    stream_drops: dict[str, int] = field(default_factory=dict)  # why a phone stream reconnected
     no_response: int = 0
     first_event: dict[str, float] = field(default_factory=dict)
     arrived: dict[str, asyncio.Event] = field(default_factory=dict)
@@ -139,15 +141,15 @@ async def _events(client: httpx.AsyncClient, customer_id: str) -> AsyncIterator[
     async with client.stream(
         "GET", f"{API}/phone/stream", params={"customer_id": customer_id}, timeout=None
     ) as stream:
-        assert stream.status_code == httpx.codes.OK
+        stream.raise_for_status()  # e.g. 503 before the runner is up: the listener retries
         async for line in stream.aiter_lines():
             if line.startswith("data:"):
                 yield json.loads(line.removeprefix("data:"))
 
 
 async def _listen(client: httpx.AsyncClient, customer_id: str, tally: Tally) -> None:
-    """The phone's stream: when each session first reached the customer. A dropped stream is
-    counted and opened again (the phone reconnects too)."""
+    """The phone's stream: when each session first reached the customer. A stream that ends,
+    drops or is refused is counted and opened again after a pause (the phone reconnects too)."""
     while True:
         try:
             async for event in _events(client, customer_id):
@@ -155,8 +157,13 @@ async def _listen(client: httpx.AsyncClient, customer_id: str, tally: Tally) -> 
                 if session_id is not None and session_id not in tally.first_event:
                     tally.first_event[session_id] = time.perf_counter()
                     tally.seen(session_id).set()
+            drop = "ended"
+        except httpx.HTTPStatusError as exc:
+            drop = str(exc.response.status_code)
         except httpx.HTTPError as exc:
-            tally.count(f"stream {type(exc).__name__}")
+            drop = type(exc).__name__
+        tally.stream_drops[drop] = tally.stream_drops.get(drop, 0) + 1
+        await asyncio.sleep(RECONNECT_S)
 
 
 def _payment(payer: Payer, *, full: bool) -> dict[str, Any]:
@@ -241,8 +248,10 @@ def test_guardian_first_response_p95_under_load() -> None:
         f" full) at {RATE_PER_S}/s for {DURATION_S} s; first response p50 = {p50:.0f} ms,"
         f" p95 = {p95:.0f} ms, max = {timings.max(initial=0):.0f} ms (target p95"
         f" {TARGET_P95_MS:.0f} ms); HTTP statuses {tally.statuses}; no response"
-        f" {tally.no_response}"
+        f" {tally.no_response}; phone stream reconnects {tally.stream_drops}"
     )
+    if tally.fast == 0:  # docs/21 §5 asks for 60% fast path: this run measured none
+        print("WARNING: no session took the fast path, so this run timed full sessions only")
     assert set(tally.statuses) == {httpx.codes.CREATED}, f"failed payments: {tally.statuses}"
     assert tally.no_response == 0
     assert p95 <= TARGET_P95_MS
