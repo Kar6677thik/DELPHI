@@ -44,6 +44,7 @@ from delphi.llm.service import LlmService, primary_provider
 from delphi.navigator.api import OUTREACH as OUTREACH_SOURCE
 from delphi.navigator.api import request_evidence
 from delphi.navigator.jobs import register_navigator_jobs
+from delphi.navigator.reviews import SweepLimits
 from delphi.platform.accounts import BootstrapError, ensure_bootstrap_admin
 from delphi.platform.audit import verify as audit_verify
 from delphi.platform.clock import SystemClock
@@ -71,6 +72,7 @@ from delphi.probes.api import (
 )
 from delphi.probes.registry import CLASSIFIER_NAMES
 from delphi.sensing.api import SensingInference
+from delphi.sensing.config import load_sensing_config
 from delphi.sensing.jobs import register_sensing_jobs
 from delphi.sim.api import PROFILES, dataset_exists, request_dataset
 from delphi.sim.customer import LiveCustomer
@@ -304,7 +306,15 @@ def worker_registry(
         primary_provider(settings),
         settings.llm_daily_token_budget,
     )
-    register_navigator_jobs(registry, sessions=platform.sessions, llm=llm, trail=case_trail)
+    register_navigator_jobs(
+        registry,
+        sessions=platform.sessions,
+        llm=llm,
+        trail=case_trail,
+        clock=platform.clock,
+        p_mule_fallback=load_sensing_config().features.mule_score_fallback,
+        review_limits=SweepLimits.of(settings),
+    )
     if settings.simulation_enabled and settings.sim_database_url is None:
         # The api accepts simulated calls on this flag; a worker without the simulator's pool
         # would leave them queued for ever (docs/09 §3).

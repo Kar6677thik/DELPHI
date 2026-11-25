@@ -27,6 +27,30 @@ the session to the case (#94). A retried call for the same session returns the c
 an open case from another session is refused (`409 INVALID_STATE_TRANSITION`). The account-review
 triggers and the console come with M5 (#103, #109).
 
+**Implementation (complaints trigger, #109).** `COMPLAINT_SWEEP` (every minute, doc 04 §5.4) runs
+`delphi.navigator.reviews.open_complaint_reviews` under the ACTIVE KB:
+- It finds the home-bank (`DLPH`) accounts named in `counterparty_account_ids` by complaints
+  reported in the last `DELPHI_REVIEW_COMPLAINT_LOOKBACK_DAYS` (proposed 30; an older complaint
+  opens no review), in SQL, oldest complaint first, with `NOT EXISTS` against the account's
+  reviews and a `LIMIT`.
+- It is bounded, as `LABEL_DELIVERY` is (#263): one transaction per batch of
+  `DELPHI_REVIEW_SWEEP_BATCH` reviews (25), each under a 30 s statement timeout and 16 MB
+  `work_mem`, and at most `DELPHI_REVIEW_SWEEP_MAX_PER_RUN` reviews (100) per run; the next run
+  carries on. A run that finds another one sweeping (advisory lock 50) skips.
+- It opens an ACCOUNT_REVIEW case (STANDARD, `account_review_sla_minutes`) for each, unless the
+  account has an open review or a review opened after its latest complaint. So it is idempotent
+  per account, and a disposed review reopens only for a newer complaint.
+- The prior is doc 06 §11's, with p_model(MULE) = p_mule from `account_scores`. Without a score
+  (no mule scorer yet, #91) it uses doc 13 §6's fallback (`features.mule_score_fallback`, 0.10),
+  logged as a WARNING and stored in `prior_components.p_mule_source`.
+- An account review has no anomaly model, so q = 0 and the open mass is the profile's base.
+- `LINKED_COMPLAINTS = ONE_OR_MORE` is then stored as the case's first evidence record, through
+  the evidence fetch, so it shows in the timeline and is not planned again. The case stays OPEN,
+  since this is not an investigator action.
+- The amount at stake is the account's executed credits over the last 7 days (doc 02).
+
+The MULE_SWEEP trigger follows with the mule scorer (#91).
+
 **The stored recommendation (#208).** The case row keeps `recommended_decision` and
 `risk_by_decision` current from the start, not only at disposition. Opening stores them for the
 initial posterior. Each evidence record stores them for the new posterior, in the same
