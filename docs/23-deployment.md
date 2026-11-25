@@ -305,6 +305,7 @@ to start, exit code 2, naming the variable, if one is missing or invalid.
 | `DELPHI_CLIENT_IP_HEADER` | unset | api | ConfigMap: `CF-Connecting-IP`. The header with the real client IP behind the tunnel, used for the login lockout and audit. Safe because only the node (the host tunnel) can reach the api pod (§4 NetworkPolicies) |
 | `DELPHI_SESSION_IDLE_H` / `DELPHI_SESSION_ABSOLUTE_DAYS` | `12` / `7` | api | doc 19 §2 |
 | `DELPHI_LOGIN_MAX_FAILURES` / `DELPHI_LOGIN_WINDOW_MIN` | `5` / `15` | api | doc 16 §1 |
+| `DELPHI_EVAL_WORKERS` | `4` | evaluation run | doc 22 §1: worker processes for one evaluation run. Evaluation does not run in the cluster's worker pod (1536Mi): it runs off-cluster or as its own Job sized for it |
 | `DELPHI_DATASET_PROFILES` | `test,demo,eval` | api, worker | ConfigMap: `test,demo` on the home server (the `eval` dataset needs about 3.8 GiB; §4). `POST /admin/datasets`, `delphi seed` and `GENERATE_DATASET` refuse other profiles |
 | `DELPHI_RATE_LIMIT_PER_S` / `DELPHI_RATE_LIMIT_BURST` | `20` / `40` | api | doc 16 §1 |
 | `DELPHI_LLM_PROVIDER` | `template` | api, worker | `anthropic` or `template` (the kill switch, doc 15 §3). With `template` no model is called |

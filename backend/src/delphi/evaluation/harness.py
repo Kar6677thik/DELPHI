@@ -28,7 +28,7 @@ from delphi.evaluation.replay import Policy, replay
 from delphi.sim.dataset import Dataset
 from delphi.sim.response_models import ResponseModels
 
-WORKERS = 4  # docs/22 §1
+WORKERS = 4  # docs/22 §1; a deployment sets DELPHI_EVAL_WORKERS (``Settings.eval_workers``)
 
 # Set in each worker by ``_share`` (and in the parent when running in-process).
 _SHARED: dict[str, object] = {}
