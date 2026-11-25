@@ -37,6 +37,7 @@ CREATE TABLE delphi.chase_operations (
   last_traced_at      timestamptz NOT NULL,
   metrics             jsonb NOT NULL,
   created_by          uuid REFERENCES delphi.users (id),
+  created_at          timestamptz NOT NULL,
   version             integer NOT NULL CHECK (version >= 1)
 );
 CREATE INDEX chase_operations_status_idx ON delphi.chase_operations (status, reported_at);
@@ -46,7 +47,7 @@ CREATE INDEX chase_operations_created_by_idx ON delphi.chase_operations (created
 
 CREATE TABLE delphi.chase_candidates (
   id                  uuid PRIMARY KEY,
-  operation_id        uuid NOT NULL REFERENCES delphi.chase_operations (id),
+  operation_id        uuid NOT NULL REFERENCES delphi.chase_operations (id) ON DELETE CASCADE,
   account_id          uuid NOT NULL REFERENCES bank.accounts (id),
   hop                 integer NOT NULL CHECK (hop >= 1),
   taint_paise         bigint NOT NULL CHECK (taint_paise >= 0),
@@ -66,8 +67,8 @@ CREATE INDEX chase_candidates_account_idx ON delphi.chase_candidates (account_id
 
 CREATE TABLE delphi.liens (
   id               uuid PRIMARY KEY,
-  operation_id     uuid NOT NULL REFERENCES delphi.chase_operations (id),
-  candidate_id     uuid NOT NULL REFERENCES delphi.chase_candidates (id),
+  operation_id     uuid NOT NULL REFERENCES delphi.chase_operations (id) ON DELETE CASCADE,
+  candidate_id     uuid NOT NULL REFERENCES delphi.chase_candidates (id) ON DELETE CASCADE,
   account_id       uuid NOT NULL REFERENCES bank.accounts (id),
   bank_code        text NOT NULL,
   amount_paise     bigint NOT NULL CHECK (amount_paise >= 0),
@@ -96,7 +97,7 @@ CREATE INDEX liens_approved_by_idx ON delphi.liens (approved_by);
 
 CREATE TABLE delphi.cfcfrms_tickets (
   id              uuid PRIMARY KEY,
-  lien_id         uuid NOT NULL UNIQUE REFERENCES delphi.liens (id),
+  lien_id         uuid NOT NULL UNIQUE REFERENCES delphi.liens (id) ON DELETE CASCADE,
   target_bank     text NOT NULL,
   status          text NOT NULL
                   CHECK (status IN ('DRAFTED', 'SENT_SIMULATED', 'ACKNOWLEDGED', 'EXPIRED')),

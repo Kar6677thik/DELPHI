@@ -48,6 +48,8 @@ _MS_PER_S = 1000
 # The demo's rows, deleted children first: (schema.table, its creation-time column).
 RESET_TABLES: tuple[tuple[str, str], ...] = (
     ("delphi.police_alert_drafts", "created_at"),
+    # Chase (#113): candidates, liens and tickets go with their operation (ON DELETE CASCADE).
+    ("delphi.chase_operations", "created_at"),
     ("delphi.trace_events", "at"),
     ("delphi.evidence_records", "created_at"),
     ("delphi.cases", "created_at"),  # its sessions point back at it: DEFERRABLE (docs/17)
@@ -87,6 +89,9 @@ KEPT_TABLES: frozenset[str] = frozenset(
     {
         "bank.account_scores",  # the mule scorer's, refreshed by MULE_SWEEP
         "delphi.audit_log",  # append-only; the reset is audited in it
+        "delphi.cfcfrms_tickets",  # go with their lien, and liens with their operation
+        "delphi.chase_candidates",  # go with their operation (ON DELETE CASCADE)
+        "delphi.liens",  # go with their operation (ON DELETE CASCADE)
         "delphi.auth_sessions",
         "delphi.datasets",
         "delphi.idempotency_keys",

@@ -38,6 +38,7 @@ chase_operations = Table(
     _ts("last_traced_at"),
     Column("metrics", JSONB, nullable=False),
     Column("created_by", UUID(as_uuid=True)),
+    _ts("created_at"),
     Column("version", Integer, nullable=False),
 )
 

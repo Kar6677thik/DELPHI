@@ -164,7 +164,9 @@ labels(id, subject_type, subject_id, hypothesis_key, label_source, known_at, cre
 
 chase_operations(id, complaint_id null, source_payment_ids uuid[], status, reported_at,
                  reported_loss_paise, kb_version_id, golden_hour_ends_at, last_traced_at,
-                 metrics jsonb, created_by, version)
+                 metrics jsonb, created_by, created_at, version)
+       -- candidates, liens and tickets go with their operation (ON DELETE CASCADE): only the
+       -- demo reset deletes an operation (doc 14 §10)
 chase_candidates(id, operation_id, account_id, hop, taint_paise, balance_paise, p_present, p_mule,
                  erv_paise, wrongful_cost_paise, net_paise, rank, recommended bool, traced_at)
 liens(id, operation_id, candidate_id, account_id, bank_code, amount_paise, status, recorded_reasons,
