@@ -11,10 +11,11 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import Engine, column, func, select, table, update
+from sqlalchemy import Engine, column, func, select, table, text, update
 
 from delphi.kb.model import KnowledgeBase
 from delphi.kb.store import KbStatus, ensure_kb_v1, insert_version, kb_versions
+from delphi.platform.accounts import Role
 from delphi.platform.audit import audit_log
 from delphi.platform.clock import FixedClock
 from delphi.platform.db import make_session_factory
@@ -32,7 +33,9 @@ from ._db import engine_as, upgrade
 from .test_demo_story import (
     WORKER,
     Bank,
+    _client,
     _decided,
+    _key,
     _run_story,
     _worker,
 )
@@ -246,3 +249,59 @@ def test_a_second_reset_at_once_skips(seeded: Bank) -> None:
         job = _reset(seeded)
     assert job["status"] == JobStatus.SUCCEEDED
     assert job["result"] == {"skipped": "another demo reset is running"}
+
+
+# ---------------------------------------------------------------- the endpoint
+
+
+class FakeRunner:
+    async def resume_all(self) -> list[UUID]:
+        return []
+
+    async def shutdown(self) -> int:
+        return 0
+
+
+class FakeLive:
+    """The api's runner slot, counting how often the endpoint drops its sessions."""
+
+    def __init__(self) -> None:
+        self.abandoned = 0
+        self.runner = FakeRunner()
+
+    async def abandon(self) -> int:
+        self.abandoned += 1
+        return 0
+
+
+def test_the_endpoint_is_admin_only_and_needs_the_simulation(seeded: Bank) -> None:
+    with _client(seeded, Role.INVESTIGATOR, simulation_enabled=True) as client:
+        assert client.post(RESET, headers=_key()).status_code == 403
+    with _client(seeded, Role.ADMIN) as client:  # DELPHI_SIMULATION_ENABLED off
+        off = client.post(RESET, headers=_key())
+        assert off.status_code == 503 and off.json()["code"] == "NOT_INITIALISED"
+        assert client.post(RESET).status_code == 422  # no Idempotency-Key
+
+
+def test_the_endpoint_queues_one_reset_and_drops_the_live_sessions(seeded: Bank) -> None:
+    live = FakeLive()
+    with _client(seeded, Role.ADMIN, live=live, simulation_enabled=True) as client:
+        key = _key()
+        queued = client.post(RESET, headers=key)
+        assert queued.status_code == 202, queued.text
+        job = queued.json()
+        assert (job["type"], job["status"]) == ("DEMO_RESET", "QUEUED")
+        assert live.abandoned == 1
+        replay = client.post(RESET, headers=key)
+        assert replay.json()["id"] == job["id"] and live.abandoned == 1
+        busy = client.post(RESET, headers=_key())
+        assert busy.status_code == 409 and busy.json()["code"] == "JOB_ALREADY_RUNNING"
+
+
+def test_the_endpoint_needs_a_dataset(seeded: Bank) -> None:
+    with seeded.owner.begin() as conn:  # an empty bank: no dataset yet
+        conn.execute(text("DELETE FROM sim_truth.persona_manifests"))
+        conn.execute(text("DELETE FROM delphi.datasets"))
+    with _client(seeded, Role.ADMIN, live=FakeLive(), simulation_enabled=True) as client:
+        refused = client.post(RESET, headers=_key())
+    assert refused.status_code == 409 and refused.json()["code"] == "INVALID_STATE_TRANSITION"
