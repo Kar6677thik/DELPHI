@@ -13,6 +13,7 @@ from sqlalchemy import select
 
 from delphi.api.security import Permission, Principal, current_principal
 from delphi.scout.api import run_scout, typology_drafts
+from delphi.scout.drafts import DraftSpec, candidate_kb
 
 from .test_cases import BROWSER, VIEWER, Env, _investigator, env, writer  # noqa: F401 - fixtures
 from .test_scout_queue import _decided
@@ -122,3 +123,62 @@ def test_if_match_and_permissions(
             typology_drafts.update().values(status="REJECTED", rejected_reason="not a pattern")
         )
     assert _patch(client, candidate, {"description": "x"}, '"2"').status_code == 409
+
+
+def test_a_superseded_draft_is_listed_on_request_and_not_edited(
+    env: Env,  # noqa: F811
+    fde: TestClient,
+    candidate: UUID,
+) -> None:
+    """#255: a later run supersedes a CANDIDATE. It is final (409, not 500), and the list shows
+    CANDIDATE drafts unless asked for another status."""
+    with env.owner.begin() as conn:
+        conn.execute(typology_drafts.update().values(status="SUPERSEDED"))
+    assert _patch(fde, candidate, VALID, '"1"').status_code == 409
+    assert fde.get(DRAFTS).json()["items"] == []  # CANDIDATE by default
+    page = fde.get(DRAFTS, params={"status": "SUPERSEDED"}).json()
+    assert [d["id"] for d in page["items"]] == [str(candidate)]
+
+
+def test_enabled_sources_need_a_row_for_every_hypothesis(fde: TestClient, candidate: UUID) -> None:
+    rows: dict[str, Any] = {
+        h: {"probs": [0.05, 0.95], "ess": 20} for h in ("GENUINE", "ATO", "NOT_A_TYPOLOGY")
+    }
+    refused = _patch(
+        fde, candidate, {**VALID, "enabled_sources": {"COLLECT_INTENT_CHECK": rows}}, '"1"'
+    )
+    assert refused.status_code == 422
+    messages = [e["message"] for e in refused.json()["errors"]]
+    assert any("No such hypothesis: NOT_A_TYPOLOGY" in m for m in messages)
+    assert any("A row is needed for:" in m and "APP_COLLECT_REFUND" in m for m in messages)
+
+
+def test_a_stored_spec_is_read_leniently(
+    env: Env,  # noqa: F811
+    fde: TestClient,
+    candidate: UUID,
+) -> None:
+    """A field a later version adds, or a suggested name over the edit limit, never breaks a
+    read; the unknown field survives an edit."""
+    with env.owner.begin() as conn:
+        spec = conn.execute(select(typology_drafts.c.spec)).scalar_one()
+        conn.execute(
+            typology_drafts.update().values(
+                spec={**spec, "name": "x" * 300, "f3_indicators": {"EXECUTION": 1}}
+            )
+        )
+    assert fde.get(f"{DRAFTS}/{candidate}").status_code == 200
+    assert fde.get(DRAFTS).status_code == 200
+    saved = _patch(fde, candidate, VALID, '"1"')
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["spec"]["f3_indicators"] == {"EXECUTION": 1}
+
+
+def test_no_app_investment_to_copy_the_loss_from_is_an_issue(env: Env) -> None:  # noqa: F811
+    active = _kb(env)
+    without = active.model_copy(
+        update={"hypotheses": {k: v for k, v in active.hypotheses.items() if k != "APP_INVESTMENT"}}
+    )
+    spec = DraftSpec(name="n", key="APP_COLLECT_REFUND", color="#c0392b")
+    kb, issues = candidate_kb(without, spec)
+    assert kb is None and [i.code for i in issues] == ["DRAFT_LOSS"]

@@ -698,7 +698,8 @@ export interface paths {
         };
         /**
          * Read Drafts
-         * @description The drafts, most recently edited first; keyset paging (docs/16 §1).
+         * @description The drafts of one status (CANDIDATE unless asked, the owner's decision on #255), most
+         *     recently edited first; keyset paging (docs/16 §1).
          */
         get: operations["read_drafts_api_v1_typology_drafts_get"];
         put?: never;
@@ -1448,7 +1449,7 @@ export interface components {
          * DraftStatus
          * @enum {string}
          */
-        DraftStatus: "CANDIDATE" | "DRAFT" | "BACKTESTED" | "IN_SHADOW" | "PROMOTED" | "REJECTED";
+        DraftStatus: "CANDIDATE" | "DRAFT" | "BACKTESTED" | "IN_SHADOW" | "PROMOTED" | "REJECTED" | "SUPERSEDED";
         /** DraftView */
         DraftView: {
             /**
@@ -3730,7 +3731,7 @@ export interface operations {
     read_drafts_api_v1_typology_drafts_get: {
         parameters: {
             query?: {
-                status?: components["schemas"]["DraftStatus"] | null;
+                status?: components["schemas"]["DraftStatus"];
                 limit?: number;
                 cursor?: string | null;
             };

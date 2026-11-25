@@ -2006,7 +2006,7 @@
           "scout"
         ],
         "summary": "Read Drafts",
-        "description": "The drafts, most recently edited first; keyset paging (docs/16 §1).",
+        "description": "The drafts of one status (CANDIDATE unless asked, the owner's decision on #255), most\nrecently edited first; keyset paging (docs/16 §1).",
         "operationId": "read_drafts_api_v1_typology_drafts_get",
         "parameters": [
           {
@@ -2014,15 +2014,8 @@
             "in": "query",
             "required": false,
             "schema": {
-              "anyOf": [
-                {
-                  "$ref": "#/components/schemas/DraftStatus"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Status"
+              "$ref": "#/components/schemas/DraftStatus",
+              "default": "CANDIDATE"
             }
           },
           {
@@ -4310,7 +4303,8 @@
           "BACKTESTED",
           "IN_SHADOW",
           "PROMOTED",
-          "REJECTED"
+          "REJECTED",
+          "SUPERSEDED"
         ],
         "title": "DraftStatus"
       },

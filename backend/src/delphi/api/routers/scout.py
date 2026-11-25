@@ -326,11 +326,12 @@ def _if_match(raw: str | None) -> int:
 def read_drafts(
     request: Request,
     _principal: Annotated[Principal, Depends(require(Permission.VIEW))],
-    status: Annotated[DraftStatus | None, Query()] = None,
+    status: Annotated[DraftStatus, Query()] = DraftStatus.CANDIDATE,
     limit: Annotated[int, Query(ge=1, le=MAX_LIMIT)] = DEFAULT_LIMIT,
     cursor: Annotated[str | None, Query()] = None,
 ) -> DraftPage:
-    """The drafts, most recently edited first; keyset paging (docs/16 §1)."""
+    """The drafts of one status (CANDIDATE unless asked, the owner's decision on #255), most
+    recently edited first; keyset paging (docs/16 §1)."""
     after = _decode_cursor(cursor) if cursor else None
     with _platform(request).sessions() as session:
         kb = _kb(session)

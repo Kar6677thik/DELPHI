@@ -16,7 +16,18 @@ rules (``delphi.kb.validate``); a draft that breaks one is refused with the issu
 - increments ``revision`` and returns the draft to DRAFT;
 - adds the editor to ``editors`` (four-eyes promotion, docs/05 §7); audited.
 
-A PROMOTED or REJECTED draft is final; a draft IN_SHADOW is not edited (its KB version is live).
+A PROMOTED, REJECTED or SUPERSEDED draft is final; a draft IN_SHADOW is not edited (its KB
+version is live). A SUPERSEDED draft is a CANDIDATE a later ``RUN_SCOUT`` replaced (#255).
+
+**Rows.** An enabled source needs a row for every hypothesis, the new key included (docs/11 §3);
+a missing or unknown key is an issue. When ``likelihoods`` and ``enabled_sources`` both give the
+new key's row for a source, ``enabled_sources`` wins: the cluster's empirical rows land in
+``likelihoods`` for every source it observed, disabled ones included, and enabling a source is
+where the engineer sets its row deliberately. Key uniqueness is checked against ACTIVE here; two
+open drafts may claim one key, and promotion enforces it (docs/11 §6).
+
+**Stored specs are read leniently** (no length limit, unknown fields kept), so a field a later
+version adds, or a long suggested name, never breaks a read; edits are validated strictly.
 """
 
 from __future__ import annotations
@@ -59,17 +70,20 @@ class DraftStatus(StrEnum):
     IN_SHADOW = "IN_SHADOW"
     PROMOTED = "PROMOTED"
     REJECTED = "REJECTED"
+    SUPERSEDED = "SUPERSEDED"  # a CANDIDATE a later run replaced (#255)
 
 
 EDITABLE = frozenset({DraftStatus.CANDIDATE, DraftStatus.DRAFT, DraftStatus.BACKTESTED})
 
 
 class DraftSpec(BaseModel):
-    """What a draft holds (``typology_drafts.spec``). ``name`` is the display name."""
+    """What a draft holds (``typology_drafts.spec``). ``name`` is the display name. Read
+    leniently: unknown fields are kept and round-trip, and the name has no length limit here
+    (``DraftPatch`` limits what an edit sets)."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="allow")
 
-    name: str = Field(min_length=1, max_length=120)
+    name: str = Field(min_length=1)
     key: Key | None = None
     description: str = ""
     color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
@@ -121,15 +135,27 @@ def candidate_kb(
         issues.append(Issue("spec.key", "DRAFT_KEY", f"{spec.key} is already a hypothesis."))
     if spec.color is None:
         issues.append(Issue("spec.color", "DRAFT_COLOR", "The typology needs a colour."))
-    for source in spec.enabled_sources:
+    expected = set(active.hypotheses) | ({spec.key} if spec.key is not None else set())
+    for source, rows in spec.enabled_sources.items():
+        at = f"spec.enabled_sources.{source}"
         if source not in active.sources:
-            issues.append(
-                Issue(f"spec.enabled_sources.{source}", "DRAFT_SOURCE", "No such source.")
+            issues.append(Issue(at, "DRAFT_SOURCE", "No such source."))
+            continue
+        if active.sources[source].enabled:
+            issues.append(Issue(at, "DRAFT_SOURCE", "Already enabled."))
+        unknown, missing = sorted(set(rows) - expected), sorted(expected - set(rows))
+        if unknown:
+            issues.append(Issue(at, "DRAFT_SOURCE", f"No such hypothesis: {', '.join(unknown)}."))
+        if missing:
+            issues.append(Issue(at, "DRAFT_SOURCE", f"A row is needed for: {', '.join(missing)}."))
+    if spec.loss is None and DEFAULT_LOSS_FROM not in active.hypotheses:
+        issues.append(
+            Issue(
+                "spec.loss",
+                "DRAFT_LOSS",
+                f"The draft needs a loss block: ACTIVE has no {DEFAULT_LOSS_FROM} to copy.",
             )
-        elif active.sources[source].enabled:
-            issues.append(
-                Issue(f"spec.enabled_sources.{source}", "DRAFT_SOURCE", "Already enabled.")
-            )
+        )
     if issues:
         return None, issues
     assert spec.key is not None and spec.color is not None
@@ -137,10 +163,9 @@ def candidate_kb(
     new_rows = dict(spec.likelihoods)
     hypotheses = dict(active.hypotheses)
     for source, rows in spec.enabled_sources.items():
-        if spec.key in rows:
-            new_rows[source] = rows[spec.key]
+        new_rows[source] = rows[spec.key]
         for h, row in rows.items():
-            if h in hypotheses:
+            if h != spec.key:
                 hyp = hypotheses[h]
                 hypotheses[h] = hyp.model_copy(
                     update={"likelihoods": {**hyp.likelihoods, source: row}}
