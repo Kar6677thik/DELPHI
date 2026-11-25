@@ -15,11 +15,12 @@ from delphi.guardian.store import ProbeMode, add_probe_run
 from delphi.guardian.tables import guardian_sessions, probe_runs
 from delphi.kb.store import active_version
 from delphi.platform.jobs import JobContext, JobType, enqueue
+from delphi.platform.locks import SCOUT_RUN_LOCK_KEY
 from delphi.scout.api import queue_items, run_scout, scout_clusters, typology_drafts
-from delphi.scout.run import ScoutAutoTriggerJob
+from delphi.scout.run import RunScoutJob, ScoutAutoTriggerJob
 from delphi.scout.tables import scout_runs
 
-from .test_cases import T0, Env, env  # noqa: F401 - pytest fixture
+from .test_cases import T0, Env, client, env  # noqa: F401 - pytest fixtures
 from .test_scout_queue import _decided
 
 # The collect-refund pattern: every victim believes they are receiving money (docs/14 §5.4).
@@ -28,6 +29,18 @@ PATTERN = {
     "PURPOSE_QUESTION": "BELIEVES_RECEIVING_MONEY",
     "COLLECT_INTENT_CHECK": "EXPECTS_TO_RECEIVE",
 }
+
+
+BACKOFF = timedelta(minutes=60)
+
+
+FIRST_JOB = UUID(int=1)
+
+
+def _ctx(job_id: UUID = FIRST_JOB) -> Any:
+    ctx: Any = JobContext.__new__(JobContext)
+    ctx.job = type("J", (), {"id": job_id})()
+    return ctx
 
 
 def _with_outcomes(e: Env, session_id: UUID, outcomes: dict[str, str]) -> None:
@@ -83,9 +96,8 @@ def test_one_pattern_is_one_cluster_with_a_candidate_draft(env: Env) -> None:  #
 
 
 def test_the_auto_trigger_waits_for_enough_new_items(env: Env) -> None:  # noqa: F811
-    job = ScoutAutoTriggerJob(env.sessions, env.clock)
-    ctx: Any = JobContext.__new__(JobContext)
-    ctx.job = type("J", (), {"id": UUID(int=1)})()
+    job = ScoutAutoTriggerJob(env.sessions, env.clock, BACKOFF)
+    ctx = _ctx()
     for minute in range(9):
         _decided(env, unexplained=True, minutes=minute)
     assert job(ctx) == {"enqueued": False, "new_items": 9}
@@ -151,3 +163,99 @@ def test_the_reference_set_is_the_attributed_sessions_by_sql_argmax(env: Env) ->
     with env.sessions() as s:
         found = set(s.execute(select(query.c.subject_id)).scalars())
     assert found == {ids["da"]}
+
+
+def _statuses(e: Env) -> dict[UUID, str]:
+    with e.owner.connect() as conn:
+        rows = conn.execute(select(typology_drafts.c.id, typology_drafts.c.status))
+        return {r.id: r.status for r in rows}
+
+
+def test_a_new_run_supersedes_the_earlier_candidates_only(env: Env) -> None:  # noqa: F811
+    """The owner's decision on #255: a run marks the earlier runs' drafts still CANDIDATE as
+    SUPERSEDED, in its transaction; a draft past CANDIDATE is never touched."""
+    for minute in range(6):
+        _with_outcomes(env, _decided(env, unexplained=True, minutes=minute), PATTERN)
+    with env.sessions.begin() as s:
+        run_scout(s, env.clock, _kb(env), max_items=500)
+    with env.sessions.begin() as s:
+        run_scout(s, env.clock, _kb(env), max_items=500)
+    first, second = sorted(_statuses(env), key=str)
+    assert _statuses(env) == {first: "SUPERSEDED", second: "CANDIDATE"}
+    with env.owner.begin() as conn:  # an engineer took the latest candidate on
+        conn.execute(
+            update(typology_drafts).where(typology_drafts.c.id == second).values(status="DRAFT")
+        )
+    with env.sessions.begin() as s:
+        run_scout(s, env.clock, _kb(env), max_items=500)
+    statuses = _statuses(env)
+    assert statuses[first] == "SUPERSEDED" and statuses[second] == "DRAFT"
+    assert sorted(statuses.values()).count("CANDIDATE") == 1
+
+
+def test_a_run_skips_while_another_one_runs(env: Env) -> None:  # noqa: F811
+    job = RunScoutJob(env.sessions, env.clock, max_items=500)
+    with env.sessions.begin() as s:
+        queued = enqueue(s, env.clock, JobType.RUN_SCOUT, idempotency_key="manual", params={})
+    with env.owner.begin() as conn:
+        conn.execute(text(f"SELECT pg_advisory_xact_lock({SCOUT_RUN_LOCK_KEY})"))
+        assert job(_ctx(queued.job_id)) == {"run_id": None, "skipped": "busy"}
+    assert job(_ctx(queued.job_id))["run_id"] is not None
+
+
+def _failed_run(e: Env, finished_ago: timedelta) -> None:
+    with e.sessions.begin() as s:
+        job = enqueue(s, e.clock, JobType.RUN_SCOUT, idempotency_key=str(finished_ago), params={})
+    with e.owner.begin() as conn:
+        conn.execute(
+            text("UPDATE delphi.jobs SET status = 'FAILED', finished_at = :t WHERE id = :j"),
+            {"t": e.clock.now() - finished_ago, "j": job.job_id},
+        )
+
+
+def test_the_auto_trigger_backs_off_after_a_failed_run(env: Env) -> None:  # noqa: F811
+    for minute in range(10):
+        _decided(env, unexplained=True, minutes=minute)
+    job = ScoutAutoTriggerJob(env.sessions, env.clock, BACKOFF)
+    _failed_run(env, timedelta(minutes=10))
+    assert job(_ctx()) == {"enqueued": False, "reason": "the last run failed recently"}
+    env.clock.advance(BACKOFF)
+    assert job(_ctx(UUID(int=2)))["enqueued"] is True
+
+
+def test_clusters_page_once_each_with_the_latest_draft(
+    env: Env,  # noqa: F811
+    client: Any,  # noqa: F811
+) -> None:
+    for minute in range(6):
+        _with_outcomes(env, _decided(env, unexplained=True, minutes=minute), PATTERN)
+    for _ in range(3):
+        with env.sessions.begin() as s:
+            run_scout(s, env.clock, _kb(env), max_items=500)
+        env.clock.advance(timedelta(minutes=1))
+    with env.owner.begin() as conn:  # a second draft of the newest cluster (#118 may add one)
+        newest = conn.execute(
+            select(typology_drafts).order_by(typology_drafts.c.created_at.desc()).limit(1)
+        ).one()
+        conn.execute(
+            typology_drafts.insert().values(
+                {
+                    **newest._asdict(),
+                    "id": UUID(int=99),
+                    "status": "DRAFT",
+                    "updated_at": newest.updated_at + timedelta(seconds=1),
+                }
+            )
+        )
+    seen: list[str] = []
+    cursor = None
+    while True:
+        params: dict[str, Any] = {"limit": 1, **({"cursor": cursor} if cursor else {})}
+        page = client.get("/api/v1/scout/clusters", params=params).json()
+        seen += [c["id"] for c in page["items"]]
+        if page["items"] and page["items"][0]["draft_id"] == str(UUID(int=99)):
+            assert page["items"][0]["draft_status"] == "DRAFT"  # the cluster's latest draft
+        cursor = page["next_cursor"]
+        if cursor is None:
+            break
+    assert len(seen) == len(set(seen)) == 3

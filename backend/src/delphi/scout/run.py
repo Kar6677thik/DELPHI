@@ -17,8 +17,16 @@ draft likelihood rows and the outcome profile.
 **Bounds (after #263).** A run loads at most ``scout_max_items`` queue items (the newest of the
 lookback) and as many reference sessions, with the sensing config parsed once. The reference
 set's argmax is taken in SQL. A retried ``RUN_SCOUT`` (a lost lease) finds its run by ``job_id``
-(unique) and returns it. ``SCOUT_AUTO_TRIGGER`` enqueues nothing while a ``RUN_SCOUT`` is QUEUED
-or RUNNING, so slow or failing runs do not pile up.
+(unique) and returns it. The run's transaction has ``SET LOCAL statement_timeout``/``work_mem``
+and takes ``pg_try_advisory_xact_lock(55)``: two runs never overlap (a manual
+``POST /scout/runs`` and an automatic one, on a worker that runs two jobs at once); the second
+skips and says so. ``SCOUT_AUTO_TRIGGER`` enqueues nothing while a ``RUN_SCOUT`` is QUEUED or
+RUNNING, nor for ``DELPHI_SCOUT_FAILURE_BACKOFF_MIN`` after one FAILED, so slow or failing runs
+do not pile up.
+
+**Superseded drafts** (the owner's decision on #255). In the same transaction, a run marks the
+earlier runs' drafts that are still CANDIDATE as SUPERSEDED, so only the latest candidates are
+open. A draft past CANDIDATE is never touched.
 
 **Gap fills (docs/11 §2 is silent):**
 - The sensing artifacts store no feature means or standard deviations, so the z-scores use the
@@ -27,7 +35,8 @@ or RUNNING, so slow or failing runs do not pile up.
   customer's events map to them (asked on #117).
 
 ``SCOUT_AUTO_TRIGGER`` (every 5 min) enqueues a run once ``auto_trigger_new_items`` items have
-entered the queue since the last run started, unless one is already QUEUED or RUNNING.
+entered the queue since the last run started (before any run: in the lookback), counted no
+further than that threshold, unless one is pending or the last one failed recently.
 """
 
 from __future__ import annotations
@@ -39,7 +48,7 @@ from typing import Any
 from uuid import UUID
 
 import numpy as np
-from sqlalchemy import exists, func, select
+from sqlalchemy import exists, func, select, text, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from delphi.guardian.api import attributed_sessions_query, observed_outcomes
@@ -50,6 +59,7 @@ from delphi.platform.clock import Clock
 from delphi.platform.events import EventType, publish
 from delphi.platform.ids import uuid7
 from delphi.platform.jobs import JobContext, JobStatus, JobType, enqueue
+from delphi.platform.locks import SCOUT_RUN_LOCK_KEY
 from delphi.platform.tables import jobs
 from delphi.scout.clustering import FeatureSpace, ScoutItem, scout
 from delphi.scout.queue import QueueItem, SubjectType, count_queue_items, queue_items
@@ -58,6 +68,10 @@ from delphi.sensing.api import FeatureConfig, scout_feature_config, scout_featur
 from delphi.sim import api as bank
 
 CANDIDATE = "CANDIDATE"
+SUPERSEDED = "SUPERSEDED"
+# Limits for the run's transaction (docs/23: postgres runs in 1 GiB), as LABEL_DELIVERY's.
+STATEMENT_TIMEOUT = "30s"
+WORK_MEM = "16MB"
 CHANNELS = ("UPI_PUSH", "UPI_COLLECT_APPROVAL", "IMPS", "NEFT")  # customer channels (docs/05)
 
 
@@ -160,6 +174,11 @@ def run_scout(
         selection_epsilon=cfg.cluster_selection_epsilon,
     )
     run_id = uuid7(unix_ms=int(started.timestamp() * 1000))
+    session.execute(  # the owner's decision on #255: only the latest run's candidates stay open
+        update(typology_drafts)
+        .where(typology_drafts.c.status == CANDIDATE)
+        .values(status=SUPERSEDED, updated_at=started, version=typology_drafts.c.version + 1)
+    )
     params = {
         "lookback_days": cfg.lookback_days,
         "min_cluster_size": cfg.min_cluster_size,
@@ -229,6 +248,15 @@ def run_scout(
     return run_id
 
 
+def begin_run(session: Session) -> bool:
+    """Bound this transaction and take the run lock; False if another run holds it."""
+    session.execute(text(f"SET LOCAL statement_timeout = '{STATEMENT_TIMEOUT}'"))
+    session.execute(text(f"SET LOCAL work_mem = '{WORK_MEM}'"))
+    return bool(
+        session.execute(select(func.pg_try_advisory_xact_lock(SCOUT_RUN_LOCK_KEY))).scalar_one()
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class RunScoutJob:
     """``RUN_SCOUT`` (docs/04 §5.4)."""
@@ -239,6 +267,8 @@ class RunScoutJob:
 
     def __call__(self, ctx: JobContext) -> Mapping[str, Any] | None:
         with self.sessions.begin() as session:
+            if not begin_run(session):
+                return {"run_id": None, "skipped": "busy"}
             version = active_version(session)
             if version is None:
                 return {"run_id": None, "reason": "no ACTIVE KB version"}
@@ -248,9 +278,29 @@ class RunScoutJob:
         return {"run_id": str(run_id)}
 
 
-def new_items_since_last_run(session: Session, kb: KnowledgeBase) -> int:
+def new_items_since_last_run(session: Session, kb: KnowledgeBase, now: datetime) -> int:
+    """Items that entered since the last run started (before any run: within the lookback),
+    counted up to ``auto_trigger_new_items``, which is all the trigger needs to know."""
+    cfg = kb.config.scout
     last: datetime | None = session.execute(select(func.max(scout_runs.c.started_at))).scalar()
-    return count_queue_items(session, kb, since=last)
+    since = last if last is not None else now - timedelta(days=cfg.lookback_days)
+    return count_queue_items(session, kb, since=since, cap=cfg.auto_trigger_new_items)
+
+
+def failed_recently(session: Session, now: datetime, backoff: timedelta) -> bool:
+    """The latest finished RUN_SCOUT FAILED less than ``backoff`` ago."""
+    j = jobs.c
+    last = session.execute(
+        select(j.status, j.finished_at)
+        .where(j.type == JobType.RUN_SCOUT.value, j.finished_at.is_not(None))
+        .order_by(j.finished_at.desc())
+        .limit(1)
+    ).first()
+    return (
+        last is not None
+        and last.status == JobStatus.FAILED.value
+        and last.finished_at > now - backoff
+    )
 
 
 def run_pending(session: Session) -> bool:
@@ -275,15 +325,19 @@ class ScoutAutoTriggerJob:
 
     sessions: sessionmaker[Session]
     clock: Clock
+    failure_backoff: timedelta
 
     def __call__(self, ctx: JobContext) -> Mapping[str, Any] | None:
+        now = self.clock.now()
         with self.sessions.begin() as session:
             version = active_version(session)
             if version is None:
                 return {"enqueued": False}
             if run_pending(session):
                 return {"enqueued": False, "reason": "a run is pending"}
-            waiting = new_items_since_last_run(session, version.kb)
+            if failed_recently(session, now, self.failure_backoff):
+                return {"enqueued": False, "reason": "the last run failed recently"}
+            waiting = new_items_since_last_run(session, version.kb, now)
             if waiting < version.kb.config.scout.auto_trigger_new_items:
                 return {"enqueued": False, "new_items": waiting}
             enqueue(

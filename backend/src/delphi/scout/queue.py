@@ -113,15 +113,28 @@ def queue_items(
     return [_item(r) for r in session.execute(rows)]
 
 
-def count_queue_items(session: Session, kb: KnowledgeBase, *, since: datetime | None) -> int:
-    query = _queue(kb, since=since).subquery("q")
+def count_queue_items(session: Session, kb: KnowledgeBase, *, since: datetime, cap: int) -> int:
+    """How many items entered at or after ``since``, counting no further than ``cap`` (the
+    caller only needs to know whether a threshold is reached), so the count stays bounded."""
+    query = _queue(kb, since=since).limit(cap).subquery("q")
     return int(session.execute(select(func.count()).select_from(query)).scalar_one())
 
 
-def queue_item(session: Session, kb: KnowledgeBase, item_id: UUID) -> QueueItem | None:
+def queue_item(
+    session: Session, kb: KnowledgeBase, item_id: UUID, subject_type: SubjectType | None = None
+) -> QueueItem | None:
+    """The queue item with this id (of ``subject_type`` when given). Session and case ids are
+    both uuid7, so an id names one subject; should two match, that is an error, not a guess."""
     query = _queue(kb, since=None).subquery("q")
-    row = session.execute(select(query).where(query.c.subject_id == item_id).limit(1)).first()
-    return _item(row) if row is not None else None
+    match = select(query).where(query.c.subject_id == item_id)
+    if subject_type is not None:
+        match = match.where(query.c.subject_type == subject_type.value)
+    rows = session.execute(match.limit(2)).all()
+    if len(rows) > 1:
+        raise DelphiError(
+            f"Id {item_id} names more than one queue item.", code=ProblemCode.VALIDATION_FAILED
+        )
+    return _item(rows[0]) if rows else None
 
 
 def dismiss(

@@ -804,6 +804,56 @@
         }
       }
     },
+    "/api/v1/admin/demo/reset": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Reset Demo",
+        "description": "Queue a `DEMO_RESET` job (202 with the job): back to the state right after the seed\n(docs/14 §10). The LIVE sessions this process drives are dropped first. 409\nINVALID_STATE_TRANSITION without a dataset, 409 JOB_ALREADY_RUNNING while a reset is under\nway; 503 NOT_INITIALISED while `DELPHI_SIMULATION_ENABLED` is off.",
+        "operationId": "reset_demo_api_v1_admin_demo_reset_post",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobView"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An RFC 9457 problem (docs/16 §1)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/kb/versions": {
       "get": {
         "tags": [
@@ -1894,7 +1944,7 @@
           "scout"
         ],
         "summary": "Read Clusters",
-        "description": "The clusters of every run, newest first, each with its typology draft; docs/16 keyset\npaging (``limit`` ≤ 200, ``cursor``).",
+        "description": "The clusters of every run, newest first, each with its latest typology draft; docs/16\nkeyset paging (``limit`` ≤ 200, ``cursor``), on the ``(created_at, id)`` index.",
         "operationId": "read_clusters_api_v1_scout_clusters_get",
         "parameters": [
           {
@@ -5166,6 +5216,7 @@
           "SESSION_TIMEOUT_SWEEP",
           "SCOUT_AUTO_TRIGGER",
           "LABEL_DELIVERY",
+          "COMPLAINT_SWEEP",
           "PROBE_YIELD_DAILY",
           "RETENTION_SWEEP",
           "AUDIT_VERIFY"

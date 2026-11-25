@@ -28,7 +28,7 @@ from delphi.guardian.procedure import (
     stop_reason,
     takes_fast_path,
 )
-from delphi.guardian.service import PriorPort
+from delphi.guardian.service import FAIRNESS_WINDOW, PriorPort
 from delphi.guardian.store import SessionMode, SessionStatus, TerminalReason
 from delphi.guardian.views import (
     SessionCursor,
@@ -44,6 +44,7 @@ from delphi.guardian.views import (
 from delphi.sensing.api import PriorInputs
 
 __all__ = [
+    "FAIRNESS_WINDOW",
     "PHONE_EVENT_TYPES",
     "ClientSignals",
     "DdPack",

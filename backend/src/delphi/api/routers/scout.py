@@ -18,7 +18,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select, tuple_
+from sqlalchemy import select, true, tuple_
 from sqlalchemy.orm import Session
 
 from delphi.api.idempotency import IdempotencyKey, RawBody, run_idempotent
@@ -211,12 +211,19 @@ def read_clusters(
     limit: Annotated[int, Query(ge=1, le=MAX_LIMIT)] = DEFAULT_LIMIT,
     cursor: Annotated[str | None, Query()] = None,
 ) -> ClusterPage:
-    """The clusters of every run, newest first, each with its typology draft; docs/16 keyset
-    paging (``limit`` ≤ 200, ``cursor``)."""
+    """The clusters of every run, newest first, each with its latest typology draft; docs/16
+    keyset paging (``limit`` ≤ 200, ``cursor``), on the ``(created_at, id)`` index."""
     c, t = scout_clusters.c, typology_drafts.c
+    draft = (  # a cluster's latest draft, so a cluster with several drafts appears once
+        select(t.id.label("draft_id"), t.status, t.spec)
+        .where(t.cluster_id == c.id)
+        .order_by(t.updated_at.desc(), t.id.desc())
+        .limit(1)
+        .lateral("draft")
+    )
     query = (
-        select(scout_clusters, t.id.label("draft_id"), t.status, t.spec)
-        .outerjoin(typology_drafts, t.cluster_id == c.id)
+        select(scout_clusters, draft.c.draft_id, draft.c.status, draft.c.spec)
+        .outerjoin(draft, true())
         .order_by(c.created_at.desc(), c.id.desc())
         .limit(limit + 1)
     )

@@ -54,7 +54,11 @@ labelled noise stay in the queue.
   fallback is "Candidate pattern {n}: {top 3 distinguishing features}".
 
 The output is `scout_clusters` rows plus one `typology_drafts` row per cluster, with status
-`CANDIDATE`.
+`CANDIDATE`. A run also marks, in the same transaction, the earlier runs' drafts that are still
+`CANDIDATE` as `SUPERSEDED` (the owner's decision on #255), so only the latest run's candidates
+are open. A draft past `CANDIDATE` (edited, backtested, in shadow, promoted or rejected) is never
+touched. A `SUPERSEDED` draft is final: it cannot be edited, and the draft list shows
+`CANDIDATE` drafts unless asked for another status.
 
 **Implementation** (#117): the clustering core is `delphi.scout.clustering` (pure functions):
 `matrix`, `cluster_labels`, `distinguishing_features` (absolute standardised mean difference,
@@ -76,12 +80,19 @@ missing from an item sits at its training mean (z = 0).
 - **The run** (`delphi.scout.run`): `RUN_SCOUT` (`POST /scout/runs`, or `SCOUT_AUTO_TRIGGER`
   once `auto_trigger_new_items` items have entered since the last run) loads the queue items of
   the last `lookback_days`.
-  - It is bounded (after #263): at most `DELPHI_SCOUT_MAX_ITEMS` (proposed 500) queue items, the
-    newest of the lookback, and as many reference sessions. The sensing config is parsed once
-    per run.
+  - It is bounded (after #263): at most `DELPHI_SCOUT_MAX_ITEMS` (500) queue items, the newest
+    of the lookback, and as many reference sessions (newest first, served by a partial index
+    on `guardian_sessions (decided_at DESC, id) WHERE NOT unexplained`). The sensing config is
+    parsed once per run. The run's transaction has `SET LOCAL statement_timeout` (30 s) and
+    `work_mem` (16 MB).
+  - Runs are serialised: a run takes `pg_try_advisory_xact_lock(55)` and, while another holds
+    it, skips and says so in its result (a manual and an automatic run, or two manual ones).
   - It is idempotent: a retried job (a lost lease) finds its run by `scout_runs.job_id` (unique)
     and returns it.
-  - The auto-trigger enqueues nothing while a `RUN_SCOUT` is QUEUED or RUNNING.
+  - The auto-trigger enqueues nothing while a `RUN_SCOUT` is QUEUED or RUNNING, nor for
+    `DELPHI_SCOUT_FAILURE_BACKOFF_MIN` (60) after the latest one FAILED. It counts the items
+    that entered since the last run started (before any run: within the lookback) only up to
+    `auto_trigger_new_items`, so the count stays bounded.
   - The reference set is that period's sessions attributed to a known typology: not flagged
     unexplained, with an argmax (taken in SQL) that is neither GENUINE nor UNEXPLAINED.
   - Each item's outcomes are a session's completed probe runs or a case's current evidence

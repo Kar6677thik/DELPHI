@@ -15,7 +15,7 @@ import sys
 import threading
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID
 
@@ -44,6 +44,7 @@ from delphi.llm.service import LlmService, primary_provider
 from delphi.navigator.api import OUTREACH as OUTREACH_SOURCE
 from delphi.navigator.api import request_evidence
 from delphi.navigator.jobs import register_navigator_jobs
+from delphi.navigator.reviews import SweepLimits
 from delphi.platform.accounts import BootstrapError, ensure_bootstrap_admin
 from delphi.platform.audit import verify as audit_verify
 from delphi.platform.clock import SystemClock
@@ -72,12 +73,14 @@ from delphi.probes.api import (
 from delphi.probes.registry import CLASSIFIER_NAMES
 from delphi.scout.jobs import register_scout_jobs
 from delphi.sensing.api import SensingInference
+from delphi.sensing.config import load_sensing_config
 from delphi.sensing.jobs import register_sensing_jobs
 from delphi.sim.api import PROFILES, dataset_exists, request_dataset
 from delphi.sim.customer import LiveCustomer
 from delphi.sim.dataset import generate_dataset
 from delphi.sim.generator_config import load_generator_config
 from delphi.sim.jobs import register_sim_jobs
+from delphi.sim.reset import register_reset_job
 from delphi.sim.response_models import (
     GENERATED_FILE,
     dump_yaml,
@@ -304,12 +307,21 @@ def worker_registry(
         primary_provider(settings),
         settings.llm_daily_token_budget,
     )
-    register_navigator_jobs(registry, sessions=platform.sessions, llm=llm, trail=case_trail)
+    register_navigator_jobs(
+        registry,
+        sessions=platform.sessions,
+        llm=llm,
+        trail=case_trail,
+        clock=platform.clock,
+        p_mule_fallback=load_sensing_config().features.mule_score_fallback,
+        review_limits=SweepLimits.of(settings),
+    )
     register_scout_jobs(
         registry,
         sessions=platform.sessions,
         clock=platform.clock,
         max_items=settings.scout_max_items,
+        failure_backoff=timedelta(minutes=settings.scout_failure_backoff_min),
     )
     if settings.simulation_enabled and settings.sim_database_url is None:
         # The api accepts simulated calls on this flag; a worker without the simulator's pool
@@ -345,6 +357,13 @@ def worker_registry(
         clock=platform.clock,
         customer=customer,
         submit=guardian.submit,
+    )
+    register_reset_job(
+        registry,
+        sim_engine=sim_engine,
+        clock=platform.clock,
+        timeout_s=settings.demo_reset_timeout_s,
+        drop_sessions=guardian.abandon,
     )
     return WorkerParts(registry, sim_engine, guardian, free_pool)
 
