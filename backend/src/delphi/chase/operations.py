@@ -217,6 +217,7 @@ def create_operation(
             last_traced_at=now,
             metrics={},
             created_by=created_by,
+            created_at=now,
             version=1,
         )
     )
