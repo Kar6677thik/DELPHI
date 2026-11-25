@@ -14,10 +14,12 @@ time), and the rows the demo changed are put back:
 The platform's own tables (``KEPT_TABLES``: users, jobs, the audit chain, sensing models …) are
 not demo data and stay. A test checks every table is in one list or the other.
 
-Sessions still running are dropped first by both runners (the api's when the reset is asked
-for, the worker's here), so no task drives a session the reset deletes. The transaction runs
-under ``DEMO_RESET_LOCK_KEY`` (a second reset at once skips) and ``LABEL_DELIVERY_LOCK_KEY`` (no
-delivery interleaves), with a statement timeout (``demo_reset_timeout_s``). The deletes are
+Sessions still running are dropped by both runners (the api's when the reset is asked for,
+the worker's here, once this reset holds its lock), so no task drives a session the reset
+deletes. The transaction runs under ``DEMO_RESET_LOCK_KEY`` (a second reset at once skips) and
+``LABEL_DELIVERY_LOCK_KEY`` (no delivery interleaves), with a statement timeout
+(``demo_reset_timeout_s``), and locks every table it writes ``IN EXCLUSIVE MODE`` (reads go on,
+writes wait), so no payment, session or case lands between its steps. The deletes are
 set-based (`DELETE … WHERE created_at > :marker`): no rows or key lists pass through Python.
 """
 
@@ -71,6 +73,14 @@ RESET_TABLES: tuple[tuple[str, str], ...] = (
     ("bank.customers", "created_at"),
     ("bank.sim_phone_risk", "created_at"),
 )
+# Locked against writers for the reset's transaction: the tables it deletes from, plus the
+# ones it updates or that cascade with them. In one fixed order, so two lockers never deadlock.
+LOCKED_TABLES: tuple[str, ...] = tuple(
+    sorted(
+        {name for name, _ in RESET_TABLES}
+        | {"bank.accounts", "bank.account_scores", "delphi.probe_runs"}
+    )
+)
 # Not demo data: the platform's records, the dataset and what was trained on it, and the
 # frozen response models. `probe_runs` goes with its session.
 KEPT_TABLES: frozenset[str] = frozenset(
@@ -110,13 +120,22 @@ def _marker(session: Session) -> Marker:
     return Marker(row.id, row.seed_completed_at, ended)
 
 
-def _restore_balances(session: Session, marker: datetime) -> int:
-    """Take the deltas of the ledger entries after the marker back off their accounts."""
+def _restore_balances(session: Session, marker: datetime) -> tuple[int, int]:
+    """Delete the ledger entries after the marker and take their deltas back off their
+    accounts, in one statement. Returns (entries deleted, accounts restored)."""
     le = ledger_entries.c
-    moved = (
-        select(le.account_id, func.sum(le.delta_paise).label("delta"))
+    entries = session.execute(
+        select(func.count()).select_from(ledger_entries).where(le.at > marker)
+    ).scalar_one()
+    gone = (
+        ledger_entries.delete()
         .where(le.at > marker)
-        .group_by(le.account_id)
+        .returning(le.account_id, le.delta_paise)
+        .cte("gone")
+    )
+    moved = (
+        select(gone.c.account_id, func.sum(gone.c.delta_paise).label("delta"))
+        .group_by(gone.c.account_id)
         .subquery()
     )
     done = session.execute(
@@ -126,8 +145,19 @@ def _restore_balances(session: Session, marker: datetime) -> int:
             balance_paise=accounts.c.balance_paise - moved.c.delta,
             version=accounts.c.version + 1,
         )
+        .add_cte(gone)
     )
-    return int(done.rowcount)  # type: ignore[attr-defined]
+    return int(entries), int(done.rowcount)  # type: ignore[attr-defined]
+
+
+def _lock_tables(session: Session) -> None:
+    """EXCLUSIVE: reads go on, writes wait for the reset (or its statement timeout), so no
+    payment, session or case lands between its steps."""
+    prepare = session.connection().dialect.identifier_preparer
+    for name in LOCKED_TABLES:
+        schema, table_name = name.split(".")
+        quoted = prepare.format_table(table(table_name, schema=schema))
+        session.execute(text(f"LOCK TABLE {quoted} IN EXCLUSIVE MODE"))
 
 
 def _undo_schedule(session: Session, marker: datetime) -> int:
@@ -163,7 +193,8 @@ def _delete_after(session: Session, marker: datetime) -> dict[str, int]:
 
 
 def _reactivate_kb_v1(session: Session, now: datetime) -> bool:
-    """KB v1 ACTIVE again; any other version the reset kept is RETIRED. True if it changed."""
+    """KB v1 ACTIVE again; any other version the reset kept is RETIRED. True if v1 was not
+    ACTIVE."""
     k = kb_versions.c
     status = session.execute(select(k.status).where(k.id == KB_V1_ID)).scalar_one_or_none()
     if status is None:
@@ -197,26 +228,33 @@ class DemoResetJob:
     drop_sessions: Callable[[], int]  # the worker's runner drops the sessions it drives
 
     def __call__(self, ctx: JobContext) -> Mapping[str, Any] | None:
-        dropped = self.drop_sessions()
         now = self.clock.now()
         with self.sessions.begin() as session:
             got = session.execute(select(func.pg_try_advisory_xact_lock(DEMO_RESET_LOCK_KEY)))
             if not got.scalar_one():
                 return {"skipped": "another demo reset is running"}
+            # Only a reset that will run drops the sessions. If it fails after this, they stay
+            # unfinished until a worker restart resumes them or SESSION_TIMEOUT_SWEEP ends them.
+            dropped = self.drop_sessions()
             session.execute(
                 select(
                     func.set_config("statement_timeout", str(int(self.timeout_s * _MS_PER_S)), True)
                 )
             )
             session.execute(select(func.pg_advisory_xact_lock(LABEL_DELIVERY_LOCK_KEY)))
+            _lock_tables(session)
             session.execute(text("SET CONSTRAINTS ALL DEFERRED"))
             marker = _marker(session)
             at = marker.seed_completed_at
-            balances = _restore_balances(session, at)  # before their ledger entries go
+            entries, balances = _restore_balances(session, at)
             schedule = _undo_schedule(session, at)
             undelivered = _undeliver_labels(session, marker)
             deleted = _delete_after(session, at)
+            deleted["bank.ledger_entries"] = entries
             kb_changed = _reactivate_kb_v1(session, now)
+            # The processes load the ACTIVE KB at start-up (no hot reload): any version the
+            # reset made ACTIVE, deleted or retired may be the one they hold.
+            kb_touched = kb_changed or deleted["delphi.kb_versions"] > 0
             result = {
                 "seed_completed_at": at.isoformat(),
                 "deleted": deleted,
@@ -225,8 +263,7 @@ class DemoResetJob:
                 "labels_undelivered": undelivered,
                 "worker_sessions_dropped": dropped,
                 "kb_v1_reactivated": kb_changed,
-                # The api and the worker load the ACTIVE KB at start-up (TD: no hot reload).
-                "restart_needed": kb_changed,
+                "restart_needed": kb_touched,
             }
             record(
                 session,

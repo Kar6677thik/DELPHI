@@ -5,6 +5,7 @@ runs again."""
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -13,6 +14,7 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy import Engine, column, func, select, table, text, update
 
+from delphi.api.routers import demo as demo_router
 from delphi.kb.model import KnowledgeBase
 from delphi.kb.store import KbStatus, ensure_kb_v1, insert_version, kb_versions
 from delphi.platform.accounts import Role
@@ -23,7 +25,7 @@ from delphi.platform.jobs import JobQueue, JobRegistry, JobStatus, JobType, Queu
 from delphi.platform.locks import DEMO_RESET_LOCK_KEY
 from delphi.platform.tables import jobs
 from delphi.platform.worker import run_job
-from delphi.sim.bank import accounts, sim_schedule
+from delphi.sim.bank import accounts, ledger_entries, sim_schedule
 from delphi.sim.delivery import deliver_labels
 from delphi.sim.jobs import register_sim_jobs
 from delphi.sim.reset import KEPT_TABLES, RESET_TABLES, register_reset_job
@@ -91,6 +93,8 @@ def seeded(create_database: Callable[[], str], kb: KnowledgeBase) -> Iterator[Ba
 
 
 RESET = "/api/v1/admin/demo/reset"
+STORIES = "/api/v1/admin/demo/scenarios"
+SESSIONS = "/api/v1/guardian/sessions"
 SCHEMAS = ("bank", "delphi", "sim_truth")
 TIMEOUT_S = 60.0
 
@@ -251,6 +255,72 @@ def test_a_second_reset_at_once_skips(seeded: Bank) -> None:
     assert job["result"] == {"skipped": "another demo reset is running"}
 
 
+def test_children_are_deleted_before_their_parents(seeded: Bank) -> None:
+    """Each foreign key between reset tables points from a table deleted earlier to one
+    deleted later, unless it is deferrable or cascades (docs/17)."""
+    order = {name: i for i, (name, _) in enumerate(RESET_TABLES)}
+    with seeded.owner.connect() as conn:
+        keys = conn.execute(
+            text(
+                "SELECT conrelid::regclass::text, confrelid::regclass::text,"
+                " condeferrable, confdeltype::text FROM pg_constraint WHERE contype = 'f'"
+            )
+        ).all()
+    wrong = [
+        (child, parent)
+        for child, parent, deferrable, on_delete in keys
+        if child in order
+        and parent in order
+        and child != parent
+        and not deferrable
+        and on_delete != "c"
+        and order[child] > order[parent]
+    ]
+    assert wrong == []
+
+
+def test_a_payment_racing_the_reset_waits_and_is_reset_too(seeded: Bank) -> None:
+    """A write in flight when the reset starts (a payment executing: its ledger entry and the
+    balance it moves) holds the reset until it commits, and the reset then undoes it as well,
+    so the balance and the ledger never disagree."""
+    before = _state(seeded)
+    seeded.clock.advance(timedelta(minutes=5))
+    with seeded.owner.connect() as conn:
+        account, payment = conn.execute(
+            select(ledger_entries.c.account_id, ledger_entries.c.payment_id).limit(1)
+        ).one()
+    writer = seeded.owner.connect()
+    tx = writer.begin()
+    writer.execute(
+        update(accounts)
+        .where(accounts.c.id == account)
+        .values(balance_paise=accounts.c.balance_paise - 100)
+    )
+    writer.execute(
+        ledger_entries.insert().values(
+            account_id=account,
+            payment_id=payment,
+            delta_paise=-100,
+            balance_after_paise=0,
+            at=seeded.clock.now(),
+        )
+    )
+    done: list[Any] = []
+    reset = threading.Thread(target=lambda: done.append(_reset(seeded)))
+    reset.start()
+    try:
+        reset.join(timeout=2)
+        assert reset.is_alive()  # waiting on the writer's tables
+        tx.commit()
+    finally:
+        writer.close()
+        reset.join(timeout=TIMEOUT_S)
+    job = done[0]
+    assert job["status"] == JobStatus.SUCCEEDED, job["error"]
+    assert job["result"]["deleted"]["bank.ledger_entries"] == 1
+    assert _state(seeded) == before
+
+
 # ---------------------------------------------------------------- the endpoint
 
 
@@ -305,3 +375,26 @@ def test_the_endpoint_needs_a_dataset(seeded: Bank) -> None:
     with _client(seeded, Role.ADMIN, live=FakeLive(), simulation_enabled=True) as client:
         refused = client.post(RESET, headers=_key())
     assert refused.status_code == 409 and refused.json()["code"] == "INVALID_STATE_TRANSITION"
+
+
+def test_payments_and_stories_are_refused_while_a_reset_is_pending(
+    seeded: Bank, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Nothing new starts between the reset's request and its job: it would race the deletes."""
+    monkeypatch.setattr(demo_router, "require_initialised", lambda _request: None)
+    with seeded.sessions.begin() as s:
+        enqueue(s, seeded.clock, JobType.DEMO_RESET, idempotency_key=str(uuid4()))
+    payment = {
+        "payer_account_id": str(uuid4()),
+        "payee_account_id": str(uuid4()),
+        "amount_paise": 100,
+        "channel": "UPI_PUSH",
+        "device_id": str(uuid4()),
+    }
+    with _client(seeded, Role.ADMIN, live=FakeLive(), simulation_enabled=True) as client:
+        story = client.post(f"{STORIES}/S2/run", json={"mode": "autoplay"}, headers=_key())
+        paid = client.post(SESSIONS, json={"payment": payment}, headers=_key())
+    for refused in (story, paid):
+        assert refused.status_code == 409, refused.text
+        assert refused.json()["code"] == "INVALID_STATE_TRANSITION"
+        assert "demo reset is in progress" in refused.json()["detail"]
