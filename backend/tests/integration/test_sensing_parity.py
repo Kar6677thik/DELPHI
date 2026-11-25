@@ -10,7 +10,7 @@ from datetime import timedelta
 from uuid import UUID
 
 import pytest
-from sqlalchemy import func, inspect, select, text
+from sqlalchemy import create_engine, func, inspect, select, text
 
 from delphi.kb.model import KnowledgeBase
 from delphi.sensing.config import load_sensing_config
@@ -153,13 +153,19 @@ def test_online_and_offline_account_features_agree(
         }
         assert {"complaints_counterparty_account_ids_idx", "devices_fingerprint_idx"} <= indexes
         # The complaints query must be one the GIN index can serve (`@>`, not `= ANY`). The
-        # `test` tables are small, so sequential scans are turned off to see the plan it allows.
-        with app.connect() as conn:
-            conn.execute(text("SET enable_seqscan = off"))
+        # `test` tables are small, so sequential scans are turned off to see the plan it allows,
+        # and the `reported_at` btree (the review sweep's, 0016) is dropped inside a rolled-back
+        # transaction: on so few rows the planner would take it for the time filter instead.
+        owner = create_engine(url)  # the migration owner may drop the index
+        with owner.connect() as conn, conn.begin() as tx:
+            conn.execute(text("SET LOCAL enable_seqscan = off"))
+            conn.execute(text("DROP INDEX bank.complaints_reported_at_idx"))
             query = complaints_naming(sample[0], end).compile(dialect=conn.dialect)
             plan = "\n".join(
                 str(line) for (line,) in conn.exec_driver_sql(f"EXPLAIN {query}", query.params)
             )
+            tx.rollback()
+        owner.dispose()
         assert "complaints_counterparty_account_ids_idx" in plan, plan
     finally:
         app.dispose()

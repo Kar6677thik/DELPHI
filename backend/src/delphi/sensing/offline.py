@@ -9,7 +9,7 @@ The parity test checks that these snapshots give the online path's features.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
@@ -75,7 +75,10 @@ def _optional_bool(value: Any) -> bool | None:
 
 def _frame(conn: Connection, query: Select[Any]) -> pd.DataFrame:
     result = conn.execute(query)
-    frame = pd.DataFrame(result.fetchall(), columns=list(result.keys()))
+    return _normalised(pd.DataFrame(result.fetchall(), columns=list(result.keys())))
+
+
+def _normalised(frame: pd.DataFrame) -> pd.DataFrame:
     for column in frame.columns:  # ids as strings, as the online path keys them
         if frame[column].map(lambda v: isinstance(v, UUID)).any():
             frame[column] = frame[column].map(lambda v: str(v) if isinstance(v, UUID) else None)
@@ -163,6 +166,52 @@ def load_bank_frames(conn: Connection) -> BankFrames:
                 bank.account_scores.c.computed_at,
             ),
         ),
+    )
+
+
+# The columns ``load_bank_frames`` reads, per table: the in-memory path builds the same frames.
+FRAME_COLUMNS: dict[str, tuple[str, ...]] = {
+    "customers": ("id", "age", "is_vulnerable"),
+    "accounts": ("id", "customer_id", "opened_at", "kyc_level"),
+    "payments": (
+        "id",
+        "payer_account_id",
+        "payee_account_id",
+        "amount_paise",
+        "channel",
+        "initiated_at",
+        "device_id",
+        "status",
+        "executed_at",
+    ),
+    "session_telemetry": ("payment_id", "session_duration_s", "remote_access_active"),
+    "payees": ("customer_id", "account_id", "added_at"),
+    "devices": ("id", "customer_id", "first_seen_at", "fingerprint"),
+    "login_events": ("id", "customer_id", "at", "city"),
+    "crm_events": ("customer_id", "type", "at"),
+    "complaints": ("reported_at", "counterparty_account_ids"),
+}
+
+
+def frames_from_records(records: Mapping[str, Sequence[Any]]) -> BankFrames:
+    """``BankFrames`` from a generated dataset's rows (``delphi.sim.api.dataset_records``),
+    without a database: the evaluation harness trains and scores in memory (docs/22 §1)."""
+
+    def frame(table: str) -> pd.DataFrame:
+        columns = FRAME_COLUMNS[table]
+        rows = [tuple(getattr(r, c) for c in columns) for r in records.get(table, ())]
+        return _normalised(pd.DataFrame.from_records(rows, columns=list(columns)))
+
+    return BankFrames(
+        customers=frame("customers"),
+        accounts=frame("accounts"),
+        payments=frame("payments"),
+        telemetry=frame("session_telemetry"),
+        payees=frame("payees"),
+        devices=frame("devices"),
+        logins=frame("login_events"),
+        crm_events=frame("crm_events"),
+        complaints=frame("complaints"),
     )
 
 
