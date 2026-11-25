@@ -424,8 +424,9 @@ function SignalDetail({
                   return (
                     <td
                       key={h.key}
-                      // White on a wash of at most 45%: AA contrast whatever the hypothesis
-                      // colour (E2E-A11Y, #131).
+                      // Ink on a wash of at most 45%: AA contrast for KB v1's hypothesis colours
+                      // (E2E-A11Y, #131). Not for any colour: some hues at the full 45% come to
+                      // about 4:1, so a new colour needs the scan.
                       className="figure rounded-sm px-3 py-2 text-ink"
                       style={{ background: p === undefined ? undefined : wash(h.color, p * 0.45) }}
                     >

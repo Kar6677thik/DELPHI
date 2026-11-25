@@ -1,29 +1,38 @@
-import { expect, test } from '@playwright/test';
+import { type APIRequestContext, expect, test } from '@playwright/test';
 
 import { ADMIN, ADMIN_PASSWORD, signIn, writeHeaders } from './session';
 
-// E2E-RBAC (docs/21 §4, FR-UI-05): a VIEWER sees no write controls and no screen it may not
-// open, and every write the api offers answers 403 to it, whatever the UI shows.
+// E2E-RBAC (docs/21 §4, FR-UI-05): a VIEWER sees no screen it may not open, and every write the
+// api offers answers 403 to it, whatever the UI shows. The write controls on a real case are
+// checked in stories.spec.ts, which has the data.
 const VIEWER = `viewer-${String(Date.now())}`;
 const VIEWER_PASSWORD = 'viewer correct horse battery';
 const SOME_ID = '00000000-0000-7000-8000-000000000001';
 
-// Every POST/PATCH in openapi.json except login and logout, with an empty body: the
-// permission check answers before the body is read.
-const WRITES: readonly (readonly [string, string])[] = [
-  ['post', '/api/v1/admin/datasets'],
-  ['post', '/api/v1/admin/demo/scenarios/S1/run'],
-  ['post', '/api/v1/admin/sensing/train'],
-  ['post', '/api/v1/admin/users'],
-  ['patch', `/api/v1/admin/users/${SOME_ID}`],
-  ['post', `/api/v1/cases/${SOME_ID}/disposition`],
-  ['post', `/api/v1/cases/${SOME_ID}/evidence-requests`],
-  ['post', `/api/v1/cases/${SOME_ID}/police-alert/send`],
-  ['post', '/api/v1/guardian/sessions'],
-  ['post', `/api/v1/guardian/sessions/${SOME_ID}/cancel`],
-  ['post', `/api/v1/guardian/sessions/${SOME_ID}/probe-responses`],
-  ['post', `/api/v1/jobs/${SOME_ID}/retry`],
-];
+// Writes a viewer may make (docs/16): signing in and out, and recording trace events, which
+// needs only `view`. Every other write in the api's openapi.json must answer 403.
+const VIEWER_WRITES = new Set([
+  'POST /api/v1/auth/login',
+  'POST /api/v1/auth/logout',
+  'POST /api/v1/cases/{case_id}/trace-events',
+]);
+const WRITE_METHODS = ['post', 'put', 'patch', 'delete'];
+
+/** Every write in the running api's contract, path parameters filled, except VIEWER_WRITES. */
+async function apiWrites(request: APIRequestContext): Promise<[string, string][]> {
+  const response = await request.get('/api/v1/openapi.json');
+  expect(response.ok()).toBe(true);
+  const spec = (await response.json()) as { paths: Record<string, Record<string, unknown>> };
+  const writes: [string, string][] = [];
+  for (const [path, operations] of Object.entries(spec.paths)) {
+    for (const method of Object.keys(operations).filter((m) => WRITE_METHODS.includes(m))) {
+      if (VIEWER_WRITES.has(`${method.toUpperCase()} ${path}`)) continue;
+      const filled = path.replace('{story}', 'S1').replace(/\{[a-z_]+\}/g, SOME_ID);
+      writes.push([method, filled]);
+    }
+  }
+  return writes;
+}
 
 test.beforeAll(async ({ browser, baseURL }) => {
   const page = await browser.newPage();
@@ -53,24 +62,20 @@ test('a viewer sees no write screens in the navigation and cannot open them', as
   }
 });
 
-test('a viewer sees no enabled write control on the screens it can open', async ({ page }) => {
+test('every api write answers 403 FORBIDDEN to a viewer', async ({ page, baseURL }) => {
   await signIn(page, VIEWER, VIEWER_PASSWORD);
-  for (const path of ['/cases', '/guardian', '/campaigns', '/scout', '/kb', '/learning']) {
-    await page.goto(path);
-    await expect(page.locator('main')).toBeVisible();
-    // Write controls are hidden or disabled for a viewer (docs/18 §3): no enabled submit.
-    await expect(page.locator('main button[type="submit"]:enabled')).toHaveCount(0);
-  }
-});
-
-test('every api write answers 403 to a viewer', async ({ page, baseURL }) => {
-  await signIn(page, VIEWER, VIEWER_PASSWORD);
-  for (const [method, path] of WRITES) {
+  const writes = await apiWrites(page.request);
+  expect(writes.length).toBeGreaterThan(10);
+  for (const [method, path] of writes) {
+    // An empty body: the permission check answers before the body is read.
     const response = await page.request.fetch(path, {
       method,
       headers: writeHeaders(baseURL),
       data: {},
     });
-    expect(response.status(), `${method.toUpperCase()} ${path}`).toBe(403);
+    const what = `${method.toUpperCase()} ${path}`;
+    expect(response.status(), what).toBe(403);
+    // FORBIDDEN, not CSRF_REJECTED: the request passed the CSRF check and reached RBAC.
+    expect(((await response.json()) as { code: string }).code, what).toBe('FORBIDDEN');
   }
 });

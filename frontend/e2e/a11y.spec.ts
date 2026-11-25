@@ -8,7 +8,16 @@ import { ADMIN, ADMIN_PASSWORD, signIn } from './session';
 // critical violation. Routes with an id open with one that does not exist, so they show their
 // not-found state; the admin sees every screen.
 const SOME_ID = '00000000-0000-7000-8000-000000000001';
-const ROUTES = ['/login', '/', ...SCREENS.map((s) => s.path.replace(':id', SOME_ID))];
+// WCAG 2.2 AA (NFR-14, docs/18 §5): axe's 2.0, 2.1 and 2.2 A and AA rules.
+const TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
+// Every screen, the Theatre (outside the shell) and the not-found page.
+const ROUTES = [
+  '/login',
+  '/',
+  ...SCREENS.map((s) => s.path.replace(':id', SOME_ID)),
+  '/theatre',
+  '/no-such-page',
+];
 
 for (const route of ROUTES) {
   test(`axe finds nothing serious on ${route}`, async ({ page }) => {
@@ -17,7 +26,7 @@ for (const route of ROUTES) {
     // Not 'networkidle': the event stream (SSE) keeps a request open on every signed-in page.
     await expect(page.getByRole('heading').first()).toBeVisible();
     await expect(page.getByText(/^Loading/)).toHaveCount(0);
-    const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
+    const results = await new AxeBuilder({ page }).withTags(TAGS).analyze();
     const serious = results.violations.filter(
       (v) => v.impact === 'serious' || v.impact === 'critical',
     );

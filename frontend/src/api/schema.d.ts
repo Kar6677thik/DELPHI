@@ -1054,6 +1054,11 @@ export interface components {
              * @description default: the profile's
              */
             seed?: number | null;
+            /**
+             * Personas
+             * @description add the demo personas (docs/14 §6); default: the profiles personas.yaml lists (`demo`). The E2E stack seeds `test` with them (docs/21 §1).
+             */
+            personas?: boolean | null;
         };
         /**
          * DdPackFormat
