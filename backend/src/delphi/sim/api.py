@@ -67,10 +67,12 @@ from delphi.sim.phone import (
     initiate_payment,
     phone_personas,
 )
+from delphi.sim.population import HOME_BANK
 
 # The read-only `bank` tables re-exported for feature modules, and this facade's own API.
 __all__ = [
     "DATASET_REQUEST_LOCK_KEY",
+    "HOME_BANK",
     "PHONE_CHANNELS",
     "PROFILES",
     "RUNNABLE_STORIES",
