@@ -658,15 +658,26 @@ Details where the scripts are silent:
     chain (append-only, and the reset is audited in it), the outbox, idempotency keys, LLM
     calls, the dataset row, the sensing models trained after the seed and the mule scores, and
     the frozen response models. A test checks that every table is in one list or the other.
+    Mule scores keep any rescoring done after the seed: `MULE_SWEEP` refreshes them.
   - **The persona state.** Rows from before the marker that the demo changed are put back:
-    account balances lose the deltas of the deleted ledger entries, and schedule rows done after
-    the marker are due again. Account statuses (Chase's freezes) are not restored yet.
+    account balances lose the deltas of the deleted ledger entries (one `DELETE … RETURNING`),
+    and every seeded schedule row done after the marker is due again, even one that was due
+    before it, so a transfer whose payment the reset deletes runs again instead of vanishing.
+    Not restored yet: account statuses (Chase's freezes), and the status of a seeded payment
+    decided after the marker (its ledger entries are reversed, its status stays). Nothing in the
+    `demo` profile reaches the second today.
   - **One transaction, bounded.** The deletes are set-based (`DELETE … WHERE created_at >
     :marker`), so no rows or key lists pass through Python (the #263 lesson). They run with a
     statement timeout (`DELPHI_DEMO_RESET_TIMEOUT_S`, 60 s), under advisory lock 51 (a second
-    reset at once skips) and the label-delivery lock (no delivery interleaves).
+    reset at once skips) and the label-delivery lock (no delivery interleaves). Every table the
+    reset writes is then locked `IN EXCLUSIVE MODE`, in a fixed order: reads go on, but a
+    payment, session or case being written waits for the reset, so none lands between its
+    steps.
   - **Sessions in flight.** The api drops the LIVE sessions it is driving when the reset is
-    asked for, and the job drops the worker's WORKER sessions before the delete, so no runner
-    task is left driving a deleted session.
+    asked for, and the job drops the worker's WORKER sessions once it holds the reset's lock,
+    so no runner task is left driving a deleted session. If the reset then fails, the dropped
+    sessions stay unfinished until a restart resumes them or `SESSION_TIMEOUT_SWEEP` ends them;
+    run the reset again.
   - **KB v1.** The api and the worker load the ACTIVE KB at start-up, so when the reset changed
-    the ACTIVE version the job's result says `restart_needed` (gap: no hot reload).
+    the ACTIVE version, or deleted or retired another one, the job's result says
+    `restart_needed` (gap: no hot reload).

@@ -5,13 +5,14 @@ runs again."""
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import Engine, column, func, select, table, update
+from sqlalchemy import Engine, column, func, select, table, text, update
 
 from delphi.kb.model import KnowledgeBase
 from delphi.kb.store import KbStatus, ensure_kb_v1, insert_version, kb_versions
@@ -22,7 +23,7 @@ from delphi.platform.jobs import JobQueue, JobRegistry, JobStatus, JobType, Queu
 from delphi.platform.locks import DEMO_RESET_LOCK_KEY
 from delphi.platform.tables import jobs
 from delphi.platform.worker import run_job
-from delphi.sim.bank import accounts, sim_schedule
+from delphi.sim.bank import accounts, ledger_entries, sim_schedule
 from delphi.sim.delivery import deliver_labels
 from delphi.sim.jobs import register_sim_jobs
 from delphi.sim.reset import KEPT_TABLES, RESET_TABLES, register_reset_job
@@ -246,3 +247,69 @@ def test_a_second_reset_at_once_skips(seeded: Bank) -> None:
         job = _reset(seeded)
     assert job["status"] == JobStatus.SUCCEEDED
     assert job["result"] == {"skipped": "another demo reset is running"}
+
+
+def test_children_are_deleted_before_their_parents(seeded: Bank) -> None:
+    """Each foreign key between reset tables points from a table deleted earlier to one
+    deleted later, unless it is deferrable or cascades (docs/17)."""
+    order = {name: i for i, (name, _) in enumerate(RESET_TABLES)}
+    with seeded.owner.connect() as conn:
+        keys = conn.execute(
+            text(
+                "SELECT conrelid::regclass::text, confrelid::regclass::text,"
+                " condeferrable, confdeltype::text FROM pg_constraint WHERE contype = 'f'"
+            )
+        ).all()
+    wrong = [
+        (child, parent)
+        for child, parent, deferrable, on_delete in keys
+        if child in order
+        and parent in order
+        and child != parent
+        and not deferrable
+        and on_delete != "c"
+        and order[child] > order[parent]
+    ]
+    assert wrong == []
+
+
+def test_a_payment_racing_the_reset_waits_and_is_reset_too(seeded: Bank) -> None:
+    """A write in flight when the reset starts (a payment executing: its ledger entry and the
+    balance it moves) holds the reset until it commits, and the reset then undoes it as well,
+    so the balance and the ledger never disagree."""
+    before = _state(seeded)
+    seeded.clock.advance(timedelta(minutes=5))
+    with seeded.owner.connect() as conn:
+        account, payment = conn.execute(
+            select(ledger_entries.c.account_id, ledger_entries.c.payment_id).limit(1)
+        ).one()
+    writer = seeded.owner.connect()
+    tx = writer.begin()
+    writer.execute(
+        update(accounts)
+        .where(accounts.c.id == account)
+        .values(balance_paise=accounts.c.balance_paise - 100)
+    )
+    writer.execute(
+        ledger_entries.insert().values(
+            account_id=account,
+            payment_id=payment,
+            delta_paise=-100,
+            balance_after_paise=0,
+            at=seeded.clock.now(),
+        )
+    )
+    done: list[Any] = []
+    reset = threading.Thread(target=lambda: done.append(_reset(seeded)))
+    reset.start()
+    try:
+        reset.join(timeout=2)
+        assert reset.is_alive()  # waiting on the writer's tables
+        tx.commit()
+    finally:
+        writer.close()
+        reset.join(timeout=TIMEOUT_S)
+    job = done[0]
+    assert job["status"] == JobStatus.SUCCEEDED, job["error"]
+    assert job["result"]["deleted"]["bank.ledger_entries"] == 1
+    assert _state(seeded) == before
