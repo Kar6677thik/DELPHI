@@ -85,6 +85,8 @@ class Settings(BaseSettings):
     worker_fast_concurrency: int = Field(default=1, ge=1, le=4)
     worker_poll_interval_s: float = Field(default=1.0, gt=0, le=60)
     worker_heartbeat_max_age_s: int = Field(default=30, ge=5, le=600)
+    # The demo reset's statement timeout: FR-SIM-08 wants it done in 60 s (docs/14 §10).
+    demo_reset_timeout_s: float = Field(default=60.0, gt=0, le=600)
     # Passive probe adapters (docs/08 §2 step 4): their own bounded thread pool, so adapters
     # that time out cannot starve the event loop's default executor; and each adapter query's
     # statement_timeout = the KB's passive_adapter_timeout_ms + this margin, so an abandoned
