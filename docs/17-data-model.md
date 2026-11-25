@@ -159,7 +159,8 @@ campaigns(id, leading_hypothesis, case_count, f3_stage_max, expected_loss_paise,
        -- migration 0017 (#107); idx (rank_score desc, id desc)
        -- WHERE merged_into IS NULL AND case_count > 0 (the list's filter and order);
        -- cases.campaign_id gets its foreign key here (NOT VALID, then VALIDATE), with an index
-case_entities(case_id, entity, pk(case_id, entity))   idx (entity, case_id)
+case_entities(case_id → cases ON DELETE CASCADE, entity, pk(case_id, entity))
+       idx (entity, case_id)
        -- 0017 (#107): "device:…", "account:…" or "ip24:…", written once per case
 campaign_watermark(id = 1, at, case_id)   -- 0017 (#107): CAMPAIGN_RECOMPUTE's position; it
        -- takes touches at least DELPHI_CAMPAIGN_SETTLE_LAG_S old, by cases.opened_at,

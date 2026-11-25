@@ -54,7 +54,7 @@ ALTER TABLE delphi.cases
 ALTER TABLE delphi.cases VALIDATE CONSTRAINT cases_campaign_id_fkey;
 CREATE INDEX cases_campaign_id_idx ON delphi.cases (campaign_id);
 CREATE TABLE delphi.case_entities (
-  case_id  uuid NOT NULL REFERENCES delphi.cases (id),
+  case_id  uuid NOT NULL REFERENCES delphi.cases (id) ON DELETE CASCADE,
   entity   text NOT NULL CHECK (entity ~ '^(device|account|ip24):.+'),
   PRIMARY KEY (case_id, entity)
 );

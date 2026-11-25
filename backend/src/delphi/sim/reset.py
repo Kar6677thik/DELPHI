@@ -51,6 +51,8 @@ RESET_TABLES: tuple[tuple[str, str], ...] = (
     ("delphi.trace_events", "at"),
     ("delphi.evidence_records", "created_at"),
     ("delphi.cases", "created_at"),  # its sessions point back at it: DEFERRABLE (docs/17)
+    # Derived from the cases (#107); case_entities go with their case (ON DELETE CASCADE).
+    ("delphi.campaigns", "created_at"),
     ("delphi.guardian_sessions", "started_at"),  # probe_runs go with them (ON DELETE CASCADE)
     ("delphi.labels", "created_at"),
     ("delphi.kb_versions", "created_at"),
@@ -87,6 +89,9 @@ KEPT_TABLES: frozenset[str] = frozenset(
     {
         "bank.account_scores",  # the mule scorer's, refreshed by MULE_SWEEP
         "delphi.audit_log",  # append-only; the reset is audited in it
+        # The campaign recompute's position: cases opened after the reset are after it.
+        "delphi.campaign_watermark",
+        "delphi.case_entities",  # goes with its case (ON DELETE CASCADE)
         "delphi.auth_sessions",
         "delphi.datasets",
         "delphi.idempotency_keys",
