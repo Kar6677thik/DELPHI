@@ -644,9 +644,29 @@ Details where the scripts are silent:
 - **Restarts.** The scripts live in the worker's memory. A story session resumed after a worker
   restart (FR-GDN-14) answers its remaining probes from the response models with the story's
   truth, so it may end differently from the script.
-- `POST /admin/demo/reset`: deletes every row created after the `seed_completed_at` marker
-  (in dependency order, in one transaction), re-activates KB v1, and resets the persona state.
-  Must finish in ≤ 60 s.
-  Labels (#159): it also deletes the `delphi.labels` rows known after the marker, sets
+- `POST /admin/demo/reset`: deletes every row of the demo's data created after the
+  `seed_completed_at` marker (in dependency order, in one transaction), re-activates KB v1, and
+  resets the persona state. Must finish in ≤ 60 s.
+  Labels (#159): it also deletes the `delphi.labels` rows delivered after the marker, sets
   `sim_truth.label_schedule.delivered` back to false for the rows due after the history's end,
   and lets `LABEL_DELIVERY` re-map complaint keys against the re-activated KB v1.
+  How it does it (`delphi.sim.reset`, #101; owner decisions delegated 2026-11-24):
+  - **What is deleted.** The bank's rows, the Guardian sessions and probe runs, cases and
+    everything on them, labels, KB versions other than v1, and ground truth, each table by its
+    creation time (`created_at`, `at` for event logs, `started_at` for sessions). The platform's
+    own tables stay: users and sign-in sessions, jobs (the reset's own among them), the audit
+    chain (append-only, and the reset is audited in it), the outbox, idempotency keys, LLM
+    calls, the dataset row, the sensing models trained after the seed and the mule scores, and
+    the frozen response models. A test checks that every table is in one list or the other.
+  - **The persona state.** Rows from before the marker that the demo changed are put back:
+    account balances lose the deltas of the deleted ledger entries, and schedule rows done after
+    the marker are due again. Account statuses (Chase's freezes) are not restored yet.
+  - **One transaction, bounded.** The deletes are set-based (`DELETE … WHERE created_at >
+    :marker`), so no rows or key lists pass through Python (the #263 lesson). They run with a
+    statement timeout (`DELPHI_DEMO_RESET_TIMEOUT_S`, 60 s), under advisory lock 50 (a second
+    reset at once skips) and the label-delivery lock (no delivery interleaves).
+  - **Sessions in flight.** The api drops the LIVE sessions it is driving when the reset is
+    asked for, and the job drops the worker's WORKER sessions before the delete, so no runner
+    task is left driving a deleted session.
+  - **KB v1.** The api and the worker load the ACTIVE KB at start-up, so when the reset changed
+    the ACTIVE version the job's result says `restart_needed` (gap: no hot reload).

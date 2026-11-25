@@ -1,0 +1,248 @@
+"""The demo reset (docs/14 §10, FR-SIM-08, docs/21 E2E-RESET, #101) on a real database seeded
+with the `test` profile and its personas: a story runs, labels are delivered, a new KB version
+goes ACTIVE, and the reset brings the bank back to the state right after the seed, so the story
+runs again."""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Iterator
+from datetime import UTC, datetime, timedelta
+from typing import Any
+from uuid import UUID, uuid4
+
+import pytest
+from sqlalchemy import Engine, column, func, select, table, update
+
+from delphi.kb.model import KnowledgeBase
+from delphi.kb.store import KbStatus, ensure_kb_v1, insert_version, kb_versions
+from delphi.platform.audit import audit_log
+from delphi.platform.clock import FixedClock
+from delphi.platform.db import make_session_factory
+from delphi.platform.jobs import JobQueue, JobRegistry, JobStatus, JobType, QueueConfig, enqueue
+from delphi.platform.locks import DEMO_RESET_LOCK_KEY
+from delphi.platform.tables import jobs
+from delphi.platform.worker import run_job
+from delphi.sim.bank import accounts, sim_schedule
+from delphi.sim.delivery import deliver_labels
+from delphi.sim.jobs import register_sim_jobs
+from delphi.sim.reset import KEPT_TABLES, RESET_TABLES, register_reset_job
+from delphi.sim.truth import label_schedule
+
+from ._db import engine_as, upgrade
+from .test_demo_story import (
+    WORKER,
+    Bank,
+    _decided,
+    _run_story,
+    _worker,
+)
+from .test_guardian_active import ARJUN_PRIOR, story_prior
+
+
+class RunningClock(FixedClock):
+    """The system clock, which a test can also move forward (the customer's answering time,
+    the minutes between demo steps)."""
+
+    def __init__(self) -> None:
+        super().__init__(datetime.now(UTC))
+        self._offset = timedelta(0)
+
+    def now(self) -> datetime:
+        return datetime.now(UTC) + self._offset
+
+    def advance(self, delta: timedelta) -> None:
+        if delta < timedelta(0):
+            raise ValueError("time does not run backwards")
+        self._offset += delta
+
+
+@pytest.fixture
+def seeded(create_database: Callable[[], str], kb: KnowledgeBase) -> Iterator[Bank]:
+    """The story tests' seeded bank, on the running clock: the seed's marker is the clock's
+    time, read inside the seed's transaction, so rows the database stamps (`created_at`
+    defaults to now()) are never newer than it, as in production."""
+    url = create_database()
+    upgrade(url)
+    owner, sim, app = engine_as(url), engine_as(url, "delphi_sim"), engine_as(url, "delphi_app")
+    clock = RunningClock()
+    with make_session_factory(owner).begin() as s:
+        assert ensure_kb_v1(s, clock, kb) is not None
+    sessions = make_session_factory(app)
+    queue = JobQueue(sessions, clock, QueueConfig())
+    registry = JobRegistry()
+    register_sim_jobs(registry, sim_engine=sim, clock=clock, kb=kb)
+    with sessions.begin() as s:
+        enqueue(
+            s,
+            clock,
+            JobType.GENERATE_DATASET,
+            idempotency_key="seed",
+            params={"profile": "test", "personas": True},
+        )
+    job = queue.claim(WORKER, frozenset({JobType.GENERATE_DATASET}))
+    assert job is not None
+    run_job(queue, registry, job, WORKER)
+    yield Bank(url, owner, sim, app, sessions, clock, queue)
+    for engine in (owner, sim, app):
+        engine.dispose()
+
+
+RESET = "/api/v1/admin/demo/reset"
+SCHEMAS = ("bank", "delphi", "sim_truth")
+TIMEOUT_S = 60.0
+
+
+def _table(name: str) -> Any:
+    schema, table_name = name.split(".")
+    return table(table_name, schema=schema)
+
+
+def _counts(engine: Engine) -> dict[str, int]:
+    with engine.connect() as conn:
+        return {
+            name: conn.execute(select(func.count()).select_from(_table(name))).scalar_one()
+            for name, _ in RESET_TABLES
+        }
+
+
+def _state(seeded: Bank) -> dict[str, Any]:
+    """What the reset must give back: every demo table's size, every balance, what the
+    schedules have done, and the KB versions' statuses."""
+    with seeded.owner.connect() as conn:
+        balances = dict(conn.execute(select(accounts.c.id, accounts.c.balance_paise)).all())
+        done = conn.execute(
+            select(func.count()).where(sim_schedule.c.done_at.is_not(None))
+        ).scalar_one()
+        delivered = conn.execute(
+            select(func.count()).where(label_schedule.c.delivered.is_(True))
+        ).scalar_one()
+        kbs = dict(conn.execute(select(kb_versions.c.id, kb_versions.c.status)).all())
+    return {
+        "counts": _counts(seeded.owner),
+        "balances": balances,
+        "schedule_done": done,
+        "labels_delivered": delivered,
+        "kb": kbs,
+    }
+
+
+def _reset(seeded: Bank, drop: Any = lambda: 0) -> Any:
+    registry = JobRegistry()
+    register_reset_job(
+        registry, sim_engine=seeded.sim, clock=seeded.clock, timeout_s=TIMEOUT_S, drop_sessions=drop
+    )
+    with seeded.sessions.begin() as s:
+        enqueue(s, seeded.clock, JobType.DEMO_RESET, idempotency_key=str(uuid4()))
+    job = seeded.queue.claim(WORKER, frozenset({JobType.DEMO_RESET}))
+    assert job is not None
+    run_job(seeded.queue, registry, job, WORKER)
+    with seeded.sessions() as s:
+        return s.execute(select(jobs).where(jobs.c.id == job.id)).mappings().one()
+
+
+def _demo_happens(seeded: Bank, kb: KnowledgeBase) -> None:
+    """After the seed: labels are delivered, a seeded schedule row runs, and a new KB version
+    goes ACTIVE (S-2 is played by the caller)."""
+    now = seeded.clock.now()
+    with seeded.sim.begin() as conn:
+        assert (
+            deliver_labels(conn, until=now, active_hypotheses=frozenset(kb.hypotheses), now=now) > 0
+        )
+        pending = conn.execute(
+            select(sim_schedule.c.id).where(sim_schedule.c.done_at.is_(None)).limit(1)
+        ).scalar_one()
+        conn.execute(update(sim_schedule).where(sim_schedule.c.id == pending).values(done_at=now))
+    with seeded.sessions.begin() as s:
+        s.execute(
+            update(kb_versions)
+            .where(kb_versions.c.status == KbStatus.ACTIVE.value)
+            .values(status=KbStatus.RETIRED.value, retired_at=now)
+        )
+        insert_version(s, seeded.clock, kb, status=KbStatus.ACTIVE, change_summary="after seed")
+
+
+def test_every_table_is_reset_or_kept(seeded: Bank) -> None:
+    """A new table must say whether the demo reset deletes its rows (docs/14 §10)."""
+    with seeded.owner.connect() as conn:
+        found = {
+            f"{schema}.{name}"
+            for schema, name in conn.execute(
+                select(column("table_schema"), column("table_name"))
+                .select_from(table("tables", schema="information_schema"))
+                .where(column("table_schema").in_(SCHEMAS), column("table_type") == "BASE TABLE")
+            ).all()
+        }
+    reset = {name for name, _ in RESET_TABLES}
+    assert not reset & KEPT_TABLES
+    assert found == reset | KEPT_TABLES
+
+
+def test_the_reset_restores_the_seeded_bank_and_s2_runs_again(
+    seeded: Bank, kb: KnowledgeBase
+) -> None:
+    before = _state(seeded)
+    seeded.clock.advance(timedelta(minutes=5))
+    guardian, customer = _worker(seeded, kb, story_prior(ARJUN_PRIOR))
+    guardian.start()
+    try:
+        story = _run_story(seeded, guardian, customer, story="S2", mode="autoplay")
+        assert story["status"] == JobStatus.SUCCEEDED, story["error"]
+        assert _decided(seeded, UUID(story["result"]["session_id"]))["decision"] == "RELEASE"
+        _demo_happens(seeded, kb)
+        assert _state(seeded) != before
+
+        seeded.clock.advance(timedelta(minutes=1))
+        job = _reset(seeded, guardian.abandon)
+        assert job["status"] == JobStatus.SUCCEEDED, job["error"]
+        result = job["result"]
+        assert _state(seeded) == before
+        assert result["kb_v1_reactivated"] is True and result["restart_needed"] is True
+        assert result["deleted"]["bank.payments"] == 1
+        assert result["deleted"]["delphi.guardian_sessions"] == 1
+        assert result["deleted"]["bank.devices"] == 1  # Arjun's new phone
+        assert result["accounts_restored"] >= 1 and result["schedule_rows_due_again"] == 1
+        assert result["labels_undelivered"] > 0
+        with seeded.owner.connect() as conn:
+            audited = conn.execute(
+                select(audit_log.c.actor_type, audit_log.c.payload).where(
+                    audit_log.c.action == "DEMO_RESET"
+                )
+            ).one()
+        assert audited.actor_type == "JOB" and audited.payload["deleted"] == result["deleted"]
+
+        seeded.clock.advance(timedelta(minutes=1))
+        again = _run_story(seeded, guardian, customer, story="S2", mode="autoplay")
+        assert again["status"] == JobStatus.SUCCEEDED, again["error"]
+        assert _decided(seeded, UUID(again["result"]["session_id"]))["decision"] == "RELEASE"
+    finally:
+        guardian.stop()
+
+
+def test_the_reset_drops_the_worker_sessions_it_deletes(seeded: Bank, kb: KnowledgeBase) -> None:
+    """A session still waiting for its simulated customer is dropped before the delete, so no
+    task is left driving a deleted session."""
+    seeded.clock.advance(timedelta(minutes=5))
+
+    async def never(_seconds: float) -> None:  # the customer never answers
+        await __import__("asyncio").Event().wait()
+
+    guardian, customer = _worker(seeded, kb, story_prior(ARJUN_PRIOR))
+    guardian.channel._wait = never  # type: ignore[assignment]
+    guardian.start()
+    try:
+        story = _run_story(seeded, guardian, customer, story="S2", mode="autoplay")
+        session_id = UUID(story["result"]["session_id"])
+        job = _reset(seeded, guardian.abandon)
+        assert job["status"] == JobStatus.SUCCEEDED, job["error"]
+        assert job["result"]["worker_sessions_dropped"] == 1
+        assert guardian.runner.task(session_id) is None
+    finally:
+        guardian.stop()
+
+
+def test_a_second_reset_at_once_skips(seeded: Bank) -> None:
+    with seeded.owner.connect() as holder, holder.begin():
+        holder.execute(select(func.pg_advisory_xact_lock(DEMO_RESET_LOCK_KEY)))
+        job = _reset(seeded)
+    assert job["status"] == JobStatus.SUCCEEDED
+    assert job["result"] == {"skipped": "another demo reset is running"}
