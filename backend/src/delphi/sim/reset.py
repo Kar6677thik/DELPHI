@@ -48,6 +48,11 @@ _MS_PER_S = 1000
 # The demo's rows, deleted children first: (schema.table, its creation-time column).
 RESET_TABLES: tuple[tuple[str, str], ...] = (
     ("delphi.police_alert_drafts", "created_at"),
+    # The Scout's (#117): drafts before their clusters, clusters before their runs.
+    ("delphi.typology_drafts", "created_at"),
+    ("delphi.scout_clusters", "created_at"),
+    ("delphi.scout_runs", "started_at"),
+    ("delphi.scout_queue_dismissals", "dismissed_at"),
     # Chase (#113): candidates, liens and tickets go with their operation (ON DELETE CASCADE).
     ("delphi.chase_operations", "created_at"),
     ("delphi.trace_events", "at"),
