@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { apiFetch, getJson } from './client';
 import type { CaseDetail, CasePage, CaseSort, DispositionRequest, EvidenceRequest } from './types';
+import type { components } from './schema';
 
 /** Every case query sits under this key, so a `case.*` event refreshes them all. */
 export const CASES_ROOT_KEY = ['cases'] as const;
@@ -136,5 +137,30 @@ export function useCaseDdPack(id: string) {
     queryKey: [...caseQueryKey(id), 'dd-pack'],
     queryFn: async () =>
       parseDdPack(await getJson<unknown>(`/cases/${encodeURIComponent(id)}/dd-pack`)),
+  });
+}
+
+// ---------------------------------------------------------------- the police alert
+
+export type AlertAction = components['schemas']['AlertAction'];
+
+/**
+ * Send (recorded as SENT_SIMULATED) or discard a coercion case's police alert draft (docs/09 §6,
+ * FR-NAV-10). Only a person does this; the answer is the case with its new version and ETag.
+ * A second action on the same alert is 409 (docs/16).
+ */
+export function useActOnPoliceAlert(id: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: async (action: AlertAction) =>
+      readCase(
+        await apiFetch(`/cases/${encodeURIComponent(id)}/police-alert/${action}`, {
+          method: 'POST',
+        }),
+      ),
+    onSuccess: (data) => {
+      client.setQueryData(caseQueryKey(id), data);
+      void client.invalidateQueries({ queryKey: CASES_QUERY_KEY });
+    },
   });
 }
