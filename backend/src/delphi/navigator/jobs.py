@@ -72,27 +72,46 @@ class NarrativeJob:
             return {"written": False, "source": None}
         text = getattr(generated.parsed, "finding", "")
         citations = list(getattr(generated.parsed, "citations", []))
-        e = evidence_records.c
         with self.sessions.begin() as session:
-            case_id = session.execute(
-                update(evidence_records)
-                .where(e.id == record_id, e.narrative.is_(None))
-                .values(
-                    narrative=text,
-                    narrative_source=generated.source.value,
-                    narrative_citations=citations,
-                )
-                .returning(e.case_id)
-            ).scalar_one_or_none()
-            if case_id is not None:
-                refresh_complete(session, case_id, self.trail)  # section 6 may now be complete
-                publish(
-                    session,
-                    EventType.EVIDENCE_NARRATIVE_READY,
-                    str(case_id),
-                    {"case_id": str(case_id), "evidence_record_id": str(record_id)},
-                )
+            case_id = write_narrative(
+                session,
+                record_id,
+                text=text,
+                source=generated.source.value,
+                citations=citations,
+                trail=self.trail,
+            )
         return {"written": case_id is not None, "source": generated.source.value}
+
+
+def write_narrative(
+    session: Session,
+    record_id: UUID,
+    *,
+    text: str,
+    source: str,
+    citations: list[Any],
+    trail: GuardianTrail | None,
+) -> UUID | None:
+    """Store a record's narrative (once), recompute its case's DD pack flag and publish
+    `evidence.narrative_ready`, in the caller's transaction. Returns the case, or None when the
+    record is gone or already has its narrative."""
+    e = evidence_records.c
+    case_id: UUID | None = session.execute(
+        update(evidence_records)
+        .where(e.id == record_id, e.narrative.is_(None))
+        .values(narrative=text, narrative_source=source, narrative_citations=citations)
+        .returning(e.case_id)
+    ).scalar_one_or_none()
+    if case_id is not None:
+        refresh_complete(session, case_id, trail)  # section 6 may now be complete
+        publish(
+            session,
+            EventType.EVIDENCE_NARRATIVE_READY,
+            str(case_id),
+            {"case_id": str(case_id), "evidence_record_id": str(record_id)},
+        )
+    return case_id
 
 
 def register_navigator_jobs(
