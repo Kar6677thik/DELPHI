@@ -345,6 +345,17 @@ def test_only_new_money_reopens_a_disposed_suspect(env: Env) -> None:  # noqa: F
     assert len(_mule_sweep(env)) == 1
 
 
+def test_one_busy_mule_does_not_fill_a_batch(env: Env) -> None:  # noqa: F811
+    busy, other = _account(env), _account(env)
+    for account in (busy, other):
+        _score(env, account, 0.9)
+    for minutes in range(5):  # the five oldest credits are all the busy mule's
+        _credit(env, busy, 100_000, days_ago=0.5 - minutes / 1440)
+    _credit(env, other, 100_000, days_ago=0.1)
+    opened = _mule_sweep(env, limit=2)
+    assert {c.subject_account_id for c in opened} == {busy, other}
+
+
 def test_both_triggers_share_one_cap_per_run(env: Env) -> None:  # noqa: F811
     complained = [_account(env) for _ in range(2)]
     suspects = [_account(env) for _ in range(3)]

@@ -36,6 +36,7 @@ from uuid import UUID
 
 from sqlalchemy import BigInteger, column, exists, func, or_, select, text, true
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy.dialects.postgresql import distinct_on
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -255,14 +256,21 @@ def open_with_trigger(
     trigger: str | None,
     *,
     kb_version_id: int,
-    p_mule_fallback: float,
+    p_mule_fallback: float | None = None,
     demo_time: bool,
 ) -> CaseRecord | None:
     """Open the account's review, with the ``trigger`` probe as its first evidence record (none
-    for the mule-scorer trigger); None if a review is already open (a concurrent open won)."""
+    for the mule-scorer trigger); None if a review is already open (a concurrent open won).
+    ``p_mule_fallback`` is needed only when the account may have no stored score (complaints);
+    a mule suspect always has one."""
     p_mule = stored_p_mule(session, account_id)
     source = "account_scores"
     if p_mule is None:
+        if p_mule_fallback is None:
+            raise DelphiError(
+                f"Account {account_id} has no stored mule score and no fallback was given.",
+                code=ProblemCode.VALIDATION_FAILED,
+            )
         log.warning("navigator.p_mule_fallback", account_id=str(account_id))
         p_mule, source = p_mule_fallback, "fallback"
     try:
@@ -320,15 +328,16 @@ def mule_candidates(
 ) -> list[UUID]:
     """docs/09 §1: home-bank accounts whose stored mule score is at least ``threshold``, credited
     in ``(now − window, now]`` after their latest review (none open, none opened at or after the
-    credit), oldest credit first, at most ``limit`` credits' accounts, each once."""
+    credit), oldest credit first, at most ``limit`` accounts. Each account counts once (its
+    oldest such credit), so one busy mule cannot fill a batch."""
     s, a, p, k = bank.account_scores.c, bank.accounts.c, bank.payments.c, cases.c
     reviewed = exists().where(
         k.subject_account_id == p.payee_account_id,
         k.type == CaseType.ACCOUNT_REVIEW.value,
         or_(k.status != CaseStatus.DISPOSED.value, k.opened_at >= p.executed_at),
     )
-    rows = session.execute(
-        select(p.payee_account_id)
+    first_credit = (
+        select(p.payee_account_id, p.executed_at, p.id)
         .select_from(
             bank.account_scores.join(bank.accounts, a.id == s.account_id).join(
                 bank.payments, p.payee_account_id == s.account_id
@@ -342,10 +351,16 @@ def mule_candidates(
             p.executed_at <= now,
             ~reviewed,
         )
-        .order_by(p.executed_at, p.id)
-        .limit(limit)
-    ).scalars()
-    return list(dict.fromkeys(rows))
+        .ext(distinct_on(p.payee_account_id))
+        .order_by(p.payee_account_id, p.executed_at, p.id)
+        .subquery()
+    )
+    f = first_credit.c
+    return list(
+        session.execute(
+            select(f.payee_account_id).order_by(f.executed_at, f.id).limit(limit)
+        ).scalars()
+    )
 
 
 def open_mule_reviews(
@@ -377,7 +392,6 @@ def open_mule_reviews(
             account_id,
             None,
             kb_version_id=kb_version_id,
-            p_mule_fallback=0.0,  # unused: a suspect has a stored score
             demo_time=demo_time,
         )
         if case is not None:

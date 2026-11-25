@@ -6,8 +6,10 @@ two workers run the scheduler. After an outage only the current slot is enqueued
 are not replayed (every recurring job works on "whatever is due now", so catching up once is
 enough).
 
-Only types with a registered handler are scheduled. CHASE_RETRACE and MULE_SWEEP have
-time-scaled intervals, so they join the schedule with Chase and the time scale (M5–M6).
+Only types with a registered handler are scheduled. CHASE_RETRACE has a time-scaled interval,
+so it joins the schedule with Chase and the time scale (M6). MULE_SWEEP runs every minute: each
+run rescores, in bounded batches, the accounts whose score is older than
+``mule_sweep_interval_min`` (time-scaled), so the interval bounds a score's age (docs/04 §5.4).
 """
 
 from __future__ import annotations
@@ -63,6 +65,7 @@ SCHEDULE: tuple[Recurring, ...] = (
     Recurring(JobType.SIM_TICK, every=timedelta(seconds=10)),
     Recurring(JobType.SESSION_TIMEOUT_SWEEP, every=timedelta(seconds=30)),
     Recurring(JobType.LABEL_DELIVERY, every=timedelta(seconds=60)),
+    Recurring(JobType.MULE_SWEEP, every=timedelta(seconds=60)),
     Recurring(JobType.ACCOUNT_REVIEW_SWEEP, every=timedelta(seconds=60)),
     Recurring(JobType.SCOUT_AUTO_TRIGGER, every=timedelta(minutes=5)),
     Recurring(JobType.PROBE_YIELD_DAILY, daily_at=time(0, 15)),

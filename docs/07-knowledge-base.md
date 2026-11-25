@@ -298,7 +298,7 @@ navigator:
   mule_sweep_threshold: 0.70
   mule_sweep_interval_min: 15             # time-scaled
   campaign_window_days: 7
-  # mule_credit_window_h: 24              # model default (#109, proposed on #252); KB v1 leaves it out
+  # mule_credit_window_h: 24              # model default (#109, approved on #252); KB v1 leaves it out
 chase:
   min_trace_inr: 500
   freeze_latency_internal_s: 60           # time-scaled

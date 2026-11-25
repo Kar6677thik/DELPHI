@@ -261,7 +261,7 @@ class NavigatorSection(_Frozen):
     mule_sweep_threshold: float
     mule_sweep_interval_min: float
     campaign_window_days: int
-    # docs/09 §1 (#109, proposed on #252): a mule suspect needs a credit this recent. A model
+    # docs/09 §1 (#109, approved on #252): a mule suspect needs a credit this recent. A model
     # default, so the stored KB v1 keeps its hash; later KB versions may set it.
     mule_credit_window_h: float = Field(default=24.0, gt=0)
 

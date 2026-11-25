@@ -16,9 +16,11 @@ from sqlalchemy import Engine, func, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from delphi.kb.model import KnowledgeBase
+from delphi.kb.store import ensure_kb_v1
 from delphi.platform.clock import FixedClock
 from delphi.platform.db import make_session_factory
 from delphi.platform.jobs import JobQueue, JobRegistry, JobStatus, JobType, QueueConfig, enqueue
+from delphi.platform.locks import MULE_SWEEP_LOCK_KEY
 from delphi.platform.tables import jobs
 from delphi.platform.worker import run_job
 from delphi.sensing.artifacts import ArtifactKind, active_artifacts
@@ -26,7 +28,7 @@ from delphi.sensing.config import load_sensing_config
 from delphi.sensing.features import build_payment_features
 from delphi.sensing.history import load_payment_snapshot, payee_mule_score
 from delphi.sensing.jobs import register_sensing_jobs
-from delphi.sensing.mule_scores import MuleScores, sweep_mule_scores
+from delphi.sensing.mule_scores import MuleScores, MuleSweepLimits, sweep_mule_scores
 from delphi.sensing.offline import OfflineHistories, load_bank_frames
 from delphi.sim import api as bank
 from delphi.sim.jobs import register_sim_jobs
@@ -36,6 +38,9 @@ from ._db import engine_as, upgrade
 T0 = datetime(2026, 11, 8, 6, 0, tzinfo=UTC)  # after the `test` history
 WORKER = "worker-1"
 FALLBACK = load_sensing_config().features.mule_score_fallback
+
+
+EVERY_ACCOUNT = MuleSweepLimits(batch=500, max_per_run=10**9)  # one run scores them all
 
 
 @dataclass
@@ -79,9 +84,13 @@ def seeded(create_database: Callable[[], str], kb: KnowledgeBase) -> Iterator[Ba
     app, sim = engine_as(url, "delphi_app"), engine_as(url, "delphi_sim")
     clock = FixedClock(T0)
     sessions = make_session_factory(app)
+    with sessions.begin() as s:  # MULE_SWEEP reads mule_sweep_interval_min from the ACTIVE KB
+        ensure_kb_v1(s, clock, kb)
     registry = JobRegistry()
     register_sim_jobs(registry, sim_engine=sim, clock=clock, kb=kb)
-    register_sensing_jobs(registry, engine=app, sessions=sessions, clock=clock)
+    register_sensing_jobs(
+        registry, engine=app, sessions=sessions, clock=clock, mule_sweep=EVERY_ACCOUNT
+    )
     env = Bank(app, sessions, clock, JobQueue(sessions, clock, QueueConfig()), registry)
     env.run(JobType.GENERATE_DATASET, "seed", profile="test")
     queued = env.queue.claim(WORKER, frozenset({JobType.TRAIN_SENSING}))  # queued by the seed
@@ -118,10 +127,10 @@ def test_the_sweep_without_a_mule_model_scores_nothing(
     upgrade(url)
     app = engine_as(url, "delphi_app")
     try:
-        result = sweep_mule_scores(app, FixedClock(T0))
+        result = sweep_mule_scores(app, FixedClock(T0), EVERY_ACCOUNT)
     finally:
         app.dispose()
-    assert result == {"scored": 0, "skipped": "no ACTIVE MULE model"}
+    assert result["scored"] == 0 and result["skipped"] == "no ACTIVE MULE model"
 
 
 # ---------------------------------------------------------------- on demand
@@ -212,3 +221,37 @@ def test_payee_p_mule_reads_the_cache_the_same_way_online_and_offline(seeded: Ba
             payee_mule_score(conn, payment.payee_account_id, payment.initiated_at, config) == 0.73
         )
     assert both() == (0.73, 0.73)
+
+
+# ---------------------------------------------------------------- bounded (#252)
+
+
+def test_a_run_is_capped_and_the_next_one_carries_on(seeded: Bank) -> None:
+    """Scores older than mule_sweep_interval_min are stale; a run rescores at most its cap of
+    them, in batches, and the next run carries on until none is left."""
+    later = FixedClock(T0 + timedelta(hours=2))  # every stored score is now stale
+    limits = MuleSweepLimits(batch=40, max_per_run=100)
+    first = sweep_mule_scores(seeded.app, later, limits)
+    assert first["scored"] == 100 and first["more"] is True
+    fresh = [a for a, (_, at) in seeded.scores().items() if at == later.now()]
+    assert len(fresh) == 100
+    runs, total = 1, 100
+    while (result := sweep_mule_scores(seeded.app, later, limits))["more"]:
+        runs, total = runs + 1, total + result["scored"]
+    total += result["scored"]
+    assert total == seeded.n_accounts()
+    assert all(at == later.now() for _, at in seeded.scores().values())
+    assert sweep_mule_scores(seeded.app, later, limits) == {
+        "scored": 0,
+        "model_artifact_id": first["model_artifact_id"],
+        "computed_at": later.now().isoformat(),
+        "more": False,
+    }
+
+
+def test_a_run_skips_while_another_one_sweeps(seeded: Bank) -> None:
+    later = FixedClock(T0 + timedelta(hours=4))
+    with seeded.app.begin() as conn:
+        conn.execute(select(func.pg_advisory_xact_lock(MULE_SWEEP_LOCK_KEY)))
+        result = sweep_mule_scores(seeded.app, later, EVERY_ACCOUNT)
+    assert result["skipped"] == "busy" and result["scored"] == 0

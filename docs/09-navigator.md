@@ -30,7 +30,7 @@ triggers and the console come with M5 (#103, #109).
 **Implementation (complaints trigger, #109).** `ACCOUNT_REVIEW_SWEEP` (every minute, doc 04 §5.4) runs
 `delphi.navigator.reviews.open_complaint_reviews` under the ACTIVE KB:
 - It finds the home-bank (`DLPH`) accounts named in `counterparty_account_ids` by complaints
-  reported in the last `DELPHI_REVIEW_COMPLAINT_LOOKBACK_DAYS` (proposed 30; an older complaint
+  reported in the last `DELPHI_REVIEW_COMPLAINT_LOOKBACK_DAYS` (30; an older complaint
   opens no review), in SQL, oldest complaint first, with `NOT EXISTS` against the account's
   reviews and a `LIMIT`.
 - It is bounded, as `LABEL_DELIVERY` is (#263): one transaction per batch of
