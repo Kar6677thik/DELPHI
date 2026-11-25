@@ -1,5 +1,6 @@
 """Campaigns' merge rule and stable ids (docs/05 §5, FR-NAV-09, #107): merge, chains, GENUINE
-excluded, the 7-day window, and ids that survive recomputes and merges."""
+and UNEXPLAINED excluded, the split anchor, the 7-day window, and ids that survive recomputes
+and merges."""
 
 from __future__ import annotations
 
@@ -58,6 +59,16 @@ def test_genuine_cases_are_never_in_a_campaign() -> None:
     assert groups(cases, window_days=WINDOW) == []
 
 
+def test_unexplained_cases_are_never_in_a_campaign() -> None:
+    """docs/05 §5: the argmax is over all hypotheses; UNEXPLAINED leads no campaign."""
+    cases = [
+        _case(1, "UNEXPLAINED", "device:F1"),
+        _case(2, "UNEXPLAINED", "device:F1"),
+        _case(3, "ATO", "device:F1"),  # shares the device, but no other ATO case does
+    ]
+    assert groups(cases, window_days=WINDOW) == []
+
+
 def test_cases_opened_more_than_seven_days_apart_are_not_linked() -> None:
     cases = [_case(1, "MULE", "account:M", day=0), _case(2, "MULE", "account:M", day=8)]
     assert groups(cases, window_days=WINDOW) == []
@@ -104,8 +115,7 @@ def test_a_large_bucket_links_by_neighbours_only() -> None:
 
 def test_a_split_keeps_the_id_for_one_group_and_numbers_the_other() -> None:
     """Two cases leave the link that held the campaign together (the bridge case's entity
-    changed): one group keeps the id, the other gets a new one. Which group keeps it is the
-    owner's to decide (asked on #259); this pins the current rule, the group sorted first."""
+    changed): the group holding the oldest case keeps the id, the other gets a new one."""
     stored = [
         _case(1, "ATO", "device:F", campaign=1),
         _case(2, "ATO", "device:F", campaign=1),
@@ -118,6 +128,57 @@ def test_a_split_keeps_the_id_for_one_group_and_numbers_the_other() -> None:
     [new] = a.new_campaigns
     assert a.campaign_of[UUID(int=3)] == a.campaign_of[UUID(int=4)] == new
     assert a.dissolved == frozenset() and a.unassigned == frozenset()
+
+
+def test_a_split_keeps_the_id_for_the_group_with_the_oldest_case() -> None:
+    """The owner's example on #259: K splits into A (opened on day 0, larger ids) and B (day 1,
+    smaller ids). A holds K's oldest case, so A keeps K, though B's ids sort first."""
+    stored = [
+        _case(9, "ATO", "device:F", day=0, campaign=1),
+        _case(10, "ATO", "device:F", day=0, campaign=1),
+        _case(1, "ATO", "account:Y", day=1, campaign=1),
+        _case(2, "ATO", "account:Y", day=1, campaign=1),
+    ]
+    members = groups(stored, window_days=WINDOW)
+    assert members[0] == [UUID(int=1), UUID(int=2)]  # B sorts first
+    a = assign_ids(stored, members, created_at={UUID(int=1001): T0}, new_id=_ids())
+    assert a.campaign_of[UUID(int=9)] == a.campaign_of[UUID(int=10)] == UUID(int=1001)
+    [new] = a.new_campaigns
+    assert a.campaign_of[UUID(int=1)] == a.campaign_of[UUID(int=2)] == new != UUID(int=1001)
+
+
+def test_when_the_oldest_case_left_the_oldest_still_grouped_anchors() -> None:
+    """K's oldest case left every campaign (now GENUINE): K's oldest member still in a group
+    anchors it, so that group keeps K."""
+    stored = [
+        _case(1, "GENUINE", "device:F", day=0, campaign=1),  # the oldest, now released
+        _case(5, "ATO", "account:Y", day=2, campaign=1),
+        _case(6, "ATO", "account:Y", day=2, campaign=1),
+        _case(3, "ATO", "device:G", day=3, campaign=1),
+        _case(4, "ATO", "device:G", day=3, campaign=1),
+    ]
+    a = assign_ids(
+        stored, groups(stored, window_days=WINDOW), created_at={UUID(int=1001): T0}, new_id=_ids()
+    )
+    assert a.campaign_of[UUID(int=5)] == a.campaign_of[UUID(int=6)] == UUID(int=1001)
+    assert a.campaign_of[UUID(int=3)] != UUID(int=1001)
+    assert a.unassigned == frozenset({UUID(int=1)}) and a.dissolved == frozenset()
+
+
+def test_a_group_holding_a_split_campaigns_newer_part_cannot_claim_it() -> None:
+    """A merge and a split at once: G holds K1's anchor and K2's newer cases; K2's anchor is in
+    another group. G keeps K1, and K2 is not merged into it."""
+    stored = [
+        _case(1, "MULE", "account:A", day=0, campaign=1),
+        _case(2, "MULE", "account:A", "account:B", day=1, campaign=2),  # K2's newer case
+        _case(3, "MULE", "device:Z", day=0, campaign=2),  # K2's anchor
+        _case(4, "MULE", "device:Z", day=0, campaign=2),
+    ]
+    created = {UUID(int=1001): T0 + timedelta(hours=1), UUID(int=1002): T0}  # K2 is older
+    a = assign_ids(stored, groups(stored, window_days=WINDOW), created_at=created, new_id=_ids())
+    assert a.campaign_of[UUID(int=1)] == a.campaign_of[UUID(int=2)] == UUID(int=1001)
+    assert a.campaign_of[UUID(int=3)] == a.campaign_of[UUID(int=4)] == UUID(int=1002)
+    assert a.merged_into == {} and a.new_campaigns == {}
 
 
 def test_a_campaign_left_with_no_group_is_dissolved_and_its_cases_unassigned() -> None:
