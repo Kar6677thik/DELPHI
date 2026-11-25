@@ -50,7 +50,13 @@ from delphi.guardian.api import (
 from delphi.kb.store import active_version
 from delphi.platform.errors import DelphiError, NotFoundError, ProblemCode
 from delphi.platform.wiring import Platform
-from delphi.sim.api import PayChannel, PaymentRequest, PhoneTelemetry, initiate_payment
+from delphi.sim.api import (
+    PayChannel,
+    PaymentRequest,
+    PhoneTelemetry,
+    initiate_payment,
+    refuse_during_reset,
+)
 
 router = APIRouter(prefix=API_PREFIX, tags=["guardian"])
 
@@ -468,11 +474,13 @@ def _live(request: Request) -> LiveGuardian:
 
 def _initiate(platform: Platform, payment: PaymentIn) -> UUID:
     """The payment, PENDING_GUARDIAN (docs/05 §2). Refused before anything is written when no
-    KB is ACTIVE, so no payment is left without its session."""
+    KB is ACTIVE, so no payment is left without its session, and while a demo reset is queued
+    or running (409)."""
     t = payment.telemetry
     with platform.sessions.begin() as session:
         if active_version(session) is None:
             raise DelphiError("No ACTIVE KB version.", code=ProblemCode.NOT_INITIALISED)
+        refuse_during_reset(session)  # a payment now would race the reset's deletes
         return initiate_payment(
             session,
             PaymentRequest(
