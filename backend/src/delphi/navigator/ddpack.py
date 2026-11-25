@@ -251,6 +251,9 @@ def refresh_complete(session: Session, case_id: UUID, trail: GuardianTrail | Non
 
 
 def _refresh(session: Session, case_id: UUID, trail: GuardianTrail | None) -> bool:
+    # The case row lock (#229): a concurrent disposition or narrative waits for this one, or this
+    # one for it, so the later of the two reads what the earlier committed.
+    session.execute(select(cases.c.id).where(cases.c.id == case_id).with_for_update())
     case = get_case(session, case_id)
     if case is None:
         raise NotFoundError("No case with this id.")

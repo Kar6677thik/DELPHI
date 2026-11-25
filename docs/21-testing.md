@@ -19,6 +19,7 @@ real LLM, fixed seeds.
 | Slow | pytest `-m slow` with `DELPHI_RUN_SLOW=1` and PostgreSQL 16 | minutes-long acceptance checks, e.g. FR-SIM-02 (the `eval` profile's stats within ±10%) | nightly at 20:30 UTC and on demand (`.github/workflows/nightly.yml`), not on PRs |
 | E2E | Playwright (Chromium) against the docker compose stack, `DELPHI_LLM_PROVIDER=template`, `test`+personas dataset | E2E-S1…S5, login/RBAC, demo reset, accessibility scan | PRs to `main` and `main` |
 | Load | Locust | §5 | M9 and before demos (manual) |
+| Smoke load | pytest `-m load` (`just smoke-load`) against a running stack | §5: NFR-02 for 2 minutes | M4 and on demand (manual), never in CI |
 | Security | gitleaks, pip-audit, pnpm audit, Trivy, bandit | | every PR (Trivy on image builds) |
 | LLM eval | `just llm-eval` | doc 15 §8 | manual |
 | Restore drill | runbook | doc 23 §7 | M9, then monthly |
@@ -78,6 +79,16 @@ The scenario keeps 20 Guardian sessions/s for 10 minutes using autoplay customer
 fast-path, 40% full), plus 5 investigators browsing cases. Pass: Guardian create p95 ≤ 400 ms
 (fast-path + passive phase), planner p95 ≤ 50 ms, no 5xx, worker queue lag < 60 s, api memory
 stable (< 10% growth over the run).
+
+**Smoke load (M4, #101).** Before the Locust run, `backend/tests/load/test_nfr02_smoke.py`
+checks NFR-02 alone: it pays from the personas at 20 sessions/s for 2 minutes through
+`POST /guardian/sessions`, as the mock phone does, with 40% of the payments made on a call with
+remote access on. It times each session from the request to its first response: the response
+itself when the fast path decided it, otherwise the session's first event on `/phone/stream`.
+Pass: every payment 201, every session reached the phone, and p95 ≤ 400 ms. Nobody answers the
+probes, so those sessions time out on their own. `DELPHI_LOAD_RATE_PER_S` and
+`DELPHI_LOAD_DURATION_S` change the rate and length when diagnosing, but such a run isn't the
+NFR-02 check.
 
 ## 6. Quality gates (CI must be green to merge to `main`)
 

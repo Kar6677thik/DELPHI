@@ -249,10 +249,15 @@ class GuardianService:
                 payload={"payment_id": str(payment_id), "kb_version_id": created.kb_version_id},
             )
             publish(s, EventType.GUARDIAN_SESSION_UPDATED, str(created.id), _event(created))
-        return self._guarded(created.id, self._build_prior)
+        # The sensing inference reads the bank on connections of its own, so it runs between
+        # the two transactions: holding one while it takes more starves the pool (#284).
+        try:
+            inputs = self._prior.prior_inputs(payment)
+        except Exception as exc:
+            return self._failed(created.id, exc)
+        return self._guarded(created.id, lambda s, ctx: self._build_prior(s, ctx, inputs))
 
-    def _build_prior(self, s: Session, ctx: _Context) -> GuardianSessionRecord:
-        inputs = self._prior.prior_inputs(ctx.payment)
+    def _build_prior(self, s: Session, ctx: _Context, inputs: PriorInputs) -> GuardianSessionRecord:
         profile = ctx.profile
         built = session_prior(profile, inputs)
         prior = built.prior
@@ -841,12 +846,15 @@ class GuardianService:
         try:
             with self._sessions.begin() as s:
                 return step(s, self._load(s, session_id))
-        except DelphiError as exc:
-            if exc.code in CALLER_ERRORS:
-                raise  # a caller's mistake (a bad answer, a wrong state), not an engine error
-            return self.fail_safe(session_id, exc)
         except Exception as exc:
-            return self.fail_safe(session_id, exc)
+            return self._failed(session_id, exc)
+
+    def _failed(self, session_id: UUID, exc: Exception) -> GuardianSessionRecord:
+        """A step's error: a caller's mistake (a bad answer, a wrong state) is raised to the
+        caller; anything else is an engine error, and the session takes the fail-safe."""
+        if isinstance(exc, DelphiError) and exc.code in CALLER_ERRORS:
+            raise exc
+        return self.fail_safe(session_id, exc)
 
     def _profile(self, version: StoredVersion) -> CompiledProfile:
         compiled = self._profiles.get(version.id)
