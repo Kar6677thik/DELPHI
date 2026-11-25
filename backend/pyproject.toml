@@ -52,6 +52,7 @@ testpaths = ["tests"]
 addopts = "-ra --strict-markers"
 markers = [
   "benchmark: timing checks (warn-level in CI per docs/21 §1)",
+  "load: against a running stack, only with `-m load` (`just smoke-load`); docs/21 §5",
   "integration: needs PostgreSQL (DELPHI_TEST_DATABASE_URL); docs/21 §1",
   "slow: minutes-long checks, e.g. the eval-profile stats (run with DELPHI_RUN_SLOW=1)",
 ]

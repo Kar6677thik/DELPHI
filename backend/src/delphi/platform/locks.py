@@ -16,6 +16,7 @@ DATASET_WRITE_LOCK_KEY = 46  # writing a generated dataset into the bank
 KB_SEED_LOCK_KEY = 47  # delphi migrate inserting KB v1 (docs/07 §1)
 MODEL_ARTIFACT_LOCK_KEY = 48  # storing a sensing artifact and switching the ACTIVE one
 LABEL_DELIVERY_LOCK_KEY = 49  # delivering due labels from the simulator's schedule (docs/14 §7)
+ACCOUNT_REVIEW_SWEEP_LOCK_KEY = 50  # opening ACCOUNT_REVIEW cases from triggers (docs/09 §1)
 
 ALL_LOCK_KEYS: dict[str, int] = {
     "audit": AUDIT_LOCK_KEY,
@@ -26,4 +27,5 @@ ALL_LOCK_KEYS: dict[str, int] = {
     "kb_seed": KB_SEED_LOCK_KEY,
     "model_artifact": MODEL_ARTIFACT_LOCK_KEY,
     "label_delivery": LABEL_DELIVERY_LOCK_KEY,
+    "account_review_sweep": ACCOUNT_REVIEW_SWEEP_LOCK_KEY,
 }
