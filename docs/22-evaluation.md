@@ -49,6 +49,33 @@ not depend on the number of workers (per-customer RNG streams).
     counts as not stopped.
   - A hold is HELD from the decision time until the queue (§3, #124) settles it.
 - **Output:** one `PaymentOutcome` per stream payment (`delphi.evaluation.outcomes`).
+- **Sensing** (`delphi.evaluation.sensing`, step 2): the prior and anomaly models are trained
+  in memory through `TRAIN_SENSING`'s own `prior_data` core.
+  - Labels: the history's labels due by its end, mapped as delivered (doc 14 §7).
+  - Frames: the dataset's rows (`sensing.offline.frames_from_records`).
+  - Every stream payment is scored once, as of its initiation; the scores are the same for every
+    policy. There is no mule scorer, so MULE is KB-only (doc 06 §11).
+- **Asking the customer:** a policy asks through the replay's `ask(probe)`. The outcome comes from
+  the payment's own stream, `customer_rng(seed, payment, probe)`, so an OTP asked by B2 is the
+  same draw as `otp_would_pass`.
+- **B2:** `r = 1 − p0(GENUINE)` from the Guardian's `session_prior`, with `score_policy`'s bands.
+  The OTP band records one OTP_STEP_UP probe (friction = the KB source's cost).
+- **DELPHI** (`delphi.evaluation.delphi_policy`) runs the Guardian's own `run_session` (doc 08
+  §2). The prior comes from the harness's sensing outputs.
+  - **Passive probes:** classified by the live classifiers from the view's bank-visible facts:
+    telemetry, device, registry, the payee's earlier released or executed payments, and the payee's
+    phone FRI category. The mule score is doc 13 §6's fallback (`features.mule_score_fallback`).
+    As in the live service, a probe the planner finds statically ineligible (CALL_STATUS without
+    its consent) does not run and leaves no record, and a payment with no known device gets no
+    DEVICE_POSTURE update (the live adapter fails).
+  - **Active probes:** answered through `ask`.
+  - **Guardrails:** channel, call-status consent, servable questions (customer's language or
+    English), and the fairness cap counted per run, over the service's 30-day window. A
+    `Delphi` instance replays one run.
+  - **Variants:** `DELPHI-myopic` plans with lookahead depth 1; `DELPHI-no-active` stops after
+    the passive probes.
+  - **Probe records:** passive friction is 0, active friction is the source's cost, and the yield
+    is the KL in bits.
 
 ## 2. Policies
 

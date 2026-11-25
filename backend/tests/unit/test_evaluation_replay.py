@@ -69,7 +69,7 @@ class _Recorder:
     def __init__(self) -> None:
         self.views: list[PolicyView] = []
 
-    def decide(self, view: PolicyView) -> PolicyDecision:
+    def decide(self, view: PolicyView, ask: object = None) -> PolicyDecision:
         self.views.append(view)
         return PolicyDecision(Decision.RELEASE, view.initiated_at)
 
