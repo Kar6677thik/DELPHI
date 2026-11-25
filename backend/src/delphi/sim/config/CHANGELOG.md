@@ -8,6 +8,14 @@ upgrade changes them, `test_committed_freeze_matches_kb_v1_and_config` fails eve
 input changed. Then either keep the previous numpy, or regenerate with
 `uv run delphi sim freeze-response-models`, bump `generator_version` and record the upgrade here.
 
+## 17
+
+S-1's scripted telemetry (#291, R-01): Kamala pastes the "safe account" the caller sent her
+(`personas.yaml` `stories.S1.telemetry.paste_on_account_field: true`), so her SESSION_BEHAVIOUR
+is HESITANT_OR_PASTED and the live S-1 follows ENG-S1's hesitant path to PROTECTIVE_HOLD. Story
+telemetry is read only when a story is staged (`delphi.sim.stories`), not by the generator, so
+the generated data, and the `test` hash, are unchanged.
+
 ## 16
 
 Makes the simulator realistically hard for the payment prior (#166, decided on #148). The #148
