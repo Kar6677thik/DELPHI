@@ -128,6 +128,11 @@ class Settings(BaseSettings):
     # docs/08 §4), so reading `probe_runs` reveals no live code (#171). Secret `delphi-app`,
     # api only. Generate with `openssl rand -hex 32`.
     secret_key: SecretStr | None = Field(default=None, min_length=MIN_SECRET_KEY_LENGTH)
+    # The ACCOUNT_REVIEW sweep (docs/09 §1, #109), bounded after #263: reviews opened per
+    # transaction and per run, and how old a complaint may be and still open a review.
+    review_sweep_batch: int = Field(default=25, ge=1, le=500)
+    review_sweep_max_per_run: int = Field(default=100, ge=1, le=5_000)
+    review_complaint_lookback_days: int = Field(default=30, ge=1, le=365)
     # Retention (docs/17 §6).
     outbox_retention_h: int = Field(default=24, ge=1, le=24 * 30)
     idempotency_retention_h: int = Field(default=24, ge=1, le=24 * 30)
