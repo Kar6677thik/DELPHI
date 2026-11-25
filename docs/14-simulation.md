@@ -673,6 +673,9 @@ Details where the scripts are silent:
     reset writes is then locked `IN EXCLUSIVE MODE`, in a fixed order: reads go on, but a
     payment, session or case being written waits for the reset, so none lands between its
     steps.
+  - **Nothing new starts.** While a reset is queued or running, `POST /guardian/sessions` and
+    `POST /admin/demo/scenarios/{story}/run` answer 409 `INVALID_STATE_TRANSITION`, so no new
+    payment or story races its deletes.
   - **Sessions in flight.** The api drops the LIVE sessions it is driving when the reset is
     asked for, and the job drops the worker's WORKER sessions once it holds the reset's lock,
     so no runner task is left driving a deleted session. If the reset then fails, the dropped

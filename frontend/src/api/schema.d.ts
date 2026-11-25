@@ -279,6 +279,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/demo/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reset Demo
+         * @description Queue a `DEMO_RESET` job (202 with the job): back to the state right after the seed
+         *     (docs/14 §10). The LIVE sessions this process drives are dropped first. 409
+         *     INVALID_STATE_TRANSITION without a dataset, 409 JOB_ALREADY_RUNNING while a reset is under
+         *     way; 503 NOT_INITIALISED while `DELPHI_SIMULATION_ENABLED` is off.
+         */
+        post: operations["reset_demo_api_v1_admin_demo_reset_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/kb/versions": {
         parameters: {
             query?: never;
@@ -2473,6 +2496,37 @@ export interface operations {
                 "application/json": components["schemas"]["StoryRunRequest"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobView"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    reset_demo_api_v1_admin_demo_reset_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             202: {
