@@ -25,7 +25,7 @@ import pytest
 import uvicorn
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import select, text
+from sqlalchemy import create_engine, select, text
 
 from delphi.api.app import create_app
 from delphi.api.security import Principal, current_principal
@@ -678,3 +678,71 @@ def test_otp_events_reach_the_phone(env: Env) -> None:
     assert first[0][1]["ui"] == "OTP" and first[0][1]["text"] is None
     assert [t for t, _ in late] == ["probe.requested", "otp.sms", "session.decided"]
     assert gone == []
+
+
+# ---------------------------------------------------------------- a small pool under load (#284)
+
+SMALL_POOL = 2
+POOL_TIMEOUT_S = 5
+IN_FLIGHT = 6
+
+
+@dataclass
+class DbPrior:
+    """A prior that reads the bank on a connection of its own, as the sensing inference does
+    (``SensingInference.prior_inputs``), from the same pool as the api."""
+
+    engine: Any
+    fixed: Any
+
+    def prior_inputs(self, payment: bank.PaymentView) -> Any:
+        with self.engine.connect() as conn:
+            conn.execute(select(bank.payments.c.id).where(bank.payments.c.id == payment.id))
+        return self.fixed.prior_inputs(payment)
+
+
+@pytest.fixture
+def small_pool(env: Env) -> Iterator[Env]:
+    """The same database, its app role on a pool smaller than the requests in flight."""
+    url = env.owner.url.render_as_string(hide_password=False)
+    engine = create_engine(
+        url,
+        pool_size=SMALL_POOL,
+        max_overflow=0,
+        pool_timeout=POOL_TIMEOUT_S,
+        connect_args={"options": "-c timezone=UTC -c role=delphi_app"},
+    )
+    yield Env(env.owner, make_session_factory(engine), env.clock)
+    engine.dispose()
+
+
+def test_concurrent_payments_never_starve_a_small_pool(small_pool: Env) -> None:
+    """#284: neither the Idempotency-Key nor the session's steps hold a pooled connection while
+    the prior takes another, so payments in flight beyond the pool's size all start."""
+    env = small_pool
+    persona = _persona(env)
+    engine = env.sessions.kw["bind"]
+    live = _live(env, DbPrior(engine, story_prior(KAMALA_PRIOR)), KAMALA_PASSIVE)
+    app = _app(env, _user(env, Role.INVESTIGATOR), live)
+
+    async def pay_all() -> list[httpx.Response]:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://testserver", headers=BROWSER
+        ) as client:
+            try:
+                return await asyncio.gather(
+                    *(
+                        client.post(API, json={"payment": _payment(persona)}, headers=_key())
+                        for _ in range(IN_FLIGHT)
+                    )
+                )
+            finally:
+                await live.runner.shutdown()  # the sessions' tasks end with this loop
+
+    started = time.monotonic()
+    replies = asyncio.run(pay_all())
+    assert [r.status_code for r in replies] == [201] * IN_FLIGHT, [r.text for r in replies]
+    assert time.monotonic() - started < POOL_TIMEOUT_S  # nobody waited out the pool
+    # and none took the fail-safe (a prior that waited out the pool would have)
+    assert not [r.json() for r in replies if r.json()["terminal_reason"] == "ENGINE_ERROR"]
