@@ -137,7 +137,7 @@ stable. The 30 days, the 80% and the 3-credit minimum are the definition above, 
 
 **Implementation (#113 PR 1).**
 - **Operations** (`delphi.chase.operations`): `POST /chase/operations` traces and stores
-  `chase_operations` and `chase_candidates` (migration 0016).
+  `chase_operations` and `chase_candidates` (migration 0017).
 - **Candidates** come through a `CandidateSource`. The default is the tracer's accounts above
   `min_trace_inr`, unscored; #112's scoring plugs in there and fills the score columns.
 - **Approval:** `POST /chase/operations/{id}/liens` re-traces as of now. Each approved candidate's

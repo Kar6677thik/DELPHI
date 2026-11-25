@@ -57,6 +57,7 @@ def test_schedule_matches_the_spec_table() -> None:
     assert by_type[JobType.SESSION_TIMEOUT_SWEEP].every == timedelta(seconds=30)
     assert by_type[JobType.CHASE_RETRACE].every == timedelta(seconds=20)
     assert by_type[JobType.LABEL_DELIVERY].every == timedelta(seconds=60)
+    assert by_type[JobType.COMPLAINT_SWEEP].every == timedelta(seconds=60)
     assert by_type[JobType.SCOUT_AUTO_TRIGGER].every == timedelta(minutes=5)
     assert by_type[JobType.PROBE_YIELD_DAILY].daily_at == clock_time(0, 15)
     assert by_type[JobType.RETENTION_SWEEP].daily_at == clock_time(1, 0)
