@@ -51,8 +51,7 @@ campaign arrive with the console and campaigns (#103, M5).
 **M5 case queue and Navigator console (#105):** `/cases` gains an order control (soonest SLA,
 highest expected loss or newest, `GET /cases?sort=`) and an "Expected loss" column: the loss of
 the case's `recommended_decision` in its `risk_by_decision`, which the backend stores from the
-moment a case opens (#208), and "—" for a row without one; the campaign column arrives with campaigns (#107). The console does not show
-the police alert yet (its own issue). `/cases/:id` follows doc 09 §2 from `GET /cases/{id}`:
+moment a case opens (#208), and "—" for a row without one; the campaign column arrives with campaigns (#107). `/cases/:id` follows doc 09 §2 from `GET /cases/{id}`:
 - the posterior `HypothesisBar` and the `RiskTable`;
 - the "Evidence sufficient — recommend {decision} (expected loss ₹X)" banner while
   `evidence_sufficient` and not disposed;
@@ -76,6 +75,14 @@ showing as `If-Match`. On 412 the panel shows "This case changed — reload" wit
 changed (status, leading hypothesis, recommendation, evidence count, disposition), and locks the
 form until "Reload". `evidence.narrative_ready` invalidates the `['cases']` queries, like
 `case.*`.
+
+**The police alert in the console (#209):** a coercion case's console shows its police alert
+draft (doc 09 §6) under the header: its status ("Draft, not sent", "Sent (simulated)" or
+"Discarded", with who acted, "you" for the signed-in user, and when), the victim's pseudonym, the
+amount, channel, beneficiary account and payment time, and once sent the evidence it carried.
+With `case:write`, Send and Discard each ask for confirmation first, then call
+`POST /cases/{id}/police-alert/{send|discard}`. The answer replaces the case and its ETag. A 409
+(someone acted first) says so and reloads the case. A case without an alert shows nothing.
 
 **Console view events and the DD pack page (#264):** the console sends the investigator's view
 events (doc 09 §5) through `api/traces.ts`. It queues them and sends at most one batch per 5 s to
@@ -121,7 +128,10 @@ lists `GET /admin/users` (the signed-in admin marked "you"): a role select, "Dis
 (never offered on your own row) and "Reset password" each send `PATCH /admin/users/{id}` with the
 row's `version` as `If-Match`; a 412 or the last-admin 409 shows as a problem alert and the list is
 re-read. "Add a user" posts `POST /admin/users` (username pattern, display name, a password of at
-least 12 characters, role). The demo story runner and demo reset come with their endpoints.
+least 12 characters, role). "Demo stories" lists S-1 and S-2 (#101): "Autoplay" queues
+`POST /admin/demo/scenarios/{story}/run` with `mode: autoplay` (disabled until the dataset and
+models are ready) and points to the Guardian monitor; "Play on the phone" opens
+`/phone?story=S1`. The demo reset comes with its endpoint.
 
 **M4 Guardian screens (#100):** `/guardian` lists `GET /guardian/sessions` newest first, 50 at a
 time, with "Load more sessions" while `next_cursor` is set: start time (linking to
@@ -184,6 +194,14 @@ moment the form opened. Each preset sits clearly on one side of the KB's classif
 (a 20 s dwell, a cadence z of 3.0), so CALL_STATUS, DEVICE_POSTURE and SESSION_BEHAVIOUR observe
 what the presenter chose. The default is calm: no call, no shared screen, natural typing. S-1
 starts with "On a call, unknown number".
+
+**Interactive stories.** The **Story** select (or `?story=S1`, from Admin) queues the story's
+`DEMO_STORY` job in `mode: interactive` and reads `GET /jobs/{id}` each second until it
+finishes. The job's result names the story's customer and the payment: the phone switches to
+that customer, the form starts filled in (the story's payee, shown as "New payee" when it is not
+saved; its amount, channel and device, S-2's being the new phone the job staged), and "Around the
+customer" starts where the story's scripted telemetry puts it. The presenter can still change
+either, then pays and answers as the customer. A failed job shows its error.
 
 **The Theatre (`/theatre`).** The judges' view, full-screen on black and outside the app
 shell. It is the one place the quiet rules above give way to spectacle (bloom, light,

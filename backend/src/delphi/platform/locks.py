@@ -16,6 +16,8 @@ DATASET_WRITE_LOCK_KEY = 46  # writing a generated dataset into the bank
 KB_SEED_LOCK_KEY = 47  # delphi migrate inserting KB v1 (docs/07 §1)
 MODEL_ARTIFACT_LOCK_KEY = 48  # storing a sensing artifact and switching the ACTIVE one
 LABEL_DELIVERY_LOCK_KEY = 49  # delivering due labels from the simulator's schedule (docs/14 §7)
+ACCOUNT_REVIEW_SWEEP_LOCK_KEY = 50  # opening ACCOUNT_REVIEW cases from triggers (docs/09 §1)
+DEMO_RESET_LOCK_KEY = 51  # one demo reset at a time (docs/14 §10)
 # Two-key locks (class, hashtext(id)): one per bank account while its liens are set, so two
 # approvals or acknowledgements cannot both use the same headroom (FR-CHS-05). The class is a
 # separate namespace from the one-key locks above (their high half is 0).
@@ -30,4 +32,6 @@ ALL_LOCK_KEYS: dict[str, int] = {
     "kb_seed": KB_SEED_LOCK_KEY,
     "model_artifact": MODEL_ARTIFACT_LOCK_KEY,
     "label_delivery": LABEL_DELIVERY_LOCK_KEY,
+    "account_review_sweep": ACCOUNT_REVIEW_SWEEP_LOCK_KEY,
+    "demo_reset": DEMO_RESET_LOCK_KEY,
 }

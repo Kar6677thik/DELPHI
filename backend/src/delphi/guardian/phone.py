@@ -106,6 +106,10 @@ class PhoneHub:
         for sub in list(self._subs.get(customer_id, ())):
             self._put(sub, event)
 
+    def forget_waiting(self) -> None:
+        """Drop every waiting probe kept for new connections (the demo reset deleted them)."""
+        self._waiting.clear()
+
     def settle(self, customer_id: UUID, session_id: UUID) -> None:
         """The session's probe was answered, or the session ended: nothing waits any more."""
         sessions = self._waiting.get(customer_id)
@@ -293,6 +297,14 @@ class LiveGuardian:
         elif reply.attempts_remaining is not None:
             await self.phone.attempt_result(reply.session, probe_run_id, reply.attempts_remaining)
         return reply
+
+    async def abandon(self) -> int:
+        """Drop the LIVE sessions this process is driving, before a demo reset deletes them
+        (docs/14 §10): their tasks stop and phones that connect later are not shown their
+        probes. Returns how many it dropped."""
+        dropped = await self.runner.shutdown()
+        self.hub.forget_waiting()
+        return dropped
 
     async def cancel(self, session_id: UUID) -> GuardianSessionRecord:
         """The customer cancelled (FR-GDN-07). The waiting task is woken at once (docs/08 §2)."""

@@ -113,7 +113,9 @@ __all__ = [
     "payees",
     "payments",
     "phone_personas",
+    "refuse_during_reset",
     "request_dataset",
+    "request_reset",
     "request_story",
     "session_telemetry",
     "sim_phone_risk",
@@ -239,6 +241,20 @@ def _refuse_a_second_dataset(session: Session) -> None:
         )
 
 
+def refuse_during_reset(session: Session) -> None:
+    """409 INVALID_STATE_TRANSITION while a `DEMO_RESET` is queued or running: a payment or a
+    story started now would race the reset's deletes (docs/14 §10)."""
+    pending = session.execute(
+        select(jobs.c.id)
+        .where(jobs.c.type == JobType.DEMO_RESET.value, jobs.c.status.in_(_ACTIVE))
+        .limit(1)
+    ).scalar_one_or_none()
+    if pending is not None:
+        raise InvalidStateTransitionError(
+            f"A demo reset is in progress (job {pending}); try again when it has finished."
+        )
+
+
 def request_story(
     session: Session,
     clock: Clock,
@@ -250,12 +266,55 @@ def request_story(
 ) -> Enqueued:
     """Queue a `DEMO_STORY` job for the worker, which holds the persona manifest (docs/14
     §10). The caller checks the story is one of ``RUNNABLE_STORIES`` (the job refuses the
-    others). A key already used returns its job."""
+    others). A key already used returns its job; otherwise 409 INVALID_STATE_TRANSITION while
+    a demo reset is queued or running."""
+    known = session.execute(
+        select(jobs.c.id).where(jobs.c.idempotency_key == idempotency_key)
+    ).scalar_one_or_none()
+    if known is not None:
+        return Enqueued(known, created=False)
+    refuse_during_reset(session)
     return enqueue(
         session,
         clock,
         JobType.DEMO_STORY,
         idempotency_key=idempotency_key,
         params={"story": story, "mode": mode},
+        created_by=created_by,
+    )
+
+
+def request_reset(
+    session: Session,
+    clock: Clock,
+    *,
+    idempotency_key: str,
+    created_by: UUID | None = None,
+) -> Enqueued:
+    """Queue a `DEMO_RESET` job (docs/14 §10): the worker deletes what the demo did since the
+    seed. A key already used returns its job. Otherwise 409 INVALID_STATE_TRANSITION while the
+    bank holds no dataset, and 409 JOB_ALREADY_RUNNING while a reset is queued or running."""
+    known = session.execute(
+        select(jobs.c.id).where(jobs.c.idempotency_key == idempotency_key)
+    ).scalar_one_or_none()
+    if known is not None:
+        return Enqueued(known, created=False)
+    if not dataset_exists(session):
+        raise InvalidStateTransitionError("The bank holds no dataset: there is nothing to reset.")
+    running = session.execute(
+        select(jobs.c.id)
+        .where(jobs.c.type == JobType.DEMO_RESET.value, jobs.c.status.in_(_ACTIVE))
+        .limit(1)
+    ).scalar_one_or_none()
+    if running is not None:
+        raise DelphiError(
+            f"A demo reset is already under way (job {running}).",
+            code=ProblemCode.JOB_ALREADY_RUNNING,
+        )
+    return enqueue(
+        session,
+        clock,
+        JobType.DEMO_RESET,
+        idempotency_key=idempotency_key,
         created_by=created_by,
     )

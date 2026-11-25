@@ -63,6 +63,14 @@ class WorkerGuardian:
         )
         return record.id
 
+    def abandon(self) -> int:
+        """Drop the sessions this runner is driving and the simulated answers on their way,
+        and keep running (the demo reset, docs/14 §10, deletes those sessions next). Returns
+        how many it dropped; none when the runner is not started."""
+        if self._loop is None:
+            return 0
+        return self._call(self._shutdown())
+
     def stop(self) -> None:
         """Stop the session tasks and the simulated answers; they resume on the next start.
         Safe to call twice, from two threads."""
@@ -76,9 +84,10 @@ class WorkerGuardian:
             loop.close()
             self._loop = self._thread = None
 
-    async def _shutdown(self) -> None:
-        await self.runner.shutdown()
+    async def _shutdown(self) -> int:
+        dropped = await self.runner.shutdown()
         await self.channel.aclose()
+        return dropped
 
     def _call[T](self, coro: Coroutine[Any, Any, T]) -> T:
         if self._loop is None:
