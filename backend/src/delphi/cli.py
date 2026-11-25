@@ -79,6 +79,7 @@ from delphi.sim.customer import LiveCustomer
 from delphi.sim.dataset import generate_dataset
 from delphi.sim.generator_config import load_generator_config
 from delphi.sim.jobs import register_sim_jobs
+from delphi.sim.reset import register_reset_job
 from delphi.sim.response_models import (
     GENERATED_FILE,
     dump_yaml,
@@ -348,6 +349,13 @@ def worker_registry(
         clock=platform.clock,
         customer=customer,
         submit=guardian.submit,
+    )
+    register_reset_job(
+        registry,
+        sim_engine=sim_engine,
+        clock=platform.clock,
+        timeout_s=settings.demo_reset_timeout_s,
+        drop_sessions=guardian.abandon,
     )
     return WorkerParts(registry, sim_engine, guardian, free_pool)
 

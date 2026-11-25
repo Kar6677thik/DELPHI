@@ -296,6 +296,7 @@ to start, exit code 2, naming the variable, if one is missing or invalid.
 | `DELPHI_JOB_LEASE_S` / `DELPHI_JOB_RETRY_BACKOFF_S` / `DELPHI_JOB_MAX_ATTEMPTS` | `60` / `30` / `3` | worker | doc 04 §5.4 |
 | `DELPHI_WORKER_DEFAULT_CONCURRENCY` / `DELPHI_WORKER_FAST_CONCURRENCY` | `2` / `1` | worker | doc 04 §5.4 |
 | `DELPHI_WORKER_POLL_INTERVAL_S` / `DELPHI_WORKER_HEARTBEAT_MAX_AGE_S` | `1.0` / `30` | worker | doc 20 §3 |
+| `DELPHI_DEMO_RESET_TIMEOUT_S` | `60` | worker | the demo reset's statement timeout (doc 14 §10, FR-SIM-08) |
 | `DELPHI_OUTBOX_RETENTION_H` / `DELPHI_IDEMPOTENCY_RETENTION_H` | `24` / `24` | worker | doc 17 §6 |
 | `DELPHI_REVIEW_SWEEP_BATCH` / `DELPHI_REVIEW_SWEEP_MAX_PER_RUN` / `DELPHI_REVIEW_COMPLAINT_LOOKBACK_DAYS` | `25` / `100` / `30` | worker | doc 09 §1: reviews opened per transaction and per run, and the oldest complaint that opens one |
 | `DELPHI_YIELD_RECENT_DAYS` / `DELPHI_YIELD_BASELINE_DAYS` / `DELPHI_YIELD_DRIFT_RATIO` / `DELPHI_YIELD_MIN_RECENT_COUNT` / `DELPHI_YIELD_MIN_BASELINE_COUNT` | `7` / `28` / `0.7` / `30` / `30` | worker | doc 12 §5 |
