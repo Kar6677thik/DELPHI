@@ -25,7 +25,7 @@ from delphi.navigator.ddpack import GuardianTrail, refresh_complete
 from delphi.navigator.evidence import narrative_subject
 from delphi.navigator.reviews import ComplaintSweepJob, SweepLimits
 from delphi.navigator.store import get_case
-from delphi.navigator.tables import evidence_records
+from delphi.navigator.tables import cases, evidence_records
 from delphi.platform.clock import Clock
 from delphi.platform.events import EventType, publish
 from delphi.platform.jobs import JobContext, JobRegistry, JobType
@@ -95,8 +95,16 @@ def write_narrative(
 ) -> UUID | None:
     """Store a record's narrative (once), recompute its case's DD pack flag and publish
     `evidence.narrative_ready`, in the caller's transaction. Returns the case, or None when the
-    record is gone or already has its narrative."""
+    record is gone or already has its narrative.
+
+    The case row is locked first (#229), in the order the evidence fetch and the disposition use
+    (case, then evidence), so a disposition racing this narrative is serialised with it: whichever
+    commits second sees the other, and the stored flag cannot miss both."""
     e = evidence_records.c
+    owner = session.execute(select(e.case_id).where(e.id == record_id)).scalar_one_or_none()
+    if owner is None:
+        return None
+    session.execute(select(cases.c.id).where(cases.c.id == owner).with_for_update())
     case_id: UUID | None = session.execute(
         update(evidence_records)
         .where(e.id == record_id, e.narrative.is_(None))

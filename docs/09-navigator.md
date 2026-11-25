@@ -307,7 +307,9 @@ The case's sections:
 9. Method note.
 
 `cases.dd_pack_complete` is recomputed after a disposition (in its transaction) and whenever a
-narrative is written, which can complete section 6 after the decision. The recomputation runs in
+narrative is written, which can complete section 6 after the decision. Both recomputations take the case row lock first (the narrative job before it writes, in the
+fetch's order: case, then evidence), so a disposition racing the last narrative is serialised
+with it and the later of the two stores the complete flag (#229). The recomputation runs in
 a savepoint: a failure is logged, leaves the flag as it was and never blocks the change. The flag
 is derived, so it does not bump the case's version. Reading it records `DD_PACK_VIEWED`
 (§5).
