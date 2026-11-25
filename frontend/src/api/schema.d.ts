@@ -677,8 +677,8 @@ export interface paths {
         };
         /**
          * Read Clusters
-         * @description The clusters of every run, newest first, each with its typology draft; docs/16 keyset
-         *     paging (``limit`` ≤ 200, ``cursor``).
+         * @description The clusters of every run, newest first, each with its latest typology draft; docs/16
+         *     keyset paging (``limit`` ≤ 200, ``cursor``), on the ``(created_at, id)`` index.
          */
         get: operations["read_clusters_api_v1_scout_clusters_get"];
         put?: never;

@@ -131,8 +131,10 @@ class Settings(BaseSettings):
     # api only. Generate with `openssl rand -hex 32`.
     secret_key: SecretStr | None = Field(default=None, min_length=MIN_SECRET_KEY_LENGTH)
     # The most queue items (and reference sessions) one RUN_SCOUT loads, the newest of the
-    # lookback (docs/11 §2, bounded after #263). Proposed on #255; needs the owner's sign-off.
+    # lookback (docs/11 §2, bounded after #263; approved on #255).
     scout_max_items: int = Field(default=500, ge=10, le=20_000)
+    # How long SCOUT_AUTO_TRIGGER waits after a RUN_SCOUT FAILED before it enqueues another (#255).
+    scout_failure_backoff_min: int = Field(default=60, ge=1, le=24 * 60)
     # The ACCOUNT_REVIEW sweep (docs/09 §1, #109), bounded after #263: reviews opened per
     # transaction and per run, and how old a complaint may be and still open a review.
     review_sweep_batch: int = Field(default=25, ge=1, le=500)
