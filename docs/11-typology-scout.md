@@ -54,7 +54,11 @@ labelled noise stay in the queue.
   fallback is "Candidate pattern {n}: {top 3 distinguishing features}".
 
 The output is `scout_clusters` rows plus one `typology_drafts` row per cluster, with status
-`CANDIDATE`.
+`CANDIDATE`. A run also marks, in the same transaction, the earlier runs' drafts that are still
+`CANDIDATE` as `SUPERSEDED` (the owner's decision on #255), so only the latest run's candidates
+are open. A draft past `CANDIDATE` (edited, backtested, in shadow, promoted or rejected) is never
+touched. A `SUPERSEDED` draft is final: it cannot be edited, and the draft list shows
+`CANDIDATE` drafts unless asked for another status.
 
 **Implementation** (#117): the clustering core is `delphi.scout.clustering` (pure functions):
 `matrix`, `cluster_labels`, `distinguishing_features` (absolute standardised mean difference,

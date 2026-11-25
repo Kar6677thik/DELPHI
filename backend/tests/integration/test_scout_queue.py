@@ -204,3 +204,25 @@ def test_losing_a_concurrent_dismissal_is_a_409(
     with env.sessions.begin() as s, pytest.raises(DelphiError) as raised:
         dismiss(s, env.clock, kb, flagged, reason="Duplicate", by=fde.user_id)
     assert raised.value.code is ProblemCode.INVALID_STATE_TRANSITION
+
+
+def test_the_count_is_bounded_by_since_and_the_cap(env: Env) -> None:  # noqa: F811
+    """#254: the auto-trigger's count reads items entered since a time, and stops at a cap."""
+    for minute in range(3):
+        _decided(env, unexplained=True, minutes=minute)
+    with env.sessions() as s:
+        version = active_version(s)
+        assert version is not None
+        count = queue_module.count_queue_items
+        assert count(s, version.kb, since=T0, cap=10) == 3
+        assert count(s, version.kb, since=T0, cap=2) == 2
+        assert count(s, version.kb, since=T0 + timedelta(minutes=1), cap=10) == 2
+        [item] = queue_items(s, version.kb, limit=1)
+        typed = queue_module.queue_item(s, version.kb, item.subject_id, item.subject_type)
+        assert typed == item
+        other = (
+            queue_module.SubjectType.CASE
+            if item.subject_type is queue_module.SubjectType.GUARDIAN_SESSION
+            else queue_module.SubjectType.GUARDIAN_SESSION
+        )
+        assert queue_module.queue_item(s, version.kb, item.subject_id, other) is None
