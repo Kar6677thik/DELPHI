@@ -47,6 +47,7 @@ from delphi.sim.dataset import Dataset
 from delphi.sim.generator_config import GeneratorConfig
 from delphi.sim.labels import PaymentDecision
 from delphi.sim.legacy_policy import Baseline, decide_b1, decide_b2, payee_is_new
+from delphi.sim.population import Customer
 from delphi.sim.response_models import ResponseModels
 from delphi.sim.telemetry import SessionTelemetry
 
@@ -74,6 +75,14 @@ class PolicyView:
     payee_ever_paid: bool  # an executed payment to this payee before now
     device_first_seen_at: datetime | None
     payer_balance_paise: int
+    # For the passive probes (docs/08 §5), all bank-visible:
+    language: str = "en"
+    consent_call_status: bool = False
+    payee_is_merchant: bool = False
+    payee_phone_risk: str | None = None  # the FRI category of the payee account's phone
+    payee_earlier_payments: int = 0  # released or executed payments into the payee before now
+    payee_earlier_customers: int = 0
+    payee_first_payment_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,6 +90,7 @@ class PolicyDecision:
     decision: Decision
     decided_at: datetime
     probes: tuple[ProbeRecord, ...] = ()
+    argmax_hypothesis: str | None = None
 
 
 Ask = Callable[[str], str]
@@ -104,10 +114,16 @@ class BankState:
     saved: Mapping[tuple[UUID, UUID], tuple[datetime, ...]]
     first_seen: Mapping[UUID, datetime]
     listed: Mapping[UUID, datetime]
+    customers: Mapping[UUID, Customer] = field(default_factory=dict)
+    merchants: frozenset[UUID] = frozenset()
+    phone_risk: Mapping[UUID, str] = field(default_factory=dict)  # account → FRI category
+    # payee account → (initiated_at, payer customer) of its released or executed payments
+    paid_into: dict[UUID, list[tuple[datetime, UUID]]] = field(default_factory=dict)
 
     @staticmethod
     def at_history_end(dataset: Dataset) -> BankState:
         pop, history = dataset.population, dataset.history
+        customer_of = {a.id: a.customer_id for a in pop.accounts if a.customer_id is not None}
         saved: dict[tuple[UUID, UUID], list[datetime]] = {}
         for p in (*pop.payees, *history.payees):
             saved.setdefault((p.customer_id, p.account_id), []).append(p.added_at)
@@ -118,11 +134,15 @@ class BankState:
                 for p in history.payments
                 if p.status == EXECUTED
             },
-            customer_of={a.id: a.customer_id for a in pop.accounts if a.customer_id is not None},
+            customer_of=customer_of,
             vulnerable={c.id: c.is_vulnerable for c in pop.customers},
             saved={k: tuple(sorted(v)) for k, v in saved.items()},
             first_seen={d.id: d.first_seen_at for d in (*pop.devices, *history.devices)},
             listed={r.account_id: r.listed_at for r in history.registry_listings},
+            customers={c.id: c for c in pop.customers},
+            merchants=frozenset(a.id for a in pop.accounts if a.is_merchant),
+            phone_risk=_phone_risk(dataset),
+            paid_into=_paid_into(dataset, customer_of),
         )
 
     def view(self, item: StreamItem) -> PolicyView:
@@ -131,6 +151,7 @@ class BankState:
         customer = self.customer_of[p.payer_account_id]
         added = [t for t in self.saved.get((customer, p.payee_account_id), ()) if t <= at]
         listed_at = self.listed.get(p.payee_account_id)
+        earlier = [e for e in self.paid_into.get(p.payee_account_id, ()) if e[0] < at]
         first_seen = self.first_seen.get(p.device_id) if p.device_id is not None else None
         return PolicyView(
             payment_id=p.id,
@@ -150,6 +171,13 @@ class BankState:
             if first_seen is not None and first_seen <= at
             else None,
             payer_balance_paise=self.balances.get(p.payer_account_id, 0),
+            language=self.customers[customer].language,
+            consent_call_status=self.customers[customer].consent_call_status,
+            payee_is_merchant=p.payee_account_id in self.merchants,
+            payee_phone_risk=self.phone_risk.get(p.payee_account_id),
+            payee_earlier_payments=len(earlier),
+            payee_earlier_customers=len({c for _, c in earlier}),
+            payee_first_payment_at=min((t for t, _ in earlier), default=None),
         )
 
     def transfer(self, payer: UUID, payee: UUID, amount: int) -> bool:
@@ -160,6 +188,35 @@ class BankState:
         self.balances[payee] = self.balances.get(payee, 0) + amount
         self.paid.add((payer, payee))
         return True
+
+    def record_payment(self, view: PolicyView) -> None:
+        """A released stream payment counts for the payee's later BENEFICIARY_INTEL."""
+        self.paid_into.setdefault(view.payee_account_id, []).append(
+            (view.initiated_at, view.customer_id)
+        )
+
+
+COUNTED = frozenset({"RELEASED", "EXECUTED"})  # as the BENEFICIARY_INTEL adapter counts
+
+
+def _paid_into(
+    dataset: Dataset, customer_of: Mapping[UUID, UUID]
+) -> dict[UUID, list[tuple[datetime, UUID]]]:
+    out: dict[UUID, list[tuple[datetime, UUID]]] = {}
+    for p in dataset.history.payments:
+        customer = customer_of.get(p.payer_account_id)
+        if p.status in COUNTED and customer is not None:
+            out.setdefault(p.payee_account_id, []).append((p.initiated_at, customer))
+    return out
+
+
+def _phone_risk(dataset: Dataset) -> dict[UUID, str]:
+    risk = {r.phone_number: r.category for r in dataset.phone_risk}
+    return {
+        a.id: risk[a.phone_number]
+        for a in dataset.population.accounts
+        if a.phone_number is not None and a.phone_number in risk
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -305,6 +362,7 @@ def _outcome(
         # A release the payer cannot fund moves no money; it is still the policy letting the
         # payment through, so it is not "stopped" (docs/22 §4).
         bank.transfer(view.payer_account_id, view.payee_account_id, view.amount_paise)
+        bank.record_payment(view)
         status = FinalStatus.EXECUTED
     elif decision in _HOLDS:
         status = FinalStatus.HELD
@@ -322,4 +380,5 @@ def _outcome(
         final_status=status,
         held_at=decided.decided_at if status is FinalStatus.HELD else None,
         probes=decided.probes,
+        argmax_hypothesis=decided.argmax_hypothesis,
     )

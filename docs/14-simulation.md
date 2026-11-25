@@ -663,7 +663,7 @@ Details where the scripts are silent:
     the marker are due again. Account statuses (Chase's freezes) are not restored yet.
   - **One transaction, bounded.** The deletes are set-based (`DELETE … WHERE created_at >
     :marker`), so no rows or key lists pass through Python (the #263 lesson). They run with a
-    statement timeout (`DELPHI_DEMO_RESET_TIMEOUT_S`, 60 s), under advisory lock 50 (a second
+    statement timeout (`DELPHI_DEMO_RESET_TIMEOUT_S`, 60 s), under advisory lock 51 (a second
     reset at once skips) and the label-delivery lock (no delivery interleaves).
   - **Sessions in flight.** The api drops the LIVE sessions it is driving when the reset is
     asked for, and the job drops the worker's WORKER sessions before the delete, so no runner

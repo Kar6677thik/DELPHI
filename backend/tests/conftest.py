@@ -16,14 +16,18 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures"
 RUN_SLOW_ENV = "DELPHI_RUN_SLOW"
 
 
-def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    """`slow` tests (minutes) run only with DELPHI_RUN_SLOW=1."""
-    if os.environ.get(RUN_SLOW_ENV) == "1":
-        return
-    skip = pytest.mark.skip(reason=f"slow: set {RUN_SLOW_ENV}=1 to run")
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """`slow` tests (minutes) run only with DELPHI_RUN_SLOW=1. `load` tests drive a running
+    stack, so they run only when asked for by name: `pytest -m load` (`just smoke-load`)."""
+    skips = {}
+    if os.environ.get(RUN_SLOW_ENV) != "1":
+        skips["slow"] = pytest.mark.skip(reason=f"slow: set {RUN_SLOW_ENV}=1 to run")
+    if config.getoption("markexpr") != "load":
+        skips["load"] = pytest.mark.skip(reason="load: run with `-m load` (just smoke-load)")
     for item in items:
-        if "slow" in item.keywords:
-            item.add_marker(skip)
+        for marker, skip in skips.items():
+            if marker in item.keywords:
+                item.add_marker(skip)
 
 
 @pytest.fixture(scope="session")
