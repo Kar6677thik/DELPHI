@@ -85,6 +85,8 @@ class Settings(BaseSettings):
     worker_fast_concurrency: int = Field(default=1, ge=1, le=4)
     worker_poll_interval_s: float = Field(default=1.0, gt=0, le=60)
     worker_heartbeat_max_age_s: int = Field(default=30, ge=5, le=600)
+    # The demo reset's statement timeout: FR-SIM-08 wants it done in 60 s (docs/14 §10).
+    demo_reset_timeout_s: float = Field(default=60.0, gt=0, le=600)
     # Passive probe adapters (docs/08 §2 step 4): their own bounded thread pool, so adapters
     # that time out cannot starve the event loop's default executor; and each adapter query's
     # statement_timeout = the KB's passive_adapter_timeout_ms + this margin, so an abandoned
@@ -132,7 +134,15 @@ class Settings(BaseSettings):
     # transactions per run, and the most cases one connected component may load.
     campaign_batch: int = Field(default=50, ge=1, le=1_000)
     campaign_batches_per_run: int = Field(default=20, ge=1, le=1_000)
-    campaign_max_component: int = Field(default=2_000, ge=10, le=50_000)
+    campaign_max_component: int = Field(default=2_000, ge=10, le=5_000)
+    # How old a touch must be before the recompute takes it: longer than any transaction that
+    # opens, disposes or adds evidence to a case (#288), so a late commit is not skipped.
+    campaign_settle_lag_s: int = Field(default=120, ge=0, le=3_600)
+    # The ACCOUNT_REVIEW sweep (docs/09 §1, #109), bounded after #263: reviews opened per
+    # transaction and per run, and how old a complaint may be and still open a review.
+    review_sweep_batch: int = Field(default=25, ge=1, le=500)
+    review_sweep_max_per_run: int = Field(default=100, ge=1, le=5_000)
+    review_complaint_lookback_days: int = Field(default=30, ge=1, le=365)
     # Retention (docs/17 §6).
     outbox_retention_h: int = Field(default=24, ge=1, le=24 * 30)
     idempotency_retention_h: int = Field(default=24, ge=1, le=24 * 30)

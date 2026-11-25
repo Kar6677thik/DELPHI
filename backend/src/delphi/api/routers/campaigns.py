@@ -1,10 +1,11 @@
 """Campaigns (docs/16 "Cases", docs/09 §8, docs/05 §5, #107).
 
 `GET /campaigns` lists the live campaigns (not merged, with cases), highest `rank_score` first,
-with docs/16 keyset paging. `GET /campaigns/{id}` is one campaign with its cases and the
-infrastructure entities they share (docs/09 §8). A campaign that merged is still found, with
-`merged_into` naming the one that took its cases. Campaigns are derived (`CAMPAIGN_RECOMPUTE`),
-so there is nothing to write here.
+with docs/16 keyset paging. `GET /campaigns/{id}` is one campaign with its oldest cases (at
+most `MEMBER_CASES_LIMIT`, 200; `GET /cases?campaign_id=` pages the rest) and the infrastructure
+entities they share, most shared first (at most 20, counted in SQL; docs/09 §8). A campaign that
+merged is still found, with `merged_into` naming the one that took its cases. Campaigns are
+derived (`CAMPAIGN_RECOMPUTE`), so there is nothing to write here.
 """
 
 from __future__ import annotations
@@ -12,22 +13,21 @@ from __future__ import annotations
 import base64
 import binascii
 import json
-from collections import Counter
 from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from delphi.api.routers import API_PREFIX
 from delphi.api.security import Permission, Principal, require
 from delphi.navigator.api import (
-    CampaignCase,
-    campaign_cases,
+    MEMBER_CASES_LIMIT,
     get_campaign,
     list_campaigns,
     member_cases,
+    shared_entities,
 )
 from delphi.platform.errors import DelphiError, NotFoundError, ProblemCode
 from delphi.platform.wiring import Platform
@@ -72,8 +72,13 @@ class SharedEntity(BaseModel):
 
 
 class CampaignDetail(CampaignView):
-    cases: list[CampaignCaseView]
-    shared_entities: list[SharedEntity]
+    cases: list[CampaignCaseView] = Field(
+        description=f"The oldest {MEMBER_CASES_LIMIT} cases at most, oldest first;"
+        " GET /cases?campaign_id= pages all of them."
+    )
+    shared_entities: list[SharedEntity] = Field(
+        description="Entities two or more of the cases share, most shared first (at most 20)."
+    )
 
 
 def _platform(request: Request) -> Platform:
@@ -112,14 +117,10 @@ def read_campaigns(
     return CampaignPage(items=views, next_cursor=_encode_cursor(views[-1]) if more else None)
 
 
-def _shared(members: list[CampaignCase]) -> list[SharedEntity]:
-    """Entities at least two of the campaign's cases have (docs/09 §8), most shared first."""
-    counts = Counter(e for m in members for e in m.facts.entities)
-    shared = [(e, n) for e, n in counts.items() if n > 1]
-    shared.sort(key=lambda en: (-en[1], en[0]))
+def _shared(rows: list[tuple[str, int]]) -> list[SharedEntity]:
     return [
         SharedEntity(kind=e.split(":", 1)[0], value=e.split(":", 1)[1], case_count=n)
-        for e, n in shared
+        for e, n in rows
     ]
 
 
@@ -133,11 +134,11 @@ def read_campaign(
         row = get_campaign(session, campaign_id)
         if row is None:
             raise NotFoundError("No campaign with this id.")
-        members = campaign_cases(session, campaign_id)
         case_rows = member_cases(session, campaign_id)
+        shared = shared_entities(session, campaign_id)
     view = CampaignView.model_validate(row, from_attributes=True)
     return CampaignDetail(
         **view.model_dump(),
         cases=[CampaignCaseView.model_validate(r, from_attributes=True) for r in case_rows],
-        shared_entities=_shared(members),
+        shared_entities=_shared(shared),
     )

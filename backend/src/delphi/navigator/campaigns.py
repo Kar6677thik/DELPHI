@@ -8,17 +8,21 @@ posterior's argmax), (b) they share an infrastructure entity (a device fingerpri
 counterparty account, or a login /24 IPv4 prefix), and (c) they were opened within
 ``window_days`` (the KB's ``navigator.campaign_window_days``, 7) of each other. A campaign is a
 connected component of that relation (union-find closure), so a chain of links joins cases that
-are not linked directly. A case whose leading hypothesis is GENUINE is never in a campaign; a
-case linked to no other case forms no campaign.
+are not linked directly. The leading hypothesis is the argmax over all hypotheses; a case led by
+GENUINE or UNEXPLAINED is never in a campaign. A case linked to no other case forms no campaign.
 
 **Cost.** Within one (hypothesis, entity) bucket sorted by opening time, only neighbours are
 joined (each case with the next, when within the window). Any two cases within the window are
 joined by a chain of in-window neighbours, so the groups are the same as joining every pair, in
 O(n log n) instead of O(n²) for a busy entity (a shared NAT /24, a mule counterparty).
 
-**Stable ids.** A group keeps the id its members already had. When a group holds members of
-several campaigns (they merged), the oldest campaign's id survives and the others are reported
-as merged into it. A group none of whose members had a campaign gets a new id.
+**Stable ids** (the owner's rule, #259). Each earlier campaign K has an **anchor**: its oldest
+member by ``(opened_at, case_id)`` that is still in a group (the oldest member, unless that one
+left every campaign). Only the group holding K's anchor may claim K. So when K **splits**, the
+group with K's oldest case keeps K and the other groups get new ids (or another campaign they can
+claim). When one group can claim several campaigns (they **merged**), the oldest by
+``created_at`` (ties: the smaller id) survives and the others are reported as merged into it. A
+campaign with no member left in any group is **dissolved**.
 """
 
 from __future__ import annotations
@@ -29,7 +33,9 @@ from datetime import datetime, timedelta
 from itertools import pairwise
 from uuid import UUID
 
-from delphi.kb.model import GENUINE
+from delphi.kb.model import GENUINE, UNEXPLAINED
+
+NEVER_IN_A_CAMPAIGN = frozenset({GENUINE, UNEXPLAINED})  # docs/05 §5
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,7 +65,7 @@ class _UnionFind:
 
 def groups(cases: Sequence[CaseFacts], *, window_days: float) -> list[list[UUID]]:
     """The campaigns' members (two or more cases each), each sorted by opening time."""
-    eligible = [c for c in cases if c.leading_hypothesis != GENUINE]
+    eligible = [c for c in cases if c.leading_hypothesis not in NEVER_IN_A_CAMPAIGN]
     uf = _UnionFind(c.case_id for c in eligible)
     window = timedelta(days=window_days)
     by_entity: dict[tuple[str, str], list[CaseFacts]] = {}
@@ -100,8 +106,8 @@ def assign_ids(
     created_at: Mapping[UUID, datetime],
     new_id: Callable[[], UUID],
 ) -> Assignment:
-    """Stable ids for ``members`` (from ``groups``): ``created_at`` gives each existing
-    campaign's creation time, so the oldest survives a merge (ties: the smaller id).
+    """Stable ids for ``members`` (from ``groups``), by the anchor rule above. ``created_at``
+    gives each existing campaign's creation time.
 
     Precondition: ``created_at`` holds every campaign a case in ``cases`` points at; a missing
     one is a ``ValueError`` naming it."""
@@ -109,15 +115,20 @@ def assign_ids(
     missing = sorted({str(k) for k in previous.values()} - {str(k) for k in created_at})
     if missing:
         raise ValueError(f"created_at has no time for campaign(s) {', '.join(missing)}")
+    group_of = {c: i for i, group in enumerate(members) for c in group}
+    anchor_group: dict[UUID, int] = {}  # campaign → the group holding its anchor
+    for fact in sorted(cases, key=lambda f: (f.opened_at, str(f.case_id))):
+        k = fact.campaign_id
+        if k is not None and k not in anchor_group and fact.case_id in group_of:
+            anchor_group[k] = group_of[fact.case_id]
+    claims: dict[int, list[UUID]] = {}
+    for k, i in anchor_group.items():
+        claims.setdefault(i, []).append(k)
     campaign_of: dict[UUID, UUID] = {}
     new: dict[UUID, list[UUID]] = {}
     merged: dict[UUID, UUID] = {}
-    used: set[UUID] = set()
-    for group in members:
-        olds = sorted(
-            {previous[c] for c in group if c in previous} - used,
-            key=lambda k: (created_at[k], str(k)),
-        )
+    for i, group in enumerate(members):
+        olds = sorted(claims.get(i, []), key=lambda k: (created_at[k], str(k)))
         if olds:
             survivor = olds[0]
             for other in olds[1:]:
@@ -125,9 +136,8 @@ def assign_ids(
         else:
             survivor = new_id()
             new[survivor] = list(group)
-        used.update(olds)
-        for c in group:
-            campaign_of[c] = survivor
-    dissolved = frozenset(set(previous.values()) - set(campaign_of.values()) - set(merged))
+        for case_id in group:
+            campaign_of[case_id] = survivor
+    dissolved = frozenset(set(previous.values()) - set(anchor_group))
     unassigned = frozenset(set(previous) - set(campaign_of))
     return Assignment(campaign_of, new, merged, dissolved, unassigned)

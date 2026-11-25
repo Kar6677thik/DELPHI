@@ -96,20 +96,25 @@ Campaigns are a derived grouping, recomputed by `navigator.campaigns.recompute()
 disposition and every new case.
 
 - **Merge rule.** Two cases belong to the same campaign if (a) they have the same leading
-  hypothesis (argmax of the posterior, excluding `GENUINE`), and (b) they share at least one
+  hypothesis (the argmax of the posterior over all hypotheses), and (b) they share at least one
   infrastructure entity: a device fingerprint, a counterparty account, or a login /24 IPv4
   prefix. (c) Both cases must have been opened within 7 days of each other. Grouping is the
   union-find closure.
-- Cases whose leading hypothesis is `GENUINE` are never in a campaign.
+- Cases whose leading hypothesis is `GENUINE` or `UNEXPLAINED` are never in a campaign.
 - Campaign fields: leading_hypothesis, case_count, f3_stage_max (furthest stage seen),
   expected_loss_paise (Σ over cases of risk(RELEASE) under the case posterior),
   vulnerability_weight (count of vulnerable victims), rank_score =
   expected_loss_paise × (1 + 0.5 · vulnerable_victim_share).
 - Campaign ids are stable. When campaigns merge, the oldest id survives and the other is marked
   `merged_into`. Equal creation times keep the smaller id.
-- A campaign whose cases no longer link to one another is **dissolved**: no group keeps its id,
-  and its cases leave every campaign (`cases.campaign_id` is cleared). Which group keeps the id
-  when a campaign **splits** is the owner's to decide (asked on #259).
+- A campaign left with no group is **dissolved**: none of its cases still links to another
+  (some may now lead with `GENUINE`), so no group keeps its id, and its cases leave every
+  campaign (`cases.campaign_id` is cleared).
+- When a campaign **splits**, the group holding its oldest case keeps the id. A campaign's
+  **anchor** is its oldest member by `(opened_at, case_id)`; if that case left every campaign,
+  the anchor is its oldest member still in a group. Only the group containing the anchor may
+  claim the id; the other groups get new ids (or another campaign they can claim). Within a
+  group, the oldest-`created_at` rule above still chooses among the campaigns it can claim.
 
 **Implementation (#107).** The merge rule is `delphi.navigator.campaigns` (pure). Within one
 (hypothesis, entity) bucket it joins only time-adjacent neighbours, which gives the same groups

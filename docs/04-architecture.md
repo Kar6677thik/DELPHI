@@ -220,6 +220,7 @@ A type is scheduled only once its handler is registered:
 | `SCOUT_AUTO_TRIGGER` | 5 min | enqueue `RUN_SCOUT` if ≥ `auto_trigger_new_items` new queue items |
 | `LABEL_DELIVERY` | 60 s (DEMO), virtual in evaluation | deliver due rows from `sim_truth.label_schedule` (doc 14 §7) |
 | `CAMPAIGN_RECOMPUTE` | 60 s | regroup the cases around those opened, disposed or given evidence since its watermark (doc 05 §5), in bounded batches |
+| `COMPLAINT_SWEEP` | 60 s | open ACCOUNT_REVIEW cases for home-bank accounts named by new complaints (doc 09 §1), in bounded batches |
 | `PROBE_YIELD_DAILY` | daily 00:15 IST | aggregate `probe_yield_daily`; evaluate drift alerts (doc 12 §5) |
 | `RETENTION_SWEEP` | daily 01:00 IST | doc 17 §6 |
 | `AUDIT_VERIFY` | daily 02:00 IST | verify the last 24 h of the audit chain; alert on failure |

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import timedelta
 from uuid import UUID
 
 import numpy as np
@@ -39,6 +40,9 @@ class StreamItem:
 class PaymentTruth:
     scenario: ScenarioType
     coached: bool
+    # Days from the history's start to the payment's initiation: when the customer answers, so
+    # a coaching adaptation (docs/14 §5.3) applies on the right day.
+    sim_day: float = 0.0
 
 
 def eval_stream(dataset: Dataset) -> tuple[StreamItem, ...]:
@@ -57,8 +61,10 @@ def stream_truth(dataset: Dataset) -> Mapping[UUID, PaymentTruth]:
     if window is None:
         return {}
     kinds = {i.id: ScenarioType(i.scenario_type) for i in dataset.history.scenario_instances}
+    start = dataset.population.history_start
+    days = {p.id: (p.initiated_at - start) / timedelta(days=1) for p in window.payments}
     return {
-        t.payment_id: PaymentTruth(kinds[t.scenario_instance_id], t.coached)
+        t.payment_id: PaymentTruth(kinds[t.scenario_instance_id], t.coached, days[t.payment_id])
         for t in window.payment_truth
     }
 
@@ -74,5 +80,7 @@ def otp_would_pass(
     """Whether the customer would pass an OTP step-up on this payment: the same draw for every
     policy that asks (B2, DELPHI) and for the coercion-catch metric (docs/22 §4)."""
     rng = customer_rng(seed, payment_id, OTP_STEP_UP)
-    outcome = models.sample_answer(rng, truth.scenario, OTP_STEP_UP, coached=truth.coached)
+    outcome = models.sample_answer(
+        rng, truth.scenario, OTP_STEP_UP, coached=truth.coached, sim_day=truth.sim_day
+    )
     return outcome == OTP_PASSED

@@ -156,11 +156,14 @@ police_alert_drafts(id, case_id, status (DRAFT|SENT_SIMULATED|DISCARDED), payloa
        -- migration 0014 (#106); unique case_id; acted_by and acted_at set iff not DRAFT
 campaigns(id, leading_hypothesis, case_count, f3_stage_max, expected_loss_paise,
           vulnerable_victims, rank_score, merged_into null, created_at, updated_at)
-       -- migration 0016 (#107); idx (rank_score desc, id) WHERE merged_into IS NULL;
-       -- cases.campaign_id gets its foreign key here, with an index
+       -- migration 0017 (#107); idx (rank_score desc, id desc)
+       -- WHERE merged_into IS NULL AND case_count > 0 (the list's filter and order);
+       -- cases.campaign_id gets its foreign key here (NOT VALID, then VALIDATE), with an index
 case_entities(case_id, entity, pk(case_id, entity))   idx (entity, case_id)
-       -- 0016 (#107): "device:…", "account:…" or "ip24:…", written once per case
-campaign_watermark(id = 1, at, case_id)   -- 0016 (#107): CAMPAIGN_RECOMPUTE's position
+       -- 0017 (#107): "device:…", "account:…" or "ip24:…", written once per case
+campaign_watermark(id = 1, at, case_id)   -- 0017 (#107): CAMPAIGN_RECOMPUTE's position; it
+       -- takes touches at least DELPHI_CAMPAIGN_SETTLE_LAG_S old, by cases.opened_at,
+       -- cases.disposed_at (idx) and evidence_records.requested_at (idx (requested_at, case_id))
 labels(id, subject_type, subject_id, hypothesis_key, label_source, known_at, created_at,
        unique(subject_type, subject_id, label_source))   idx (subject_type, known_at)
        -- migration 0011 (#159); delphi.platform.labels; filled by LABEL_DELIVERY (doc 14 §8)
@@ -262,9 +265,10 @@ entity_id, payload}))`, and the genesis `prev_hash` is 32 zero bytes. Writes tak
 advisory lock (`pg_advisory_xact_lock(42)`), so the chain is serial. Every advisory lock key
 lives in `delphi.platform.locks`, and a test checks that they are distinct (#78): 42 the audit
 chain, 43 outbox publishing (doc 04 §5.5), 44 the bootstrap admin, 45 dataset requests, 46
-dataset writes, 47 loading KB v1, 48 storing a sensing model artifact. Verifying a window checks
-that its first entry links to the entry just before the window (or to the genesis hash), so a
-deleted or edited earlier entry is caught too. `GET
+dataset writes, 47 loading KB v1, 48 storing a sensing model artifact, 49 label delivery
+(#263), 50 the ACCOUNT_REVIEW sweep (doc 09 §1), 51 the demo reset, 53 the campaign recompute
+(doc 05 §5). Verifying a window checks that its first entry links to the entry just before the
+window (or to the genesis hash), so a deleted or edited earlier entry is caught too. `GET
 /admin/audit/verify?from=&to=` recomputes the chain. The DD pack verifies the entries for its
 subject. Audited actions: every state transition of every aggregate, logins (success and
 failure), role changes, KB promotions, rollbacks, lien approvals, police-alert sends and demo

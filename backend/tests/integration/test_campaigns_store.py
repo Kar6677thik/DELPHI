@@ -17,16 +17,20 @@ from delphi.navigator.campaign_store import (
     VULNERABLE_RANK_WEIGHT,
     CampaignRecomputeJob,
     Limits,
+    member_cases,
     run_batch,
+    shared_entities,
 )
 from delphi.navigator.tables import campaigns, cases
+from delphi.platform.locks import CAMPAIGN_RECOMPUTE_LOCK_KEY
 
 from .test_cases import POSTERIOR, Env, _held, _open, client, env  # noqa: F401 - fixtures
 from .test_guardian_store import T0
 
 WINDOW = 7
-LIMITS = Limits(batch=50, batches_per_run=20, max_component=2_000)
+LIMITS = Limits(batch=50, batches_per_run=20, max_component=2_000, settle_lag=timedelta(0))
 GENUINE_POSTERIOR = {**POSTERIOR, "GENUINE": 0.9, "APP_DIGITAL_ARREST": 0.01}
+UNEXPLAINED_POSTERIOR = {**POSTERIOR, "UNEXPLAINED": 0.9, "APP_DIGITAL_ARREST": 0.01}
 
 
 class _Ctx:
@@ -202,15 +206,72 @@ def test_a_disposal_touches_a_case_and_a_genuine_lead_leaves_its_campaign(
     assert _campaign_of(env, a) is None and _campaign_of(env, b) is None  # dissolved
 
 
-def test_the_component_stops_at_its_limit(env: Env) -> None:  # noqa: F811
-    ids = [_case(env, minutes=m) for m in range(4)]
+def _state(e: Env) -> tuple[list[Any], dict[UUID, UUID | None]]:
+    with e.owner.connect() as conn:
+        rows = list(conn.execute(select(campaigns).order_by(campaigns.c.id)))
+        links = dict(conn.execute(select(cases.c.id, cases.c.campaign_id)).tuples().all())
+    return rows, links
+
+
+def test_a_cut_component_writes_nothing(env: Env) -> None:  # noqa: F811
+    """#288: a component over max_component is not regrouped from a partial load (that could
+    split or dissolve its campaigns wrongly): no campaign or case changes, the watermark moves
+    on, and the cut is counted."""
+    ids = [_case(env, minutes=m) for m in range(3)]
     mule = _new_account(env)
-    for case_id in ids:
-        _payee(env, case_id, mule)
-    _recompute(env, Limits(batch=1, batches_per_run=20, max_component=2))
-    with env.owner.connect() as conn:
-        cut = conn.execute(text("SELECT count(*) FROM delphi.case_entities")).scalar_one()
-    assert cut >= 4  # every case's entities were recorded as it was touched
+    _payee(env, ids[0], mule)
+    _payee(env, ids[1], mule)
+    _device(env, ids[1], "fp-chain")
+    _device(env, ids[2], "fp-chain")  # a–b share the payee, b–c the device
+    _recompute(env)
+    before = _state(env)
+    assert len({c for c in before[1].values() if c is not None}) == 1
+    extra = _case(env, minutes=1)
+    _payee(env, extra, mule)
+    small = Limits(batch=50, batches_per_run=20, max_component=2, settle_lag=timedelta(0))
+    counts = _recompute(env, small)
+    assert counts["component_cut"] == 1 and counts["touched"] == 1
+    assert counts["moved_cases"] == counts["changed"] == counts["new"] == 0
+    after = _state(env)
+    assert after[0] == before[0]
+    assert {k: v for k, v in after[1].items() if k != extra} == before[1]
+    assert after[1][extra] is None
+    assert _recompute(env, small) == {}  # the watermark moved past it
+
+
+def test_a_late_commit_is_still_taken(env: Env) -> None:  # noqa: F811
+    """#288: touch times are read before their transaction commits. With the settle lag, a
+    case whose opened_at is older than one already seen, but committed later, is not skipped."""
+    lagged = Limits(
+        batch=50, batches_per_run=20, max_component=2_000, settle_lag=timedelta(minutes=2)
+    )
+    mule = _new_account(env)
+    seen = _case(env)
+    _payee(env, seen, mule)
+    assert _recompute(env, lagged) == {}  # younger than the lag: not taken yet
+    late = _case(env)  # read its clock a second before `seen`, but commits only now
+    with env.owner.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE delphi.cases SET opened_at = opened_at - interval '1 second' WHERE id = :c"
+            ),
+            {"c": late},
+        )
+    _payee(env, late, mule)
+    env.clock.advance(timedelta(minutes=3))
+    counts = _recompute(env, lagged)
+    assert counts["touched"] == 2 and counts["new"] == 1
+    assert _campaign_of(env, late) == _campaign_of(env, seen) is not None
+
+
+def test_unexplained_cases_are_never_in_a_campaign(env: Env) -> None:  # noqa: F811
+    a = _case(env, posterior=UNEXPLAINED_POSTERIOR)
+    b = _case(env, posterior=UNEXPLAINED_POSTERIOR, minutes=1)
+    mule = _new_account(env)
+    _payee(env, a, mule)
+    _payee(env, b, mule)
+    assert _recompute(env).get("new", 0) == 0
+    assert _campaign_of(env, a) is None and _campaign_of(env, b) is None
 
 
 def test_the_vulnerable_share_raises_the_rank(env: Env) -> None:  # noqa: F811
@@ -249,7 +310,7 @@ def test_the_job_skips_while_another_recomputes(env: Env) -> None:  # noqa: F811
     job = CampaignRecomputeJob(env.sessions, env.clock, LIMITS)
     assert job(_Ctx())["more"] is False  # type: ignore[arg-type]
     with env.owner.begin() as conn:
-        conn.execute(text("SELECT pg_advisory_xact_lock(51)"))
+        conn.execute(text(f"SELECT pg_advisory_xact_lock({CAMPAIGN_RECOMPUTE_LOCK_KEY})"))
         assert job(_Ctx())["skipped"] == "busy"  # type: ignore[arg-type]
 
 
@@ -281,4 +342,9 @@ def test_the_api_lists_and_shows_a_campaign(
     assert {c["id"] for c in filtered["items"]} == {str(i) for i in ids}
     assert all(c["campaign_id"] == str(campaign) for c in filtered["items"])
     assert client.get(f"/api/v1/campaigns/{uuid4()}").status_code == 404
+    with env.sessions() as s:  # the detail is bounded: the oldest cases, the top entities
+        assert [r.id for r in member_cases(s, campaign, limit=2)] == ids[:2]
+        assert shared_entities(s, campaign, limit=1) == [
+            (shared["kind"] + ":" + shared["value"], 3)
+        ]
     assert client.get("/api/v1/campaigns", params={"cursor": "nope"}).status_code == 422

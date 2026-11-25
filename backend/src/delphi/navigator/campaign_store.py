@@ -3,8 +3,11 @@
 ``CAMPAIGN_RECOMPUTE`` applies the merge rule (``delphi.navigator.campaigns``) only where it can
 have changed, in bounded batches (the #263 pattern; the owner's design on #259):
 - **Touched cases.** The cases opened, disposed or given new evidence since the job's watermark
-  (``campaign_watermark``), oldest first, ``limits.batch`` per transaction. The watermark moves
-  with each committed batch, so a crash loses at most one batch.
+  (``campaign_watermark``), oldest first, ``limits.batch`` per transaction. Every touch time is
+  Clock time (``opened_at``, ``disposed_at``, ``evidence_records.requested_at``), taken before
+  its transaction commits, so only touches at least ``limits.settle_lag`` old are taken: a
+  transaction that commits late (within the lag) is still behind the watermark's next move. The
+  watermark moves with each committed batch, so a crash loses at most one batch.
 - **Entities.** A case's infrastructure entities are written to ``case_entities`` the first time
   the job sees it:
   - a PAYMENT_HOLD case: the payee account, the payment's device fingerprint, and the /24 prefix
@@ -12,10 +15,13 @@ have changed, in bounded batches (the #263 pattern; the owner's design on #259):
   - an ACCOUNT_REVIEW case: the account under review.
 - **The component.** From the touched cases, the job follows shared entities to cases with the
   same leading hypothesis opened within the window (indexed lookups on ``case_entities``), adds
-  the other members of the campaigns it meets, and stops at ``limits.max_component`` cases
-  (logged). Only that component is regrouped.
+  the other members of the campaigns it meets. Only that component is regrouped. A component
+  that reaches ``limits.max_component`` cases is **cut**: the job writes no campaign or case
+  change for it (a partial regroup would split or dissolve campaigns wrongly), moves the
+  watermark past the batch, and logs and counts it.
 - **Saved.**
-  - New campaigns are inserted, and every loaded case's ``campaign_id`` is set or cleared.
+  - New campaigns are inserted, and the loaded cases whose ``campaign_id`` changed are set or
+    cleared in one ``UPDATE … FROM (VALUES …)``.
   - A merged campaign keeps its row with ``merged_into`` and ``case_count = 0``; a dissolved
     one keeps its row with ``case_count = 0``.
   - Each campaign's aggregates follow docs/05 §5. ``expected_loss_paise`` is Σ risk(RELEASE)
@@ -37,13 +43,25 @@ from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import and_, func, literal, or_, select, text, tuple_, union_all, update
+from sqlalchemy import (
+    and_,
+    column,
+    func,
+    literal,
+    or_,
+    select,
+    text,
+    tuple_,
+    union_all,
+    update,
+    values,
+)
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session, sessionmaker
 
-from delphi.kb.model import GENUINE
 from delphi.kb.store import active_version
-from delphi.navigator.campaigns import CaseFacts, assign_ids, groups
+from delphi.navigator.campaigns import NEVER_IN_A_CAMPAIGN, CaseFacts, assign_ids, groups
 from delphi.navigator.tables import (
     campaign_watermark,
     campaigns,
@@ -142,16 +160,18 @@ def load_cases(session: Session, ids: Iterable[UUID]) -> list[LoadedCase]:
 
 
 def touched(
-    session: Session, after: tuple[datetime, UUID], *, limit: int
+    session: Session, after: tuple[datetime, UUID], *, until: datetime, limit: int
 ) -> list[tuple[datetime, UUID]]:
-    """The next ``limit`` (time, case) touches after ``after``: a case opened, disposed, or
-    given an evidence record."""
+    """The next ``limit`` (time, case) touches after ``after`` and at or before ``until``: a
+    case opened, disposed, or given an evidence record (all Clock times)."""
     k, e = cases.c, evidence_records.c
     at, last = after
     src = union_all(
-        select(k.opened_at.label("at"), k.id.label("case_id")).where(k.opened_at >= at),
-        select(k.disposed_at, k.id).where(k.disposed_at >= at),
-        select(e.created_at, e.case_id).where(e.created_at >= at),
+        select(k.opened_at.label("at"), k.id.label("case_id")).where(
+            k.opened_at >= at, k.opened_at <= until
+        ),
+        select(k.disposed_at, k.id).where(k.disposed_at >= at, k.disposed_at <= until),
+        select(e.requested_at, e.case_id).where(e.requested_at >= at, e.requested_at <= until),
     ).subquery("touched")
     rows = session.execute(
         select(src.c.at, src.c.case_id)
@@ -197,7 +217,7 @@ def component(
             )
             .where(
                 a.c.case_id.in_(list(frontier)),
-                k1.c.leading_hypothesis != GENUINE,
+                k1.c.leading_hypothesis.not_in(NEVER_IN_A_CAMPAIGN),
                 k2.c.leading_hypothesis == k1.c.leading_hypothesis,
                 k2.c.opened_at.between(k1.c.opened_at - window, k1.c.opened_at + window),
                 b.c.case_id.not_in(list(members)),
@@ -221,12 +241,6 @@ def component(
         members |= found
         frontier = found
     return members, False
-
-
-def campaign_cases(session: Session, campaign_id: UUID) -> list[LoadedCase]:
-    k = cases.c
-    query = _facts_query().where(k.campaign_id == campaign_id)
-    return [_loaded(r) for r in session.execute(query.order_by(k.opened_at, k.id))]
 
 
 @dataclass(frozen=True, slots=True)
@@ -306,12 +320,21 @@ def regroup(
             )
         )
         changed.add(campaign_id)
-    moved = 0
-    for f in facts:
-        target = assignment.campaign_of.get(f.case_id)
-        if target != f.campaign_id:
-            session.execute(update(cases).where(k.id == f.case_id).values(campaign_id=target))
-            moved += 1
+    moves = [
+        (f.case_id, assignment.campaign_of.get(f.case_id))
+        for f in facts
+        if assignment.campaign_of.get(f.case_id) != f.campaign_id
+    ]
+    if moves:
+        target = values_list(
+            column("case_id", PG_UUID(as_uuid=True)),
+            column("campaign_id", PG_UUID(as_uuid=True)),
+            name="moves",
+        ).data(moves)
+        session.execute(
+            update(cases).where(k.id == target.c.case_id).values(campaign_id=target.c.campaign_id)
+        )
+    moved = len(moves)
     for old, survivor in assignment.merged_into.items():
         session.execute(
             update(campaigns)
@@ -361,6 +384,7 @@ class Limits:
     batch: int  # touched cases per transaction
     batches_per_run: int
     max_component: int  # the most cases one regroup loads
+    settle_lag: timedelta  # longer than the longest transaction that touches a case
 
     @staticmethod
     def of(settings: Settings) -> Limits:
@@ -368,17 +392,20 @@ class Limits:
             settings.campaign_batch,
             settings.campaign_batches_per_run,
             settings.campaign_max_component,
+            timedelta(seconds=settings.campaign_settle_lag_s),
         )
 
 
 def run_batch(
     session: Session, clock: Clock, *, window_days: float, limits: Limits
 ) -> dict[str, int] | None:
-    """One batch: the next touched cases, their component, regrouped; the watermark moves past
-    them. None when nothing was touched. In the caller's transaction (it holds the lock)."""
+    """One batch: the next settled touches, their component, regrouped; the watermark moves past
+    them. None when nothing was touched. A cut component writes no campaign or case change.
+    In the caller's transaction (it holds the lock)."""
     w = campaign_watermark.c
     mark = session.execute(select(w.at, w.case_id).where(w.id == 1)).one()
-    batch = touched(session, (mark.at, mark.case_id), limit=limits.batch)
+    until = clock.now() - limits.settle_lag
+    batch = touched(session, (mark.at, mark.case_id), until=until, limit=limits.batch)
     if not batch:
         return None
     seeds = {case_id for _, case_id in batch}
@@ -388,9 +415,11 @@ def run_batch(
     )
     if cut:
         log.warning("campaigns.component_cut", seeds=len(seeds), limit=limits.max_component)
-    loaded = load_cases(session, members)
-    record_entities(session, loaded)
-    counts = regroup(session, clock, loaded, window_days=window_days)
+        counts = dict.fromkeys(("cases", "campaigns", "new", "merged", "moved_cases", "changed"), 0)
+    else:
+        loaded = load_cases(session, members)
+        record_entities(session, loaded)
+        counts = regroup(session, clock, loaded, window_days=window_days)
     last_at, last_case = batch[-1]
     session.execute(
         update(campaign_watermark).where(w.id == 1).values(at=last_at, case_id=last_case)
@@ -409,7 +438,14 @@ class CampaignRecomputeJob:
     limits: Limits
 
     def __call__(self, ctx: JobContext) -> Mapping[str, Any] | None:
-        totals: dict[str, int] = {"batches": 0, "touched": 0, "new": 0, "merged": 0, "changed": 0}
+        totals: dict[str, int] = {
+            "batches": 0,
+            "touched": 0,
+            "new": 0,
+            "merged": 0,
+            "changed": 0,
+            "component_cut": 0,
+        }
         for n in range(self.limits.batches_per_run):
             with self.sessions.begin() as session:
                 if not begin_recompute(session):
@@ -426,7 +462,7 @@ class CampaignRecomputeJob:
             if counts is None:
                 return {**totals, "more": False}
             totals["batches"] += 1
-            for key in ("touched", "new", "merged", "changed"):
+            for key in ("touched", "new", "merged", "changed", "component_cut"):
                 totals[key] += counts[key]
             if not ctx.report((n + 1) / self.limits.batches_per_run):
                 break
@@ -450,8 +486,14 @@ def get_campaign(session: Session, campaign_id: UUID) -> Any | None:
     return session.execute(select(campaigns).where(campaigns.c.id == campaign_id)).one_or_none()
 
 
-def member_cases(session: Session, campaign_id: UUID) -> list[Any]:
-    """The campaign's cases, oldest first, with what the campaign page shows of each."""
+MEMBER_CASES_LIMIT = 200  # docs/16: the rest are at GET /cases?campaign_id=
+SHARED_ENTITIES_LIMIT = 20
+
+
+def member_cases(
+    session: Session, campaign_id: UUID, *, limit: int = MEMBER_CASES_LIMIT
+) -> list[Any]:
+    """The campaign's oldest ``limit`` cases, with what the campaign page shows of each."""
     k = cases.c
     return list(
         session.execute(
@@ -460,5 +502,25 @@ def member_cases(session: Session, campaign_id: UUID) -> list[Any]:
             )
             .where(k.campaign_id == campaign_id)
             .order_by(k.opened_at, k.id)
+            .limit(limit)
         )
     )
+
+
+def shared_entities(
+    session: Session, campaign_id: UUID, *, limit: int = SHARED_ENTITIES_LIMIT
+) -> list[tuple[str, int]]:
+    """The entities at least two of the campaign's cases have (docs/09 §8), most shared first,
+    at most ``limit``: ``(entity, case count)``."""
+    e, k = case_entities.c, cases.c
+    n = func.count().label("n")
+    rows = session.execute(
+        select(e.entity, n)
+        .join(cases, k.id == e.case_id)
+        .where(k.campaign_id == campaign_id)
+        .group_by(e.entity)
+        .having(func.count() > 1)
+        .order_by(n.desc(), e.entity)
+        .limit(limit)
+    )
+    return [(r.entity, int(r.n)) for r in rows]

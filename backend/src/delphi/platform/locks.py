@@ -16,8 +16,10 @@ DATASET_WRITE_LOCK_KEY = 46  # writing a generated dataset into the bank
 KB_SEED_LOCK_KEY = 47  # delphi migrate inserting KB v1 (docs/07 §1)
 MODEL_ARTIFACT_LOCK_KEY = 48  # storing a sensing artifact and switching the ACTIVE one
 LABEL_DELIVERY_LOCK_KEY = 49  # delivering due labels from the simulator's schedule (docs/14 §7)
-# 50 is the account-review sweep's (#248).
-CAMPAIGN_RECOMPUTE_LOCK_KEY = 51  # regrouping cases into campaigns (docs/05 §5)
+ACCOUNT_REVIEW_SWEEP_LOCK_KEY = 50  # opening ACCOUNT_REVIEW cases from triggers (docs/09 §1)
+DEMO_RESET_LOCK_KEY = 51  # one demo reset at a time (docs/14 §10)
+# 52 is the lien-account class (#250).
+CAMPAIGN_RECOMPUTE_LOCK_KEY = 53  # regrouping cases into campaigns (docs/05 §5)
 
 ALL_LOCK_KEYS: dict[str, int] = {
     "audit": AUDIT_LOCK_KEY,
@@ -29,4 +31,6 @@ ALL_LOCK_KEYS: dict[str, int] = {
     "model_artifact": MODEL_ARTIFACT_LOCK_KEY,
     "label_delivery": LABEL_DELIVERY_LOCK_KEY,
     "campaign_recompute": CAMPAIGN_RECOMPUTE_LOCK_KEY,
+    "account_review_sweep": ACCOUNT_REVIEW_SWEEP_LOCK_KEY,
+    "demo_reset": DEMO_RESET_LOCK_KEY,
 }

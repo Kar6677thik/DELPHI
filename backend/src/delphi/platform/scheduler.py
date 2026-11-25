@@ -64,6 +64,7 @@ SCHEDULE: tuple[Recurring, ...] = (
     Recurring(JobType.SESSION_TIMEOUT_SWEEP, every=timedelta(seconds=30)),
     Recurring(JobType.LABEL_DELIVERY, every=timedelta(seconds=60)),
     Recurring(JobType.CAMPAIGN_RECOMPUTE, every=timedelta(seconds=60)),
+    Recurring(JobType.COMPLAINT_SWEEP, every=timedelta(seconds=60)),
     Recurring(JobType.SCOUT_AUTO_TRIGGER, every=timedelta(minutes=5)),
     Recurring(JobType.PROBE_YIELD_DAILY, daily_at=time(0, 15)),
     Recurring(JobType.RETENTION_SWEEP, daily_at=time(1, 0)),

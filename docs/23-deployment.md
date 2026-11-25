@@ -296,9 +296,11 @@ to start, exit code 2, naming the variable, if one is missing or invalid.
 | `DELPHI_JOB_LEASE_S` / `DELPHI_JOB_RETRY_BACKOFF_S` / `DELPHI_JOB_MAX_ATTEMPTS` | `60` / `30` / `3` | worker | doc 04 §5.4 |
 | `DELPHI_WORKER_DEFAULT_CONCURRENCY` / `DELPHI_WORKER_FAST_CONCURRENCY` | `2` / `1` | worker | doc 04 §5.4 |
 | `DELPHI_WORKER_POLL_INTERVAL_S` / `DELPHI_WORKER_HEARTBEAT_MAX_AGE_S` | `1.0` / `30` | worker | doc 20 §3 |
+| `DELPHI_DEMO_RESET_TIMEOUT_S` | `60` | worker | the demo reset's statement timeout (doc 14 §10, FR-SIM-08) |
 | `DELPHI_OUTBOX_RETENTION_H` / `DELPHI_IDEMPOTENCY_RETENTION_H` | `24` / `24` | worker | doc 17 §6 |
+| `DELPHI_REVIEW_SWEEP_BATCH` / `DELPHI_REVIEW_SWEEP_MAX_PER_RUN` / `DELPHI_REVIEW_COMPLAINT_LOOKBACK_DAYS` | `25` / `100` / `30` | worker | doc 09 §1: reviews opened per transaction and per run, and the oldest complaint that opens one |
 | `DELPHI_YIELD_RECENT_DAYS` / `DELPHI_YIELD_BASELINE_DAYS` / `DELPHI_YIELD_DRIFT_RATIO` / `DELPHI_YIELD_MIN_RECENT_COUNT` / `DELPHI_YIELD_MIN_BASELINE_COUNT` | `7` / `28` / `0.7` / `30` / `30` | worker | doc 12 §5 |
-| `DELPHI_CAMPAIGN_BATCH` / `DELPHI_CAMPAIGN_BATCHES_PER_RUN` / `DELPHI_CAMPAIGN_MAX_COMPONENT` | `50` / `20` / `2000` | worker | doc 05 §5: touched cases per transaction, transactions per run, and the most cases one regroup loads |
+| `DELPHI_CAMPAIGN_BATCH` / `DELPHI_CAMPAIGN_BATCHES_PER_RUN` / `DELPHI_CAMPAIGN_MAX_COMPONENT` / `DELPHI_CAMPAIGN_SETTLE_LAG_S` | `50` / `20` / `2000` / `120` | worker | doc 05 §5: touched cases per transaction, transactions per run, the most cases one regroup loads (at most 5,000; a bigger component is skipped, not regrouped), and how old a touch must be before it is taken (longer than any transaction that touches a case) |
 | `DELPHI_SECRET_KEY` | unset | api | Secret `delphi-app` (`openssl rand -hex 32`; 32 characters or more). Keys the Guardian's OTP digest (doc 08 §4). Required in `demo` wherever the Guardian runs; `dev` and `test` fall back to a fixed development key |
 | `DELPHI_PUBLIC_ORIGIN` | unset | api | ConfigMap: `https://delphi.karthiksurkanti.in`. The Origin that mutating requests must carry (CSRF, doc 19 §4). Unset in development: the request's own origin |
 | `DELPHI_CLIENT_IP_HEADER` | unset | api | ConfigMap: `CF-Connecting-IP`. The header with the real client IP behind the tunnel, used for the login lockout and audit. Safe because only the node (the host tunnel) can reach the api pod (§4 NetworkPolicies) |
