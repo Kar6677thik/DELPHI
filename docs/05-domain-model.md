@@ -120,16 +120,21 @@ disposition and every new case.
 (hypothesis, entity) bucket it joins only time-adjacent neighbours, which gives the same groups
 as joining every pair, in O(n log n). The store is `delphi.navigator.campaign_store`.
 - **The job.** `CAMPAIGN_RECOMPUTE` runs every 60 s (doc 04 §5.4), so a new case, a disposition or
-  new evidence is regrouped within a minute, not in the transaction that caused it. It runs under
-  advisory lock 51.
+  new evidence is regrouped within a minute or two, not in the transaction that caused it. It runs
+  under advisory lock 53 and skips while another run holds it.
 - **Only around touched cases.** Touched cases are those opened, disposed or given an evidence
-  record since `campaign_watermark`. They are taken in batches: `DELPHI_CAMPAIGN_BATCH` (50) per
-  transaction, at most `DELPHI_CAMPAIGN_BATCHES_PER_RUN` (20) per run, each under a 30 s statement
-  timeout. The watermark moves with each committed batch.
+  record since `campaign_watermark`, by Clock time (`opened_at`, `disposed_at`,
+  `evidence_records.requested_at`). Those times are read before their transaction commits, so a
+  touch is taken only once it is `DELPHI_CAMPAIGN_SETTLE_LAG_S` (120 s) old, longer than any such
+  transaction: one that commits late is not skipped. They are taken in batches:
+  `DELPHI_CAMPAIGN_BATCH` (50) per transaction, at most `DELPHI_CAMPAIGN_BATCHES_PER_RUN` (20) per
+  run, each under a 30 s statement timeout. The watermark moves with each committed batch.
 - **The component.** From the touched cases, the job follows shared entities (an indexed lookup
   on `case_entities`) to cases with the same leading hypothesis opened within the window. It adds
-  the other members of the campaigns it meets, and stops at `DELPHI_CAMPAIGN_MAX_COMPONENT`
-  (2,000) cases, logged. Only that component is regrouped.
+  the other members of the campaigns it meets. Only that component is regrouped. A component that
+  reaches `DELPHI_CAMPAIGN_MAX_COMPONENT` (2,000, at most 5,000) cases is **cut**: regrouping part
+  of it could split or dissolve its campaigns wrongly, so the job changes no campaign and no case
+  for it, moves the watermark past the batch, and logs and counts it (`component_cut`).
 - **Entities** are written to `case_entities` the first time the job sees a case:
   - a payment case: the payee account, the payment's device fingerprint, and the payer's latest
     login /24 at or before the payment;

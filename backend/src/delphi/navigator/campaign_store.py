@@ -45,6 +45,7 @@ from uuid import UUID
 
 from sqlalchemy import (
     and_,
+    cast,
     column,
     func,
     literal,
@@ -54,8 +55,8 @@ from sqlalchemy import (
     tuple_,
     union_all,
     update,
-    values,
 )
+from sqlalchemy import values as values_list
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session, sessionmaker
@@ -282,7 +283,8 @@ def _created_at(session: Session, ids: set[UUID]) -> dict[UUID, datetime]:
     if not ids:
         return {}
     c = campaigns.c
-    return dict(session.execute(select(c.id, c.created_at).where(c.id.in_(ids))).tuples().all())
+    rows = session.execute(select(c.id, c.created_at).where(c.id.in_(ids)))
+    return {r.id: r.created_at for r in rows}
 
 
 def regroup(
@@ -332,7 +334,9 @@ def regroup(
             name="moves",
         ).data(moves)
         session.execute(
-            update(cases).where(k.id == target.c.case_id).values(campaign_id=target.c.campaign_id)
+            update(cases)
+            .where(k.id == target.c.case_id)
+            .values(campaign_id=cast(target.c.campaign_id, PG_UUID(as_uuid=True)))  # all-NULL: text
         )
     moved = len(moves)
     for old, survivor in assignment.merged_into.items():

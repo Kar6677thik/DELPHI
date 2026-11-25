@@ -193,13 +193,14 @@ def test_a_disposal_touches_a_case_and_a_genuine_lead_leaves_its_campaign(
     _payee(env, b, mule)
     _recompute(env)
     assert _campaign_of(env, a) is not None
+    env.clock.advance(timedelta(minutes=1))
     with env.owner.begin() as conn:  # released: the evidence pointed to GENUINE
         conn.execute(
             text(
                 "UPDATE delphi.cases SET leading_hypothesis = 'GENUINE', status = 'DISPOSED',"
                 " disposition = 'RELEASE', disposed_at = :t WHERE id = :c"
             ),
-            {"c": a, "t": T0 + timedelta(hours=1)},
+            {"c": a, "t": env.clock.now()},
         )
     counts = _recompute(env)
     assert counts["touched"] == 1
@@ -209,7 +210,7 @@ def test_a_disposal_touches_a_case_and_a_genuine_lead_leaves_its_campaign(
 def _state(e: Env) -> tuple[list[Any], dict[UUID, UUID | None]]:
     with e.owner.connect() as conn:
         rows = list(conn.execute(select(campaigns).order_by(campaigns.c.id)))
-        links = dict(conn.execute(select(cases.c.id, cases.c.campaign_id)).tuples().all())
+        links = {r.id: r.campaign_id for r in conn.execute(select(cases.c.id, cases.c.campaign_id))}
     return rows, links
 
 
