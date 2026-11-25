@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import { apiFetch, getJson } from './client';
+import { ApiError, apiFetch, getJson } from './client';
 import type { CaseDetail, CasePage, CaseSort, DispositionRequest, EvidenceRequest } from './types';
 import type { components } from './schema';
 
@@ -161,6 +161,12 @@ export function useActOnPoliceAlert(id: string) {
     onSuccess: (data) => {
       client.setQueryData(caseQueryKey(id), data);
       void client.invalidateQueries({ queryKey: CASES_QUERY_KEY });
+    },
+    onError: (error) => {
+      // 409: someone else acted on it first; show the alert as it now is.
+      if (error instanceof ApiError && error.status === 409) {
+        void client.invalidateQueries({ queryKey: caseQueryKey(id) });
+      }
     },
   });
 }

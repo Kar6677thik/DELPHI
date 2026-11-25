@@ -14,6 +14,7 @@ import { RoleGate } from '../components/RoleGate';
 import { decisionText, humanise } from '../lib/format';
 import { useSeen } from '../lib/useSeen';
 import { DispositionPanel } from './DispositionPanel';
+import { PoliceAlertPanel } from './PoliceAlertPanel';
 
 /** The outreach call is recorded by the investigator, not fetched (docs/09 §3). */
 export const OUTREACH = 'CUSTOMER_OUTREACH_CALL';
@@ -114,6 +115,8 @@ function Console({
             ({detail.dd_pack_complete ? 'complete' : 'incomplete'})
           </Field>
         </dl>
+
+        {detail.police_alert && <PoliceAlertPanel caseId={detail.id} alert={detail.police_alert} />}
 
         <section aria-labelledby="belief-title">
           <h2 id="belief-title" className="text-lg font-semibold">
