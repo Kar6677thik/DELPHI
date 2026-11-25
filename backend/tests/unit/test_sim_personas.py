@@ -170,8 +170,9 @@ def test_kamalas_payee_and_ring_7(dataset: Dataset) -> None:
 
 
 def test_kamalas_passive_outcomes_are_the_golden_ones(dataset: Dataset, kb: KnowledgeBase) -> None:
-    """docs/14 §6 / ENG-S1: CLEAN_UNKNOWN, LOW_OR_UNKNOWN, KNOWN_DEVICE, NORMAL,
-    ON_CALL_UNKNOWN_NUMBER, from the generated rows and the S-1 script."""
+    """docs/14 §6 / ENG-S1's hesitant path: CLEAN_UNKNOWN, LOW_OR_UNKNOWN, KNOWN_DEVICE,
+    HESITANT_OR_PASTED (she pastes the account, #291), ON_CALL_UNKNOWN_NUMBER, from the
+    generated rows and the S-1 script."""
     manifest = dataset.personas
     assert manifest is not None
     story = manifest.stories["S1"]
@@ -186,7 +187,7 @@ def test_kamalas_passive_outcomes_are_the_golden_ones(dataset: Dataset, kb: Know
         at=_story_time(dataset, story),
         th=kb.config.classifiers,
     )
-    assert outcomes == KAMALA_PASSIVE
+    assert outcomes == {**KAMALA_PASSIVE, "SESSION_BEHAVIOUR": "HESITANT_OR_PASTED"}
 
 
 def test_arjuns_passive_outcomes_are_the_golden_ones(dataset: Dataset, kb: KnowledgeBase) -> None:

@@ -461,7 +461,7 @@ generation (not the KB) until they do, and record the change in the generator ch
 
 | Persona | Facts | Scripted behaviour |
 |---|---|---|
-| Kamala Devi (S-1) | 68, te, 6 years as a customer, 1 device, consent to call status on | Story payment ₹4,80,000 at 23:40 to a new payee: a freshly opened layer-1 mule account at XBK2, not yet listed, scripted so p_mule < 0.5, with a phone number whose FRI category is LOW. Kamala is on a call with an unknown number, typing normally, on her known device. The five passive outcomes are therefore CLEAN_UNKNOWN, LOW_OR_UNKNOWN, KNOWN_DEVICE, NORMAL and ON_CALL_UNKNOWN_NUMBER. The presenter answers live, or autoplay uses the script: coached purpose answer FAMILY_OR_FRIEND after 6 s; spell-breaker NO after 11 s with 1 app switch; answers any other probe from the DA response model |
+| Kamala Devi (S-1) | 68, te, 6 years as a customer, 1 device, consent to call status on | Story payment ₹4,80,000 at 23:40 to a new payee: a freshly opened layer-1 mule account at XBK2, not yet listed, scripted so p_mule < 0.5, with a phone number whose FRI category is LOW. Kamala is on a call with an unknown number, on her known device, and pastes the "safe account" the caller sent her (#291). The five passive outcomes are therefore CLEAN_UNKNOWN, LOW_OR_UNKNOWN, KNOWN_DEVICE, HESITANT_OR_PASTED and ON_CALL_UNKNOWN_NUMBER. The presenter answers live, or autoplay uses the script: coached purpose answer FAMILY_OR_FRIEND after 6 s; spell-breaker NO after 11 s with 1 app switch; answers any other probe from the DA response model |
 | Arjun Mehta (S-2) | 34, en, new phone today (genuine) | ₹1,80,000 to "Sunrise Multispeciality Hospital" (a registered merchant); biometric MATCH; purpose MEDICAL after 5 s |
 | Ravi Kumar (S-3 victim) | 45, hi | ₹3,00,000 released earlier, at T−10 min, to ring "Ring-7" (12 accounts, 3 layers); complaint at T0 |
 | Ring-7 | 12 mule accounts across DLPH, XBK1, XBK3 | Onward transfers scheduled per §4 dwell times; continues during the demo |
@@ -488,8 +488,8 @@ silent:
 - **Kamala's payee** is an XBK2 person account, layer 1 of its own one-account ring:
   - opened 3 days before the history ends, with full KYC
   - no money through it, and FRI LOW
-  - so her passive outcomes are exactly CLEAN_UNKNOWN, LOW_OR_UNKNOWN, KNOWN_DEVICE, NORMAL and
-    ON_CALL_UNKNOWN_NUMBER (a test applies the doc 08 §5 rules to the generated rows). Her
+  - so her passive outcomes are exactly CLEAN_UNKNOWN, LOW_OR_UNKNOWN, KNOWN_DEVICE,
+    HESITANT_OR_PASTED (the pasted account, #291) and ON_CALL_UNKNOWN_NUMBER (a test applies the doc 08 §5 rules to the generated rows). Her
     p_mule < 0.5 can only be checked once the M3 scorer exists (docs/tech-debt TD-9).
 - **Ring-7** has 4 accounts in each of its 3 layers, at fixed banks across DLPH, XBK1 and XBK3.
   Its 3 home-bank mules share one phone.
