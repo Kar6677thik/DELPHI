@@ -117,10 +117,10 @@ def assign_ids(
         raise ValueError(f"created_at has no time for campaign(s) {', '.join(missing)}")
     group_of = {c: i for i, group in enumerate(members) for c in group}
     anchor_group: dict[UUID, int] = {}  # campaign → the group holding its anchor
-    for c in sorted(cases, key=lambda c: (c.opened_at, str(c.case_id))):
-        k = c.campaign_id
-        if k is not None and k not in anchor_group and c.case_id in group_of:
-            anchor_group[k] = group_of[c.case_id]
+    for fact in sorted(cases, key=lambda f: (f.opened_at, str(f.case_id))):
+        k = fact.campaign_id
+        if k is not None and k not in anchor_group and fact.case_id in group_of:
+            anchor_group[k] = group_of[fact.case_id]
     claims: dict[int, list[UUID]] = {}
     for k, i in anchor_group.items():
         claims.setdefault(i, []).append(k)
@@ -136,8 +136,8 @@ def assign_ids(
         else:
             survivor = new_id()
             new[survivor] = list(group)
-        for c in group:
-            campaign_of[c] = survivor
+        for case_id in group:
+            campaign_of[case_id] = survivor
     dissolved = frozenset(set(previous.values()) - set(anchor_group))
     unassigned = frozenset(set(previous) - set(campaign_of))
     return Assignment(campaign_of, new, merged, dissolved, unassigned)
