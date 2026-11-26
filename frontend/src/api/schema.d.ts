@@ -1384,6 +1384,11 @@ export interface components {
              * @description default: the profile's
              */
             seed?: number | null;
+            /**
+             * Personas
+             * @description add the demo personas (docs/14 §6); default: the profiles personas.yaml lists (`demo`). The E2E stack seeds `test` with them (docs/21 §1).
+             */
+            personas?: boolean | null;
         };
         /**
          * DdPackFormat
@@ -1777,7 +1782,7 @@ export interface components {
          * @description Every job type in docs/04 §5.4. A type is only claimed once a handler is registered.
          * @enum {string}
          */
-        JobType: "GENERATE_DATASET" | "TRAIN_SENSING" | "RUN_EVALUATION" | "RUN_SCOUT" | "RUN_LEARNING" | "RUN_BACKTEST" | "KB_REBASE" | "LLM_NARRATIVE" | "LLM_CASE_SUMMARY" | "LLM_QUESTION_VARIANTS" | "LLM_TYPOLOGY_DESCRIPTION" | "SIM_OUTREACH_CALL" | "DEMO_STORY" | "DEMO_RESET" | "SIM_TICK" | "CHASE_RETRACE" | "MULE_SWEEP" | "SESSION_TIMEOUT_SWEEP" | "SCOUT_AUTO_TRIGGER" | "LABEL_DELIVERY" | "COMPLAINT_SWEEP" | "PROBE_YIELD_DAILY" | "RETENTION_SWEEP" | "AUDIT_VERIFY";
+        JobType: "GENERATE_DATASET" | "TRAIN_SENSING" | "RUN_EVALUATION" | "RUN_SCOUT" | "RUN_LEARNING" | "RUN_BACKTEST" | "KB_REBASE" | "LLM_NARRATIVE" | "LLM_CASE_SUMMARY" | "LLM_QUESTION_VARIANTS" | "LLM_TYPOLOGY_DESCRIPTION" | "SIM_OUTREACH_CALL" | "DEMO_STORY" | "DEMO_RESET" | "SIM_TICK" | "CHASE_RETRACE" | "MULE_SWEEP" | "SESSION_TIMEOUT_SWEEP" | "SCOUT_AUTO_TRIGGER" | "LABEL_DELIVERY" | "ACCOUNT_REVIEW_SWEEP" | "PROBE_YIELD_DAILY" | "RETENTION_SWEEP" | "AUDIT_VERIFY";
         /** JobView */
         JobView: {
             /**

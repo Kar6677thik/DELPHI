@@ -19,6 +19,7 @@ from sqlalchemy import Engine, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from delphi.kb.model import KnowledgeBase
+from delphi.kb.store import ensure_kb_v1
 from delphi.platform.clock import FixedClock
 from delphi.platform.db import make_session_factory
 from delphi.platform.errors import DelphiError, NotFoundError, ProblemCode
@@ -36,7 +37,7 @@ from delphi.sensing.artifacts import (
 from delphi.sensing.config import load_sensing_config
 from delphi.sensing.features import build_payment_features
 from delphi.sensing.jobs import register_sensing_jobs
-from delphi.sensing.mule_scores import sweep_mule_scores
+from delphi.sensing.mule_scores import MuleSweepLimits, sweep_mule_scores
 from delphi.sensing.offline import OfflineHistories, load_bank_frames
 from delphi.sensing.prior import PriorModel
 from delphi.sim import api as bank
@@ -50,6 +51,9 @@ SETTINGS = load_sensing_config()
 TARGET_P95_MS = 20.0  # docs/13 §7, NFR-03
 BENCH_PAYMENTS = 60
 WARM_UP = 10
+
+
+EVERY_ACCOUNT = MuleSweepLimits(batch=500, max_per_run=10**9)  # one run scores them all
 
 
 @dataclass
@@ -67,9 +71,13 @@ def seeded(create_database: Callable[[], str], kb: KnowledgeBase) -> Iterator[Ba
     app, sim = engine_as(url, "delphi_app"), engine_as(url, "delphi_sim")
     clock = FixedClock(T0)
     sessions = make_session_factory(app)
+    with sessions.begin() as s:  # MULE_SWEEP reads mule_sweep_interval_min from the ACTIVE KB
+        ensure_kb_v1(s, clock, kb)
     registry = JobRegistry()
     register_sim_jobs(registry, sim_engine=sim, clock=clock, kb=kb)
-    register_sensing_jobs(registry, engine=app, sessions=sessions, clock=clock)
+    register_sensing_jobs(
+        registry, engine=app, sessions=sessions, clock=clock, mule_sweep=EVERY_ACCOUNT
+    )
     queue = JobQueue(sessions, clock, QueueConfig())
     with sessions.begin() as s:
         enqueue(
@@ -165,7 +173,7 @@ def test_inference_p95(seeded: Bank) -> None:
     (docs/13 §6); scoring an account on demand is the fallback for one the sweep missed."""
     payments = _customer_payments(seeded, BENCH_PAYMENTS, seed=20)
     earliest = min(p.initiated_at for p in payments)
-    sweep_mule_scores(seeded.app, FixedClock(earliest - timedelta(seconds=1)))
+    sweep_mule_scores(seeded.app, FixedClock(earliest - timedelta(seconds=1)), EVERY_ACCOUNT)
     service = SensingInference(seeded.app, seeded.clock)
     service.refresh()
     timings = []
