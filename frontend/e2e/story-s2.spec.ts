@@ -51,9 +51,12 @@ test('E2E-S2: Arjun answers as scripted and the payment is sent', async ({ page 
   const purpose = phone.getByRole('button', { name: 'Medical / hospital' });
   const otp = phone.getByLabel('One-time code');
   const answer = async (screen: Locator, afterMs: number, act: () => Promise<void>) => {
+    // Each probe screen is keyed by its run: wait for this one to go, even when the next
+    // probe looks the same (two spell-breakers in a row both have a "No").
+    const shown = await screen.elementHandle();
     await page.waitForTimeout(afterMs);
     await act();
-    await expect(screen).toBeHidden({ timeout: left() }); // the answered screen goes
+    await page.waitForFunction((el) => !el?.isConnected, shown, { timeout: left() });
   };
   while (!(await sent.isVisible())) {
     await expect(sent.or(sensor).or(purpose).or(otp)).toBeVisible({ timeout: left() });
