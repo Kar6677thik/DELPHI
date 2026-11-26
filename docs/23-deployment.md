@@ -300,12 +300,14 @@ to start, exit code 2, naming the variable, if one is missing or invalid.
 | `DELPHI_OUTBOX_RETENTION_H` / `DELPHI_IDEMPOTENCY_RETENTION_H` | `24` / `24` | worker | doc 17 §6 |
 | `DELPHI_SCOUT_MAX_ITEMS` / `DELPHI_SCOUT_FAILURE_BACKOFF_MIN` | `500` / `60` | worker | doc 11 §2: the most queue items (and reference sessions) one `RUN_SCOUT` loads, and how long the auto-trigger waits after a failed run |
 | `DELPHI_REVIEW_SWEEP_BATCH` / `DELPHI_REVIEW_SWEEP_MAX_PER_RUN` / `DELPHI_REVIEW_COMPLAINT_LOOKBACK_DAYS` | `25` / `100` / `30` | worker | doc 09 §1: reviews opened per transaction and per run, and the oldest complaint that opens one |
+| `DELPHI_MULE_SWEEP_BATCH` / `DELPHI_MULE_SWEEP_MAX_PER_RUN` | `200` / `2000` | worker | doc 13 §6: accounts rescored per transaction and per `MULE_SWEEP` run |
 | `DELPHI_YIELD_RECENT_DAYS` / `DELPHI_YIELD_BASELINE_DAYS` / `DELPHI_YIELD_DRIFT_RATIO` / `DELPHI_YIELD_MIN_RECENT_COUNT` / `DELPHI_YIELD_MIN_BASELINE_COUNT` | `7` / `28` / `0.7` / `30` / `30` | worker | doc 12 §5 |
 | `DELPHI_SECRET_KEY` | unset | api | Secret `delphi-app` (`openssl rand -hex 32`; 32 characters or more). Keys the Guardian's OTP digest (doc 08 §4). Required in `demo` wherever the Guardian runs; `dev` and `test` fall back to a fixed development key |
 | `DELPHI_PUBLIC_ORIGIN` | unset | api | ConfigMap: `https://delphi.karthiksurkanti.in`. The Origin that mutating requests must carry (CSRF, doc 19 §4). Unset in development: the request's own origin |
 | `DELPHI_CLIENT_IP_HEADER` | unset | api | ConfigMap: `CF-Connecting-IP`. The header with the real client IP behind the tunnel, used for the login lockout and audit. Safe because only the node (the host tunnel) can reach the api pod (§4 NetworkPolicies) |
 | `DELPHI_SESSION_IDLE_H` / `DELPHI_SESSION_ABSOLUTE_DAYS` | `12` / `7` | api | doc 19 §2 |
 | `DELPHI_LOGIN_MAX_FAILURES` / `DELPHI_LOGIN_WINDOW_MIN` | `5` / `15` | api | doc 16 §1 |
+| `DELPHI_EVAL_WORKERS` | `4` | evaluation run | doc 22 §1: worker processes for one evaluation run. Evaluation does not run in the cluster's worker pod (1536Mi): it runs off-cluster or as its own Job sized for it |
 | `DELPHI_DATASET_PROFILES` | `test,demo,eval` | api, worker | ConfigMap: `test,demo` on the home server (the `eval` dataset needs about 3.8 GiB; §4). `POST /admin/datasets`, `delphi seed` and `GENERATE_DATASET` refuse other profiles |
 | `DELPHI_RATE_LIMIT_PER_S` / `DELPHI_RATE_LIMIT_BURST` | `20` / `40` | api | doc 16 §1 |
 | `DELPHI_LLM_PROVIDER` | `template` | api, worker | `anthropic` or `template` (the kill switch, doc 15 §3). With `template` no model is called |
