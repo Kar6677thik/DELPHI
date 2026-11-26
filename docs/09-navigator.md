@@ -334,3 +334,15 @@ is derived, so it does not bump the case's version. Reading it records `DD_PACK_
 Rules are in doc 05 §5. The campaign list is sorted by `rank_score` and shows the
 F3 stage strip, case count, total expected loss, and victims who are vulnerable. Campaign
 detail lists the cases and the shared infrastructure entities.
+
+**Implementation (#107 PR 1).** The merge rule and the stable ids are pure functions in
+`delphi.navigator.campaigns`, and the window is the KB's `navigator.campaign_window_days`.
+- `groups` links cases with the same leading hypothesis that share an entity and opened within the
+  window, and closes the links with union-find. Cases led by GENUINE or UNEXPLAINED, and cases
+  with no link, form no campaign.
+- `assign_ids` keeps the ids members already had, by doc 05 §5's anchor rule: only the group
+  holding a campaign's anchor (its oldest member still in a group) may claim it, so in a split
+  the group with the oldest case keeps the id. In a merge the oldest campaign survives and the
+  others are `merged_into` it; a group with no campaign to claim gets a new one.
+- The `campaigns` table, `recompute()` after each disposition and new case, `GET /campaigns` and
+  the pages follow.
