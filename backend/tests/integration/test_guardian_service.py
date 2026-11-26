@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import itertools
 import threading
+import time
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -340,6 +341,40 @@ def test_passive_probes_update_in_kb_order_and_a_slow_adapter_does_not_block(env
 
 
 # ---------------------------------------------------------------- planning and the decision
+
+
+LOOP_TICK_S = 0.01
+SLOW_LOAD_S = 0.3
+
+
+def test_the_passive_phase_leaves_the_event_loop_free(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#285: the passive phase's database steps (its claim, its apply) run off the event loop,
+    so a slow database holds up this session only, not every request and session in the
+    process."""
+    svc = env.service(FixedPrior(GENUINE, q=0.95, p_mule=0.02), CLEAN)
+    started = svc.start(env.payment(480_000), mode=SessionMode.LIVE, runner=Runner.API)
+    load = GuardianService._load
+
+    def slow_load(self: GuardianService, s: Session, session_id: UUID) -> Any:
+        time.sleep(SLOW_LOAD_S)  # a database that answers slowly
+        return load(self, s, session_id)
+
+    monkeypatch.setattr(GuardianService, "_load", slow_load)
+
+    async def both() -> int:
+        ticks = 0
+        passive = asyncio.create_task(svc.passive(started.id))
+        while not passive.done():
+            await asyncio.sleep(LOOP_TICK_S)
+            ticks += 1
+        await passive
+        return ticks
+
+    ticks = asyncio.run(both())
+    # two slow loads (the claim and the apply): the loop ticked through them
+    assert ticks >= 2 * SLOW_LOAD_S / LOOP_TICK_S / 2
 
 
 def test_planning_issues_a_pending_active_probe_with_its_candidates(env: Env) -> None:

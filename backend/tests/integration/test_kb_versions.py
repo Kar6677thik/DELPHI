@@ -20,6 +20,7 @@ from delphi.kb.store import (
     KbIntegrityError,
     KbStatus,
     active_version,
+    get_version,
     insert_version,
     kb_versions,
 )
@@ -100,6 +101,28 @@ def test_a_row_edited_outside_the_app_is_refused(
         )
     with make_session_factory(engine)() as session, pytest.raises(KbIntegrityError):
         active_version(session)
+
+
+def test_a_loaded_version_is_parsed_once_until_its_row_changes(
+    db: tuple[str, Engine], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#285: the parsed content is reused while the row is unchanged; any write to the row
+    (here a harmless one) makes the next load parse and check it again."""
+    url, engine = db
+    _migrate(url, monkeypatch)
+    sessions = make_session_factory(engine)
+    with sessions() as session:
+        first = active_version(session)
+        assert first is not None
+        version_id = first.id
+        again = get_version(session, version_id)
+    assert again is not None
+    assert again.kb is first.kb  # the same parsed object: no second parse
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE delphi.kb_versions SET change_summary = change_summary"))
+    with sessions() as session:
+        reread = get_version(session, version_id)
+    assert reread is not None and reread.kb is not first.kb and reread.kb == first.kb
 
 
 def test_at_most_one_active_and_one_shadow(
