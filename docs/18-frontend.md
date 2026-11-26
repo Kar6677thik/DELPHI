@@ -40,6 +40,28 @@ ADR-0008. React 18 + TypeScript (strict) + Vite, served as static files by the a
 | `/evaluation` | Evaluation | all (run: `admin`) | results table B1/B2/DELPHI with CIs, charts |
 | `/admin` | Admin | `admin` | users, datasets, sensing training, demo story runner, demo reset, jobs |
 
+**Typology Scout (#118 PR 3):**
+- `/scout` shows the unexplained items waiting (`GET /scout/queue`, counted up to one page of
+  200, then "200+"), "Run the Scout now" (`POST /scout/runs`, `fde`), and the clusters
+  (`GET /scout/clusters`, newest first): suggested name, size, the top three distinguishing
+  features (cluster mean vs the rest), when it was found, and a link to its draft with the draft's
+  status.
+- `/scout/drafts/:id` is the draft editor (doc 11 §3–4):
+  - the display name, key, description, colour and open mass share;
+  - one row per likelihood source: the outcomes (named from the ACTIVE KB) take weights that are
+    shown normalised as you type; the confidence picker sets the ESS (Low 10, Medium 20, High
+    50; a cluster's empirical ESS shows as its own option);
+  - "Save as revision N" sends the normalised rows with `If-Match`; a refused save shows the
+    KB rules it breaks (`errors`), and the draft's current issues show above the form;
+  - the backtest: "Backtest revision N" (`fde`, only for a DRAFT or BACKTESTED draft without
+    issues) and the report: items it now explains, labelled precision, genuine payments
+    disturbed, the unexplained rate before and after, the decision changes and the limitation. A
+    report for an older revision is marked stale.
+  - Only CANDIDATE, DRAFT and BACKTESTED drafts can be edited. `job.updated` and
+    `scout.cluster.created` refresh both pages.
+  - Not yet on the page: enabling a disabled source (the API takes `enabled_sources`), the loss
+    block, F3 stages and contexts, and shadow progress with promote/reject (#119).
+
 **M4 case stub (#97):** `/cases` lists the first page of `GET /cases`, soonest SLA first: the SLA
 countdown (it ticks, rounds up, and takes "SLA breached" from the server's `sla_breached`),
 the leading hypothesis's display name (linking to `/cases/:id`, still a placeholder), type,

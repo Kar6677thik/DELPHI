@@ -69,3 +69,13 @@ export type UserView = Schemas['UserView'];
 export type CreateUser = Schemas['CreateUser'];
 /** `PATCH /admin/users/{id}`: only the fields present change. */
 export type UpdateUser = Schemas['UpdateUser'];
+
+export type ScoutQueue = Schemas['QueueView'];
+export type ClusterView = Schemas['ClusterView'];
+export type ClusterPage = Schemas['ClusterPage'];
+export type DraftView = Schemas['DraftView'];
+export type DraftPatch = Schemas['DraftPatch'];
+export type DraftStatus = Schemas['DraftStatus'];
+export type DraftIssue = Schemas['DraftIssue'];
+export type LikelihoodRow = Schemas['LikelihoodRow'];
+export type RunRequested = Schemas['RunRequested'];
