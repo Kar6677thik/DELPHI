@@ -733,6 +733,29 @@ export interface paths {
         patch: operations["patch_draft_api_v1_typology_drafts__draft_id__patch"];
         trace?: never;
     };
+    "/api/v1/typology-drafts/{draft_id}/backtest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Request Backtest
+         * @description docs/11 §4: backtest the draft's current revision as a `RUN_BACKTEST` job (docs/16
+         *     "→ job"). 404 for an unknown draft, 409 unless it is DRAFT or BACKTESTED, 422 with the
+         *     issues while ACTIVE + the draft breaks a KB rule. One job per revision: asking again for the
+         *     same revision returns that job.
+         */
+        post: operations["request_backtest_api_v1_typology_drafts__draft_id__backtest_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/guardian/sessions": {
         parameters: {
             query?: never;
@@ -3816,6 +3839,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DraftView"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    request_backtest_api_v1_typology_drafts__draft_id__backtest_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                draft_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunRequested"];
                 };
             };
             /** @description An RFC 9457 problem (docs/16 §1) */

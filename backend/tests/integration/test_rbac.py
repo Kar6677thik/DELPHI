@@ -69,6 +69,7 @@ ACCESS: dict[tuple[str, str], str | Permission] = {
     ("GET", "/api/v1/typology-drafts"): Permission.VIEW,
     ("GET", "/api/v1/typology-drafts/{draft_id}"): Permission.VIEW,
     ("PATCH", "/api/v1/typology-drafts/{draft_id}"): Permission.FDE,
+    ("POST", "/api/v1/typology-drafts/{draft_id}/backtest"): Permission.FDE,
     ("POST", "/api/v1/guardian/sessions"): Permission.DEMO_DRIVE,
     ("POST", "/api/v1/guardian/sessions/{session_id}/probe-responses"): Permission.DEMO_DRIVE,
     ("POST", "/api/v1/guardian/sessions/{session_id}/cancel"): Permission.DEMO_DRIVE,

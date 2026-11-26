@@ -135,6 +135,9 @@ class Settings(BaseSettings):
     scout_max_items: int = Field(default=500, ge=10, le=20_000)
     # How long SCOUT_AUTO_TRIGGER waits after a RUN_SCOUT FAILED before it enqueues another (#255).
     scout_failure_backoff_min: int = Field(default=60, ge=1, le=24 * 60)
+    # The most sessions (and as many cases) one RUN_BACKTEST replays, the newest of the lookback
+    # (docs/11 §4, bounded after #263).
+    scout_backtest_max_items: int = Field(default=5_000, ge=10, le=50_000)
     # The ACCOUNT_REVIEW sweep (docs/09 §1, #109), bounded after #263: reviews opened per
     # transaction and per run, and how old a complaint may be and still open a review.
     review_sweep_batch: int = Field(default=25, ge=1, le=500)

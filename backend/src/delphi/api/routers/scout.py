@@ -35,6 +35,7 @@ from delphi.scout.api import (
     DraftStatus,
     QueueCursor,
     QueueItem,
+    backtest_target,
     dismiss,
     edit_draft,
     get_draft,
@@ -393,3 +394,41 @@ def patch_draft(
             errors=[{"path": i.path, "code": i.code, "message": i.message} for i in err.issues],
         )
     return _with_etag(view)
+
+
+@router.post("/typology-drafts/{draft_id}/backtest", status_code=202, response_model=RunRequested)
+def request_backtest(
+    draft_id: UUID,
+    *,
+    principal: Annotated[Principal, Depends(require(Permission.FDE))],
+    raw: RawBody,
+    key: IdempotencyKey,
+    request: Request,
+) -> JSONResponse:
+    """docs/11 §4: backtest the draft's current revision as a `RUN_BACKTEST` job (docs/16
+    "→ job"). 404 for an unknown draft, 409 unless it is DRAFT or BACKTESTED, 422 with the
+    issues while ACTIVE + the draft breaks a KB rule. One job per revision: asking again for the
+    same revision returns that job."""
+    platform = _platform(request)
+
+    def run(session: Session) -> tuple[int, Any]:
+        row = backtest_target(session, _kb(session), draft_id)
+        job = enqueue(
+            session,
+            platform.clock,
+            JobType.RUN_BACKTEST,
+            idempotency_key=f"RUN_BACKTEST:{draft_id}:{row.revision}",
+            params={"draft_id": str(draft_id), "revision": row.revision},
+            created_by=principal.user_id,
+        )
+        return HTTPStatus.ACCEPTED, {"job_id": str(job.job_id), "created": job.created}
+
+    try:
+        return run_idempotent(request, raw, principal, key, run)
+    except DraftInvalidError as err:
+        return problem(
+            request,
+            ProblemCode.VALIDATION_FAILED,
+            err.detail,
+            errors=[{"path": i.path, "code": i.code, "message": i.message} for i in err.issues],
+        )

@@ -322,6 +322,7 @@ def worker_registry(
         clock=platform.clock,
         max_items=settings.scout_max_items,
         failure_backoff=timedelta(minutes=settings.scout_failure_backoff_min),
+        backtest_max_items=settings.scout_backtest_max_items,
     )
     if settings.simulation_enabled and settings.sim_database_url is None:
         # The api accepts simulated calls on this flag; a worker without the simulator's pool
