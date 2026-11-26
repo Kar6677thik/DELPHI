@@ -101,3 +101,14 @@ def test_the_scout_epsilon_default_keeps_kb_v1s_hash() -> None:
     )
     explicit = KB_V1.model_copy(update={"config": KB_V1.config.model_copy(update={"scout": scout})})
     assert "cluster_selection_epsilon" in canonical_json(explicit)
+
+
+def test_the_f3_window_default_keeps_kb_v1s_hash() -> None:
+    """#255: `scout.f3_window_h` (24) is a model default too: KB v1 keeps its SHA-256."""
+    assert KB_V1.config.scout.f3_window_h == 24.0
+    assert "f3_window_h" not in canonical_json(KB_V1)
+    scout = type(KB_V1.config.scout).model_validate(
+        {**KB_V1.config.scout.model_dump(), "f3_window_h": 12.0}
+    )
+    explicit = KB_V1.model_copy(update={"config": KB_V1.config.model_copy(update={"scout": scout})})
+    assert "f3_window_h" in canonical_json(explicit)

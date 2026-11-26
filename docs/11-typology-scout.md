@@ -102,8 +102,20 @@ missing from an item sits at its training mean (z = 0).
     name, the draft likelihood rows and the outcome profile.
 - **Gap fills:**
   - z-scores use the run's own items, because the sensing artifacts store no feature means.
-  - F3 stage indicators are empty until the event → stage mapping is specified (A-07 names only
-    the stages).
+  - **F3 stage indicators** (the owner's mapping on #255, `delphi.scout.f3`): the customer's
+    events in the `scout.f3_window_h` (24 h, a KB model default) before the item's payment,
+    from the event types the simulator emits. Each stage is a 0/1 column of the matrix:
+    - `INITIAL_ACCESS`: a login from a device first seen in the window, a reported SIM swap
+      (`crm_events` `SIM_SWAP_REPORTED`), or remote access or screen sharing active in one of
+      the customer's payment sessions in the window (the item's own included). A reported lost
+      device is not mapped.
+    - `POSITIONING`: a payee added in the window. Limit and profile/contact changes would count
+      too, but the simulator emits none yet.
+    - `EXECUTION`: an outgoing payment; every item with a payment has its own.
+    - `MONETIZATION`: onward movement from the payee, which the bank sees only for its own
+      accounts: an executed payment out of a home-bank payee account within the window after
+      the item's payment. Otherwise 0.
+    - An item without a payment (an account review) has none set.
 
 ## 3. FDE drafting (`DRAFT`)
 

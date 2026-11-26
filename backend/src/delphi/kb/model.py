@@ -294,14 +294,18 @@ class ScoutSection(_Frozen):
     # distance of one differing outcome. A model default, so the stored KB v1 keeps its hash;
     # later KB versions may set it.
     cluster_selection_epsilon: float = Field(default=1.0, ge=0)
+    # docs/11 §2 (the owner's F3 mapping on #255): the window of customer events read for an
+    # item's F3 stages. A model default, like the one above.
+    f3_window_h: float = Field(default=24.0, gt=0)
 
     @model_serializer(mode="wrap")
     def _keep_v1_hash(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
         """Leave the default out of the canonical content unless a KB version sets it, so a
         stored version without the key keeps its SHA-256 (docs/07 §1)."""
         data: dict[str, Any] = handler(self)
-        if "cluster_selection_epsilon" not in self.model_fields_set:
-            data.pop("cluster_selection_epsilon", None)
+        for key in ("cluster_selection_epsilon", "f3_window_h"):
+            if key not in self.model_fields_set:
+                data.pop(key, None)
         return data
 
 
