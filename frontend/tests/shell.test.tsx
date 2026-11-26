@@ -64,10 +64,10 @@ describe('app shell', () => {
 
   it('routes detail screens and unknown paths', async () => {
     setMockSession('viewer');
-    renderApp('/campaigns/0192-abc');
-    expect(await screen.findByRole('heading', { name: 'Campaign' })).toBeInTheDocument();
+    renderApp('/chase/0192-abc');
+    expect(await screen.findByRole('heading', { name: 'Chase' })).toBeInTheDocument();
     // A screen still being built says what brings it.
-    expect(screen.getByText(/arrives with campaigns/)).toBeInTheDocument();
+    expect(screen.getByText(/arrives with Jatayu/)).toBeInTheDocument();
   });
 
   it('signs out from the user menu', async () => {

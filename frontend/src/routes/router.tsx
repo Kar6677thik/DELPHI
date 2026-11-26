@@ -17,6 +17,8 @@ const PAGES: Partial<Record<string, () => Promise<ComponentType>>> = {
   '/phone': () => import('./PhonePage').then((m) => m.PhonePage),
   '/guardian': () => import('./GuardianPage').then((m) => m.GuardianPage),
   '/guardian/:id': () => import('./GuardianSessionPage').then((m) => m.GuardianSessionPage),
+  '/campaigns': () => import('./CampaignsPage').then((m) => m.CampaignsPage),
+  '/campaigns/:id': () => import('./CampaignPage').then((m) => m.CampaignPage),
   '/kb': () => import('./KbPage').then((m) => m.KbPage),
   '/admin': () => import('./AdminPage').then((m) => m.AdminPage),
 };

@@ -8,11 +8,15 @@ import type { components } from './schema';
 export const CASES_ROOT_KEY = ['cases'] as const;
 export const CASES_QUERY_KEY = [...CASES_ROOT_KEY, 'queue'] as const;
 
-/** The case queue (docs/16 `GET /cases`): the first page, soonest SLA first or newest first. */
-export function useCases(sort: CaseSort = 'sla_due_at') {
+/**
+ * The case queue (docs/16 `GET /cases`): the first page, in the chosen order, optionally only
+ * one campaign's cases.
+ */
+export function useCases(sort: CaseSort = 'sla_due_at', campaignId: string | null = null) {
+  const filter = campaignId === null ? '' : `&campaign_id=${encodeURIComponent(campaignId)}`;
   return useQuery({
-    queryKey: [...CASES_QUERY_KEY, sort],
-    queryFn: () => getJson<CasePage>(`/cases?sort=${sort}&limit=50`),
+    queryKey: [...CASES_QUERY_KEY, sort, campaignId],
+    queryFn: () => getJson<CasePage>(`/cases?sort=${sort}&limit=50${filter}`),
   });
 }
 

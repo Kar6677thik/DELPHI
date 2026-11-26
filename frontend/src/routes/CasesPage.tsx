@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 
 import { useCases } from '../api/cases';
 import type { CaseSort, CaseView } from '../api/types';
@@ -83,7 +83,9 @@ export function summary(items: readonly CaseView[], more: boolean): string {
 /** The case queue (docs/18 §2 `/cases`): soonest SLA, highest expected loss, or newest first. */
 export function CasesPage() {
   const [sort, setSort] = useState<CaseSort>('sla_due_at');
-  const cases = useCases(sort);
+  const [params] = useSearchParams();
+  const campaignId = params.get('campaign_id');
+  const cases = useCases(sort, campaignId);
   const now = useNow(TICK_MS);
   return (
     <section aria-labelledby="cases-title" className="max-w-[1320px]">
@@ -97,6 +99,18 @@ export function CasesPage() {
               ? summary(cases.data.items, cases.data.next_cursor !== null)
               : 'The payments Guardian held, for an investigator to decide.'}
           </p>
+          {campaignId !== null && (
+            <p className="mt-1 text-[13px] text-soft">
+              One campaign's cases.{' '}
+              <Link to={`/campaigns/${campaignId}`} className="underline">
+                Back to the campaign
+              </Link>{' '}
+              ·{' '}
+              <Link to="/cases" className="underline">
+                All cases
+              </Link>
+            </p>
+          )}
         </div>
         <label className="ml-auto flex items-center gap-2 text-[13px] text-muted">
           Order
@@ -147,8 +161,11 @@ export function CasesPage() {
                   <th scope="col" className="py-2 pr-6 text-right font-normal">
                     Expected loss
                   </th>
-                  <th scope="col" className="py-2 font-normal">
+                  <th scope="col" className="py-2 pr-6 font-normal">
                     Status
+                  </th>
+                  <th scope="col" className="py-2 font-normal">
+                    Campaign
                   </th>
                 </tr>
               </thead>
@@ -190,7 +207,19 @@ export function CasesPage() {
                       <td className="figure py-3 pr-6 text-right text-soft">
                         {loss === null ? '—' : <MoneyText paise={loss} />}
                       </td>
-                      <td className="py-3 text-soft">{humanise(item.status)}</td>
+                      <td className="py-3 pr-6 text-soft">{humanise(item.status)}</td>
+                      <td className="py-3 text-soft">
+                        {item.campaign_id ? (
+                          <Link
+                            to={`/campaigns/${item.campaign_id}`}
+                            className="underline decoration-control underline-offset-4 hover:decoration-soft"
+                          >
+                            View
+                          </Link>
+                        ) : (
+                          '—'
+                        )}
+                      </td>
                     </tr>
                   );
                 })}
