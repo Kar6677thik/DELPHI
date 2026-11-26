@@ -75,6 +75,7 @@ from delphi.probes.registry import CLASSIFIER_NAMES
 from delphi.sensing.api import SensingInference
 from delphi.sensing.config import load_sensing_config
 from delphi.sensing.jobs import register_sensing_jobs
+from delphi.sensing.mule_scores import MuleSweepLimits
 from delphi.sim.api import PROFILES, dataset_exists, request_dataset
 from delphi.sim.customer import LiveCustomer
 from delphi.sim.dataset import generate_dataset
@@ -297,16 +298,20 @@ def worker_registry(
     `DEMO_STORY` submits the story payments to it. The caller starts it (``guardian.start()``
     resumes its unfinished sessions, FR-GDN-14) and closes the parts."""
     registry = build_registry(platform)
+    settings = platform.settings
     register_sensing_jobs(
-        registry, engine=platform.engine, sessions=platform.sessions, clock=platform.clock
+        registry,
+        engine=platform.engine,
+        sessions=platform.sessions,
+        clock=platform.clock,
+        mule_sweep=MuleSweepLimits.of(settings),
     )
     register_chase_jobs(
         registry,
         sessions=platform.sessions,
         clock=platform.clock,
-        tickets_per_run=platform.settings.chase_tickets_per_run,
+        tickets_per_run=settings.chase_tickets_per_run,
     )
-    settings = platform.settings
     llm = LlmService(
         platform.sessions,
         platform.clock,
