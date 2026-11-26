@@ -177,3 +177,12 @@ def test_cli_validate(kb_copy: Path, capsys: pytest.CaptureFixture[str]) -> None
     edit(kb_copy / "hypotheses" / "ATO.yaml", lambda d: d.update(open_mass_share=2))
     assert main(["kb", "validate", str(kb_copy)]) == 1
     assert "OPEN_MASS_SHARE" in capsys.readouterr().err
+
+
+def test_the_mule_credit_window_default_leaves_kb_v1_content_unchanged(kb: KnowledgeBase) -> None:
+    """#109: ``navigator.mule_credit_window_h`` is a model default, so KB v1's canonical content
+    (and its stored SHA-256) does not change; a KB version that sets it keeps it."""
+    assert kb.config.navigator.mule_credit_window_h == 24.0
+    assert "mule_credit_window_h" not in canonical_json(kb)
+    navigator = kb.config.navigator.model_copy(update={"mule_credit_window_h": 12.0})
+    assert navigator.model_dump()["mule_credit_window_h"] == 12.0
