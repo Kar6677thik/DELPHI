@@ -49,6 +49,11 @@ ACCESS: dict[tuple[str, str], str | Permission] = {
     ("GET", "/api/v1/kb/versions/{version_id}"): Permission.VIEW,
     ("GET", "/api/v1/kb/versions/{version_id}/diff"): Permission.VIEW,
     ("GET", "/api/v1/kb/versions/{version_id}/export"): Permission.VIEW,
+    ("GET", "/api/v1/question-bank/variants"): Permission.VIEW,
+    ("GET", "/api/v1/question-bank/variants/{variant_id}"): Permission.VIEW,
+    ("POST", "/api/v1/question-bank/generate"): Permission.FDE,
+    ("POST", "/api/v1/question-bank/variants/{variant_id}/review"): Permission.FDE,
+    ("POST", "/api/v1/question-bank/approve-batch"): Permission.FDE,
     ("GET", "/api/v1/cases"): Permission.VIEW,
     ("GET", "/api/v1/cases/{case_id}"): Permission.VIEW,
     ("GET", "/api/v1/cases/{case_id}/dd-pack"): Permission.VIEW,
@@ -143,6 +148,7 @@ def test_access(
         .replace("{action}", "send")
         .replace("{session_id}", str(uuid4()))
         .replace("{story}", "S1")
+        .replace("{variant_id}", str(uuid4()))
     )
     if (method, path) in {("POST", "/api/v1/auth/logout")}:
         # Signing out would end this module's shared session; check access with a probe

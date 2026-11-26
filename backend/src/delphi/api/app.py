@@ -29,6 +29,7 @@ from delphi.api.routers import (
     metrics,
     phone,
     platform,
+    question_bank,
     sensing,
     status,
 )
@@ -118,6 +119,7 @@ def create_app(
     app.include_router(datasets.router)
     app.include_router(demo.router)
     app.include_router(kb.router)
+    app.include_router(question_bank.router)
     app.include_router(sensing.router)
     app.include_router(cases.router)
     app.include_router(guardian.router)

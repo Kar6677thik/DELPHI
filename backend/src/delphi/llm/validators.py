@@ -145,6 +145,17 @@ def _check_text(
                 failures.append(f"decision language: {m.group(0)!r}")
 
 
+def variant_text_issues(text: str) -> list[str]:
+    """docs/15 §5 rule 6 for one question or option text: no link and no phone number. Also
+    used for a reviewer's edit (#110)."""
+    issues: list[str] = []
+    if _URL.search(text):
+        issues.append("contains a link")
+    if _PHONE.search(text):
+        issues.append("contains a phone number")
+    return issues
+
+
 def _check_variants(
     variants: QuestionVariants, payload: Mapping[str, Any], failures: list[str]
 ) -> None:
@@ -153,10 +164,7 @@ def _check_variants(
         if sorted(o.key for o in v.options) != source_keys:
             failures.append(f"{v.language}: option keys differ from the source's")
         for text in [v.text, *(o.text for o in v.options)]:
-            if _URL.search(text):
-                failures.append(f"{v.language}: contains a link")
-            if _PHONE.search(text):
-                failures.append(f"{v.language}: contains a phone number")
+            failures.extend(f"{v.language}: {issue}" for issue in variant_text_issues(text))
 
 
 def validate(purpose: Purpose, parsed: BaseModel | None, payload: Mapping[str, Any]) -> Validation:
