@@ -218,10 +218,15 @@ the artifact belong to `TRAIN_SENSING` (#88). Gaps the text above leaves open, f
 - An account with no score yet (e.g. just opened) is scored on demand. If scoring fails, the
   fallback is p_mule = 0.10, logged as a WARNING.
 - **Serving** (`delphi.sensing.mule_scores`, #91 part 2):
-  - `MULE_SWEEP` scores every account as of the clock with the ACTIVE `MULE` artifact and
-    upserts one row each; a rerun for the same slot rewrites the same rows. With no ACTIVE
-    `MULE` artifact it scores nothing and says so in its result. Its place in the recurring
-    schedule (`mule_sweep_interval_min`, time-scaled) arrives with the time scale (M5–M6).
+  - `MULE_SWEEP` (every minute, doc 04 §5.4) rescores, as of the clock and with the ACTIVE
+    `MULE` artifact, the accounts whose score is missing or older than
+    `mule_sweep_interval_min` (KB, time-scaled), each from its online snapshot, and upserts one
+    row each. It is bounded as `LABEL_DELIVERY` is (#263): the accounts are chosen in SQL in
+    key order with a `LIMIT`; each batch (`DELPHI_MULE_SWEEP_BATCH`, 200) is one transaction
+    with `SET LOCAL statement_timeout`/`work_mem` and `pg_try_advisory_xact_lock(54)`, and a run
+    skips while another holds it; a run scores at most `DELPHI_MULE_SWEEP_MAX_PER_RUN` (2,000)
+    accounts and the next carries on. With no ACTIVE `MULE` artifact it scores nothing and
+    says so in its result.
   - `MuleScores.p_mule(account, as_of)` (the probes' `MuleScorePort`, and the payer's score
     for `with_payer_mule`) uses a cached score **only if it was computed before `as_of`**; a
     score the bank did not have yet must not leak into an earlier decision. Otherwise it scores

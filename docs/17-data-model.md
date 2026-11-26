@@ -263,10 +263,10 @@ advisory lock (`pg_advisory_xact_lock(42)`), so the chain is serial. Every advis
 lives in `delphi.platform.locks`, and a test checks that they are distinct (#78): 42 the audit
 chain, 43 outbox publishing (doc 04 §5.5), 44 the bootstrap admin, 45 dataset requests, 46
 dataset writes, 47 loading KB v1, 48 storing a sensing model artifact, 49 label delivery
-(#263), 50 the ACCOUNT_REVIEW sweep (doc 09 §1), 51 the demo reset; and class 52 for the
-two-key lien-account locks `(52, hashtext(account_id))` (doc 10 §5, FR-CHS-05). Verifying a
-window checks that its first entry links to the entry just before the window (or to the genesis
-hash), so a deleted or edited earlier entry is caught too. `GET
+(#263), 50 the ACCOUNT_REVIEW sweep (doc 09 §1), 51 the demo reset, 54 `MULE_SWEEP` (doc 13
+§6); and class 52 for the two-key lien-account locks `(52, hashtext(account_id))` (doc 10 §5,
+FR-CHS-05). Verifying a window checks that its first entry links to the entry just before the
+window (or to the genesis hash), so a deleted or edited earlier entry is caught too. `GET
 /admin/audit/verify?from=&to=` recomputes the chain. The DD pack verifies the entries for its
 subject. Audited actions: every state transition of every aggregate, logins (success and
 failure), role changes, KB promotions, rollbacks, lien approvals, police-alert sends and demo
