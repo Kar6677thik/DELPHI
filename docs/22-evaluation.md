@@ -26,8 +26,43 @@ and the numbers for the pitch.
    `docs/reports/evaluation-<date>.md` (committed by the owner).
 
 Runtime target: ≤ 30 minutes for `eval` on the home server (4 cores), ≤ 2 minutes for `test`.
-Engine work is parallelised across customers with `multiprocessing` (4 workers). Results must
-not depend on the number of workers (per-customer RNG streams).
+Engine work is parallelised with `multiprocessing` (4 workers). Results must not depend on the
+number of workers (per-customer RNG streams). The harness splits the work **by policy**
+(`delphi.evaluation.harness.run_policies`, #123), not by customer: within one policy, customers
+share the bank (payees receive from many customers, balances move), so splitting a policy's
+stream would change what it sees. Five policies on 4 workers. The pool's initializer hands each
+worker the dataset and the trained sensing: inherited under `fork` (Linux, macOS), pickled under
+`spawn` where `fork` does not exist (Windows). Both give the same outcomes. CPython's reference
+counts still copy the pages a forked worker reads.
+
+**Measured (#261, 4 cores, 15 GiB).** RSS and PSS are summed over the parent and its workers,
+sampled every 0.2 s during the replay.
+
+| Profile, workers | Generate | Train sensing, score the stream | Replay | Peak RSS (PSS) in the replay |
+|---|---|---|---|---|
+| `test`, 1 | 1 s | 2 s | 1 s | 0.25 GiB (0.24) |
+| `test`, 4 | 1 s | 2 s | < 1 s | 1.04 GiB (0.36) |
+| `eval`, 1 | 537 s | 652 s | 1,739 s | 6.13 GiB (6.12) |
+| `eval`, 4 | | | not run | estimated about 9 GiB PSS |
+
+- **Training peaks higher than the replay.** An earlier `eval` run peaked at 9.17 GiB during
+  training (the in-memory bank frames, built from the dataset's records); the parent is back to
+  6.13 GiB when the replay starts.
+- **4 workers on `eval`** were not run here: an earlier attempt was killed (exit 137). On `test`,
+  4 forked workers cost 1.5× the PSS of one (CPython's reference counts copy the pages a worker
+  reads), so `eval` would need about 9 GiB in the replay. Five policies on 4 workers take two
+  rounds, about 2/5 of the 1-worker replay (12 minutes), if the policies cost about the same.
+- **The budget is not met yet:** `eval` takes about 49 minutes on 1 worker (about 32 estimated on
+  4) against ≤ 30, and peaks at 9.17 GiB against 4.5 GiB. Building the frames column-wise and
+  freeing them before the replay, and having the workers touch less of the history, is the
+  follow-up.
+- **Where evaluation runs.** The cluster's worker pod is limited to 1536Mi
+  (`deploy/k8s/base/worker.yaml`), so evaluation never runs in it: it runs off-cluster or as its
+  own Job sized for it (about 10 GiB for `eval` today). `DELPHI_EVAL_WORKERS` (default 4) sets the
+  worker count; 1 trades time for memory.
+
+Before batching, scoring the stream row by row took about 106 minutes. The CLI and job entry
+point that writes the report comes with #124.
 
 **Implementation (#123).**
 - **Stream** (`delphi.evaluation.stream`): the window's sessions in initiation order (ties by
