@@ -35,18 +35,34 @@ worker the dataset and the trained sensing: inherited under `fork` (Linux, macOS
 `spawn` where `fork` does not exist (Windows). Both give the same outcomes. CPython's reference
 counts still copy the pages a forked worker reads.
 
-**Measured on `eval` (#261, 4 cores, 15 GiB).** These numbers do not meet the budget yet.
+**Measured (#261, 4 cores, 15 GiB).** RSS and PSS are summed over the parent and its workers,
+sampled every 0.2 s during the replay.
 
-| Stage | Time | Peak RSS |
-|---|---|---|
-| Generate the dataset | 474 s | 4.56 GiB |
-| Train sensing and score 430,898 stream payments, batched | +610 s (1,084 s total) | 9.17 GiB |
-| Replay the five policies on 4 workers | not measured | killed (exit 137) |
+| Profile, workers | Generate | Train sensing, score the stream | Replay | Peak RSS (PSS) in the replay |
+|---|---|---|---|---|
+| `test`, 1 | 1 s | 2 s | 1 s | 0.25 GiB (0.24) |
+| `test`, 4 | 1 s | 2 s | < 1 s | 1.04 GiB (0.36) |
+| `eval`, 1 | 537 s | 652 s | 1,739 s | 6.13 GiB (6.12) |
+| `eval`, 4 | | | not run | estimated about 9 GiB PSS |
 
-Before batching, scoring the stream row by row took about 106 minutes. The remaining memory is
-the in-memory bank frames, built from the dataset's records for training. Fitting 4.5 GiB needs
-those frames built column-wise and freed before the replay, and the workers to touch less of the
-history (follow-up). The CLI and job entry point that writes the report comes with #124.
+- **Training peaks higher than the replay.** An earlier `eval` run peaked at 9.17 GiB during
+  training (the in-memory bank frames, built from the dataset's records); the parent is back to
+  6.13 GiB when the replay starts.
+- **4 workers on `eval`** were not run here: an earlier attempt was killed (exit 137). On `test`,
+  4 forked workers cost 1.5× the PSS of one (CPython's reference counts copy the pages a worker
+  reads), so `eval` would need about 9 GiB in the replay. Five policies on 4 workers take two
+  rounds, about 2/5 of the 1-worker replay (12 minutes), if the policies cost about the same.
+- **The budget is not met yet:** `eval` takes about 49 minutes on 1 worker (about 32 estimated on
+  4) against ≤ 30, and peaks at 9.17 GiB against 4.5 GiB. Building the frames column-wise and
+  freeing them before the replay, and having the workers touch less of the history, is the
+  follow-up.
+- **Where evaluation runs.** The cluster's worker pod is limited to 1536Mi
+  (`deploy/k8s/base/worker.yaml`), so evaluation never runs in it: it runs off-cluster or as its
+  own Job sized for it (about 10 GiB for `eval` today). `DELPHI_EVAL_WORKERS` (default 4) sets the
+  worker count; 1 trades time for memory.
+
+Before batching, scoring the stream row by row took about 106 minutes. The CLI and job entry
+point that writes the report comes with #124.
 
 **Implementation (#123).**
 - **Stream** (`delphi.evaluation.stream`): the window's sessions in initiation order (ties by
