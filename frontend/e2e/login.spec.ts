@@ -1,9 +1,9 @@
 import { expect, test } from '@playwright/test';
 
+import { ADMIN as USERNAME, ADMIN_PASSWORD as PASSWORD } from './session';
+
 // The M0 smoke test (docs/25 M0, #10): the deployed image serves the SPA, and the bootstrap
 // admin can sign in and out against the real api and database.
-const USERNAME = process.env.E2E_USERNAME ?? 'admin';
-const PASSWORD = process.env.E2E_PASSWORD ?? 'dev-only-admin-pw';
 
 test('an unknown password is refused', async ({ page }) => {
   await page.goto('/');

@@ -28,6 +28,11 @@ class DatasetRequest(BaseModel):
 
     profile: DatasetProfile
     seed: int | None = Field(default=None, ge=0, le=MAX_SEED, description="default: the profile's")
+    personas: bool | None = Field(
+        default=None,
+        description="add the demo personas (docs/14 §6); default: the profiles personas.yaml"
+        " lists (`demo`). The E2E stack seeds `test` with them (docs/21 §1).",
+    )
 
 
 @router.post("/admin/datasets", status_code=202, response_model=JobView)
@@ -46,6 +51,8 @@ def create_dataset(
         params: dict[str, Any] = {"profile": body.profile}
         if body.seed is not None:
             params["seed"] = body.seed
+        if body.personas is not None:
+            params["personas"] = body.personas
         queued = request_dataset(
             session,
             platform.clock,
