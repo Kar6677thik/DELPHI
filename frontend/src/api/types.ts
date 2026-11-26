@@ -69,3 +69,11 @@ export type UserView = Schemas['UserView'];
 export type CreateUser = Schemas['CreateUser'];
 /** `PATCH /admin/users/{id}`: only the fields present change. */
 export type UpdateUser = Schemas['UpdateUser'];
+
+export type QuestionVariantView = Schemas['VariantView'];
+export type QuestionVariantPage = Schemas['VariantPage'];
+export type VariantStatus = Schemas['VariantStatus'];
+export type ReviewRequest = Schemas['ReviewRequest'];
+export type GenerateRequest = Schemas['GenerateRequest'];
+export type GenerateQueued = Schemas['GenerateQueued'];
+export type BatchView = Schemas['BatchView'];
