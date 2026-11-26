@@ -177,15 +177,26 @@ def test_a_new_run_supersedes_the_earlier_candidates_only(env: Env) -> None:  # 
     for minute in range(6):
         _with_outcomes(env, _decided(env, unexplained=True, minutes=minute), PATTERN)
     with env.sessions.begin() as s:
-        run_scout(s, env.clock, _kb(env), max_items=500)
+        first = run_scout(s, env.clock, _kb(env), max_items=500)
+    env.clock.advance(timedelta(minutes=1))
     with env.sessions.begin() as s:
-        run_scout(s, env.clock, _kb(env), max_items=500)
-    first, second = sorted(_statuses(env), key=str)
+        second = run_scout(s, env.clock, _kb(env), max_items=500)
+    # Each run's draft, by its run (ids alone would not order two runs at one instant).
+    with env.owner.connect() as conn:
+        first, second = (
+            conn.execute(
+                select(typology_drafts.c.id)
+                .join(scout_clusters, scout_clusters.c.id == typology_drafts.c.cluster_id)
+                .where(scout_clusters.c.run_id == run)
+            ).scalar_one()
+            for run in (first, second)
+        )
     assert _statuses(env) == {first: "SUPERSEDED", second: "CANDIDATE"}
     with env.owner.begin() as conn:  # an engineer took the latest candidate on
         conn.execute(
             update(typology_drafts).where(typology_drafts.c.id == second).values(status="DRAFT")
         )
+    env.clock.advance(timedelta(minutes=1))
     with env.sessions.begin() as s:
         run_scout(s, env.clock, _kb(env), max_items=500)
     statuses = _statuses(env)
