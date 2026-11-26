@@ -156,6 +156,10 @@ police_alert_drafts(id, case_id, status (DRAFT|SENT_SIMULATED|DISCARDED), payloa
        -- migration 0014 (#106); unique case_id; acted_by and acted_at set iff not DRAFT
 campaigns(id, leading_hypothesis, case_count, f3_stage_max, expected_loss_paise,
           vulnerable_victims, rank_score, merged_into null, created_at, updated_at)
+review_sweep_failures(account_id pk, attempts, last_error, next_attempt_at, created_at,
+                      updated_at)
+       -- migration 0018 (#290); a candidate of ACCOUNT_REVIEW_SWEEP whose review failed to
+       -- open, skipped until next_attempt_at; deleted when its review opens (doc 09 §1)
 labels(id, subject_type, subject_id, hypothesis_key, label_source, known_at, created_at,
        unique(subject_type, subject_id, label_source))   idx (subject_type, known_at)
        -- migration 0011 (#159); delphi.platform.labels; filled by LABEL_DELIVERY (doc 14 §8)

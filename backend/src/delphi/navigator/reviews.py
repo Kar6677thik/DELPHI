@@ -24,6 +24,12 @@ only complaints reported in the last ``review_complaint_lookback_days`` count; e
 ``review_sweep_batch`` reviews commits on its own, under a statement timeout and a small
 ``work_mem``; and a run stops after ``review_sweep_max_per_run`` reviews of either trigger, for
 the next run to carry on. A run that finds another one sweeping (the advisory lock) skips.
+
+One bad account cannot block the rest (#290): each candidate opens in a savepoint. If its open
+fails, the savepoint rolls back, the failure is recorded in ``review_sweep_failures`` (attempts,
+last error, next attempt), and the batch commits the others. The candidate is skipped until its
+next attempt, ``review_retry_base_s`` after the first failure, doubling with each failure up to
+``review_retry_max_s``. A successful open deletes the record.
 """
 
 from __future__ import annotations
@@ -36,7 +42,7 @@ from uuid import UUID
 
 from sqlalchemy import BigInteger, column, exists, func, or_, select, text, true
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
-from sqlalchemy.dialects.postgresql import distinct_on
+from sqlalchemy.dialects.postgresql import distinct_on, insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -53,7 +59,7 @@ from delphi.navigator.store import (
     CaseType,
     get_case,
 )
-from delphi.navigator.tables import cases
+from delphi.navigator.tables import cases, review_sweep_failures
 from delphi.platform.audit import ActorType, record
 from delphi.platform.clock import Clock
 from delphi.platform.errors import DelphiError, ProblemCode
@@ -76,15 +82,45 @@ NO_ANOMALY = 0.0  # docs/06 §11: no account anomaly model, so the open mass is 
 # Limits for each sweep transaction (docs/23: postgres runs in 1 GiB), as LABEL_DELIVERY's.
 STATEMENT_TIMEOUT = "30s"
 WORK_MEM = "16MB"
+MAX_ERROR_CHARS = 500  # of the last error kept with a failed candidate
+MAX_DOUBLINGS = 32  # keeps the backoff's multiplier finite; the cap applies long before
+
+
+@dataclass(frozen=True, slots=True)
+class Backoff:
+    """How long a candidate whose review failed to open waits (settings ``review_retry_*``)."""
+
+    base: timedelta  # after the first failure
+    cap: timedelta  # the longest wait
+
+    @staticmethod
+    def of(settings: Settings) -> Backoff:
+        return Backoff(
+            base=timedelta(seconds=settings.review_retry_base_s),
+            cap=timedelta(seconds=settings.review_retry_max_s),
+        )
+
+    def after(self, attempts: int) -> timedelta:
+        """The wait after ``attempts`` failed attempts: base, doubling each time, at most cap."""
+        return min(self.base * (1 << min(attempts - 1, MAX_DOUBLINGS)), self.cap)
+
+
+@dataclass(frozen=True, slots=True)
+class Swept:
+    """One trigger's part of a batch: the reviews it opened and the accounts that failed."""
+
+    opened: list[CaseRecord]
+    failed: list[UUID]
 
 
 @dataclass(frozen=True, slots=True)
 class SweepLimits:
     """How much one sweep does (settings ``review_*``)."""
 
-    batch: int  # reviews opened per transaction
-    max_per_run: int  # reviews opened per run
+    batch: int  # candidates tried per transaction
+    max_per_run: int  # candidates tried per run
     complaint_lookback: timedelta  # only complaints reported this recently open a review
+    backoff: Backoff  # for a candidate whose review failed to open
 
     @staticmethod
     def of(settings: Settings) -> SweepLimits:
@@ -92,6 +128,7 @@ class SweepLimits:
             batch=settings.review_sweep_batch,
             max_per_run=settings.review_sweep_max_per_run,
             complaint_lookback=timedelta(days=settings.review_complaint_lookback_days),
+            backoff=Backoff.of(settings),
         )
 
 
@@ -212,6 +249,55 @@ def open_account_review(
     return opened
 
 
+def backing_off(account_id: Any, now: datetime) -> Any:
+    """True while the account's last failed open (#290) waits for its next attempt."""
+    f = review_sweep_failures.c
+    return exists().where(f.account_id == account_id, f.next_attempt_at > now)
+
+
+def record_failure(
+    session: Session, clock: Clock, account_id: UUID, error: BaseException, backoff: Backoff
+) -> None:
+    """Count a failed open of the account's review and set its next attempt (#290)."""
+    f = review_sweep_failures.c
+    now = clock.now()
+    attempts = 1 + (
+        session.execute(
+            select(f.attempts).where(f.account_id == account_id).with_for_update()
+        ).scalar()
+        or 0
+    )
+    next_attempt_at = now + backoff.after(attempts)
+    last_error = f"{type(error).__name__}: {error}"[:MAX_ERROR_CHARS]
+    session.execute(
+        insert(review_sweep_failures)
+        .values(
+            account_id=account_id,
+            attempts=attempts,
+            last_error=last_error,
+            next_attempt_at=next_attempt_at,
+            created_at=now,
+            updated_at=now,
+        )
+        .on_conflict_do_update(
+            index_elements=[f.account_id],
+            set_={
+                "attempts": attempts,
+                "last_error": last_error,
+                "next_attempt_at": next_attempt_at,
+                "updated_at": now,
+            },
+        )
+    )
+    log.warning(
+        "navigator.review_open_failed",
+        account_id=str(account_id),
+        attempts=attempts,
+        next_attempt_at=next_attempt_at.isoformat(),
+        error=last_error,
+    )
+
+
 def complaint_candidates(
     session: Session, now: datetime, *, since: datetime, limit: int
 ) -> list[tuple[UUID, datetime]]:
@@ -239,6 +325,7 @@ def complaint_candidates(
             c.reported_at > since,
             c.reported_at <= now,
             ~reviewed,
+            ~backing_off(account_id, now),
         )
         .order_by(c.reported_at, c.id, account_id)
         .limit(limit)
@@ -293,6 +380,43 @@ def open_with_trigger(
     return refreshed
 
 
+def try_open(
+    session: Session,
+    clock: Clock,
+    account_id: UUID,
+    trigger: str | None,
+    swept: Swept,
+    *,
+    backoff: Backoff,
+    kb_version_id: int,
+    p_mule_fallback: float | None = None,
+    demo_time: bool,
+) -> None:
+    """Open the account's review in a savepoint (``open_with_trigger``). On a failure, roll back
+    only this account, record it and back it off, so the caller's batch commits the others
+    (#290)."""
+    try:
+        with session.begin_nested():
+            case = open_with_trigger(
+                session,
+                clock,
+                account_id,
+                trigger,
+                kb_version_id=kb_version_id,
+                p_mule_fallback=p_mule_fallback,
+                demo_time=demo_time,
+            )
+    except Exception as error:  # any failure: one account must not roll back the batch
+        record_failure(session, clock, account_id, error, backoff)
+        swept.failed.append(account_id)
+        return
+    session.execute(
+        review_sweep_failures.delete().where(review_sweep_failures.c.account_id == account_id)
+    )
+    if case is not None:
+        swept.opened.append(case)
+
+
 def open_complaint_reviews(
     session: Session,
     clock: Clock,
@@ -301,26 +425,27 @@ def open_complaint_reviews(
     p_mule_fallback: float,
     since: datetime,
     limit: int,
+    backoff: Backoff,
     demo_time: bool = False,
-) -> list[CaseRecord]:
-    """docs/09 §1: open up to ``limit`` reviews, one for each home-bank account a complaint
+) -> Swept:
+    """docs/09 §1: try up to ``limit`` candidates, one for each home-bank account a complaint
     reported after ``since`` names, unless it has an open review, or a review opened after the
-    latest such complaint. In the caller's transaction."""
+    latest such complaint, or is backing off after a failed open. In the caller's transaction."""
     now = clock.now()
-    opened: list[CaseRecord] = []
+    swept = Swept([], [])
     for account_id, _reported_at in complaint_candidates(session, now, since=since, limit=limit):
-        case = open_with_trigger(
+        try_open(
             session,
             clock,
             account_id,
             LINKED_COMPLAINTS,
+            swept,
+            backoff=backoff,
             kb_version_id=kb_version_id,
             p_mule_fallback=p_mule_fallback,
             demo_time=demo_time,
         )
-        if case is not None:
-            opened.append(case)
-    return opened
+    return swept
 
 
 def mule_candidates(
@@ -350,6 +475,7 @@ def mule_candidates(
             p.executed_at > now - window,
             p.executed_at <= now,
             ~reviewed,
+            ~backing_off(p.payee_account_id, now),
         )
         .ext(distinct_on(p.payee_account_id))
         .order_by(p.payee_account_id, p.executed_at, p.id)
@@ -369,16 +495,16 @@ def open_mule_reviews(
     *,
     kb_version_id: int,
     limit: int,
+    backoff: Backoff,
     demo_time: bool = False,
-) -> list[CaseRecord]:
-    """docs/09 §1, the mule-scorer trigger: up to ``limit`` reviews, one for each suspect
-    (above), with the mule-scorer prior alone (no complaint to add). In the caller's
-    transaction."""
+) -> Swept:
+    """docs/09 §1, the mule-scorer trigger: try up to ``limit`` suspects (above), with the
+    mule-scorer prior alone (no complaint to add). In the caller's transaction."""
     version = get_version(session, kb_version_id)
     if version is None:
         raise DelphiError(f"No KB version {kb_version_id}.", code=ProblemCode.VALIDATION_FAILED)
     navigator = version.kb.config.navigator
-    opened: list[CaseRecord] = []
+    swept = Swept([], [])
     for account_id in mule_candidates(
         session,
         clock.now(),
@@ -386,17 +512,17 @@ def open_mule_reviews(
         window=timedelta(hours=navigator.mule_credit_window_h),
         limit=limit,
     ):
-        case = open_with_trigger(
+        try_open(
             session,
             clock,
             account_id,
             None,
+            swept,
+            backoff=backoff,
             kb_version_id=kb_version_id,
             demo_time=demo_time,
         )
-        if case is not None:
-            opened.append(case)
-    return opened
+    return swept
 
 
 def begin_sweep_batch(session: Session) -> bool:
@@ -414,7 +540,8 @@ def begin_sweep_batch(session: Session) -> bool:
 class AccountReviewSweepJob:
     """``ACCOUNT_REVIEW_SWEEP`` (every minute, docs/04 §5.4): both docs/09 §1 triggers, the
     complaints first (a complained-about suspect gets the complaint's update). One transaction
-    per batch; at most ``limits.max_per_run`` reviews per run, of both triggers together."""
+    per batch; at most ``limits.max_per_run`` candidates tried per run, of both triggers
+    together, opened or failed (a failed one backs off, #290)."""
 
     sessions: sessionmaker[Session]
     clock: Clock
@@ -424,13 +551,17 @@ class AccountReviewSweepJob:
 
     def __call__(self, ctx: JobContext) -> Mapping[str, Any] | None:
         counts = {"complaints": 0, "mule_scores": 0}
+        failed = 0
         since = self.clock.now() - self.limits.complaint_lookback
 
-        def result(**extra: Any) -> dict[str, Any]:
-            return {"opened": sum(counts.values()), **counts, **extra}
+        def tried() -> int:
+            return sum(counts.values()) + failed
 
-        while (opened := sum(counts.values())) < self.limits.max_per_run:
-            room = min(self.limits.batch, self.limits.max_per_run - opened)
+        def result(**extra: Any) -> dict[str, Any]:
+            return {"opened": sum(counts.values()), **counts, "failed": failed, **extra}
+
+        while tried() < self.limits.max_per_run:
+            room = min(self.limits.batch, self.limits.max_per_run - tried())
             with self.sessions.begin() as session:
                 if not begin_sweep_batch(session):
                     return result(skipped="busy")
@@ -444,23 +575,27 @@ class AccountReviewSweepJob:
                     p_mule_fallback=self.p_mule_fallback,
                     since=since,
                     limit=room,
+                    backoff=self.limits.backoff,
                     demo_time=self.demo_time,
                 )
+                left = room - len(complaints.opened) - len(complaints.failed)
                 mules = (
                     open_mule_reviews(
                         session,
                         self.clock,
                         kb_version_id=active.id,
-                        limit=room - len(complaints),
+                        limit=left,
+                        backoff=self.limits.backoff,
                         demo_time=self.demo_time,
                     )
-                    if len(complaints) < room
-                    else []
+                    if left > 0
+                    else Swept([], [])
                 )
-            counts["complaints"] += len(complaints)
-            counts["mule_scores"] += len(mules)
-            if not complaints and not mules:
+            counts["complaints"] += len(complaints.opened)
+            counts["mule_scores"] += len(mules.opened)
+            failed += len(complaints.failed) + len(mules.failed)
+            if not (complaints.opened or complaints.failed or mules.opened or mules.failed):
                 return result(more=False)
-            if not ctx.report(sum(counts.values()) / self.limits.max_per_run):
+            if not ctx.report(tried() / self.limits.max_per_run):
                 break
         return result(more=True)

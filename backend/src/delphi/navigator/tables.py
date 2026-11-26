@@ -1,7 +1,8 @@
 """SQLAlchemy Core descriptions of ``delphi.cases`` (migration 0012),
-``delphi.evidence_records`` (0013), ``delphi.police_alert_drafts`` (0014) and
-``delphi.trace_events`` (0015, docs/17). The migrations are the source of truth for
-constraints; a test compares these columns with the migrated schema."""
+``delphi.evidence_records`` (0013), ``delphi.police_alert_drafts`` (0014),
+``delphi.trace_events`` (0015) and ``delphi.review_sweep_failures`` (0018, docs/17). The
+migrations are the source of truth for constraints; a test compares these columns with the
+migrated schema."""
 
 from __future__ import annotations
 
@@ -106,4 +107,15 @@ trace_events = Table(
     Column("type", Text, nullable=False),
     Column("payload", JSONB, nullable=False),
     _ts("at"),
+)
+
+review_sweep_failures = Table(
+    "review_sweep_failures",
+    metadata,
+    Column("account_id", UUID(as_uuid=True), primary_key=True),
+    Column("attempts", Integer, nullable=False),
+    Column("last_error", Text, nullable=False),
+    _ts("next_attempt_at"),
+    _ts("created_at"),
+    _ts("updated_at"),
 )

@@ -14,14 +14,16 @@ from sqlalchemy import func, select, text
 from delphi.engine.belief import update as bayes_update
 from delphi.engine.prior import build_prior
 from delphi.kb.loader import load_and_validate
+from delphi.navigator import reviews
 from delphi.navigator.api import CaseProtocol, CaseStatus, CaseType, case_profile, current_records
 from delphi.navigator.reviews import (
     AccountReviewSweepJob,
+    Backoff,
     SweepLimits,
     open_complaint_reviews,
     open_mule_reviews,
 )
-from delphi.navigator.tables import cases
+from delphi.navigator.tables import cases, review_sweep_failures
 from delphi.platform.locks import ACCOUNT_REVIEW_SWEEP_LOCK_KEY
 from delphi.platform.tables import audit_log, outbox_events
 from delphi.probes.registry import CLASSIFIER_NAMES
@@ -30,6 +32,7 @@ from .test_guardian_store import KB_DIR, T0, Env, env  # noqa: F401 - pytest fix
 
 FALLBACK = 0.10
 LOOKBACK = timedelta(days=30)
+BACKOFF = Backoff(base=timedelta(seconds=60), cap=timedelta(seconds=3600))
 
 
 class _Ctx:
@@ -49,7 +52,9 @@ def _job(e: Env, *, batch: int = 25, max_per_run: int = 100) -> AccountReviewSwe
         e.clock,
         p_mule_fallback=FALLBACK,
         demo_time=False,
-        limits=SweepLimits(batch=batch, max_per_run=max_per_run, complaint_lookback=LOOKBACK),
+        limits=SweepLimits(
+            batch=batch, max_per_run=max_per_run, complaint_lookback=LOOKBACK, backoff=BACKOFF
+        ),
     )
 
 
@@ -121,7 +126,8 @@ def _sweep(e: Env) -> list[Any]:
             p_mule_fallback=FALLBACK,
             since=e.clock.now() - LOOKBACK,
             limit=100,
-        )
+            backoff=BACKOFF,
+        ).opened
 
 
 def _reviews(e: Env) -> int:
@@ -248,6 +254,7 @@ def test_the_sweep_job_uses_the_active_kb(env: Env) -> None:  # noqa: F811
         "opened": 1,
         "complaints": 1,
         "mule_scores": 0,
+        "failed": 0,
         "more": False,
     }
     assert job(cast(Any, _Ctx()))["opened"] == 0
@@ -260,7 +267,13 @@ def test_a_backlog_larger_than_a_batch_clears_over_several_runs(env: Env) -> Non
         _complaint(env, account, minutes_ago=60 - n)
     job = _job(env, batch=2, max_per_run=4)
     ctx = _Ctx()
-    assert job(cast(Any, ctx)) == {"opened": 4, "complaints": 4, "mule_scores": 0, "more": True}
+    assert job(cast(Any, ctx)) == {
+        "opened": 4,
+        "complaints": 4,
+        "mule_scores": 0,
+        "failed": 0,
+        "more": True,
+    }
     assert ctx.reports == [0.5, 1.0]  # one report per committed batch
     with env.owner.connect() as conn:
         first = set(
@@ -276,6 +289,7 @@ def test_a_backlog_larger_than_a_batch_clears_over_several_runs(env: Env) -> Non
         "opened": 0,
         "complaints": 0,
         "mule_scores": 0,
+        "failed": 0,
         "more": False,
     }
     assert _reviews(env) == 7
@@ -299,7 +313,9 @@ def test_a_run_skips_while_another_one_sweeps(env: Env) -> None:  # noqa: F811
 
 def _mule_sweep(e: Env, limit: int = 100) -> list[Any]:
     with e.sessions.begin() as s:
-        return open_mule_reviews(s, e.clock, kb_version_id=e.kb_version_id, limit=limit)
+        return open_mule_reviews(
+            s, e.clock, kb_version_id=e.kb_version_id, limit=limit, backoff=BACKOFF
+        ).opened
 
 
 def test_a_credited_suspect_gets_a_review_with_the_mule_prior(env: Env) -> None:  # noqa: F811
@@ -369,7 +385,102 @@ def test_both_triggers_share_one_cap_per_run(env: Env) -> None:  # noqa: F811
         "opened": 3,
         "complaints": 2,  # the complaints first
         "mule_scores": 1,
+        "failed": 0,
         "more": True,
     }
     assert job(cast(Any, _Ctx()))["mule_scores"] == 2
     assert _reviews(env) == 5
+
+
+def _fail_for(monkeypatch: pytest.MonkeyPatch, bad: set[UUID]) -> None:
+    """Make opening the review of any account in ``bad`` fail, as a broken evidence fetch or
+    case insert would (#290); the others open as usual."""
+    real = reviews.open_account_review
+
+    def flaky(session: Any, clock: Any, *, account_id: UUID, **kw: Any) -> Any:
+        if account_id in bad:
+            raise RuntimeError(f"cannot open {account_id}")
+        return real(session, clock, account_id=account_id, **kw)
+
+    monkeypatch.setattr(reviews, "open_account_review", flaky)
+
+
+def _failure(e: Env, account: UUID) -> Any:
+    with e.owner.connect() as conn:
+        return conn.execute(
+            select(review_sweep_failures).where(review_sweep_failures.c.account_id == account)
+        ).one_or_none()
+
+
+def _subjects(e: Env) -> set[UUID]:
+    with e.owner.connect() as conn:
+        return set(
+            conn.execute(
+                select(cases.c.subject_account_id).where(
+                    cases.c.type == CaseType.ACCOUNT_REVIEW.value
+                )
+            ).scalars()
+        )
+
+
+@pytest.mark.parametrize("batch", [1, 3])
+def test_a_failing_candidate_backs_off_and_the_others_still_open(
+    env: Env,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+    batch: int,
+) -> None:
+    """#290: the oldest candidate always fails. With batch 1 the others open in later batches,
+    with batch 3 in the same one; the failure is recorded and backed off, then retried."""
+    bad, *good = [_account(env) for _ in range(3)]
+    for n, account in enumerate([bad, *good]):
+        _complaint(env, account, minutes_ago=60 - n)
+    _fail_for(monkeypatch, {bad})
+    job = _job(env, batch=batch)
+    assert job(cast(Any, _Ctx())) == {
+        "opened": 2,
+        "complaints": 2,
+        "mule_scores": 0,
+        "failed": 1,
+        "more": False,
+    }
+    assert _subjects(env) == set(good)
+    failure = _failure(env, bad)
+    assert failure.attempts == 1 and failure.last_error.startswith("RuntimeError: cannot open")
+    assert failure.next_attempt_at == env.clock.now() + timedelta(seconds=60)
+
+    # Backing off: not tried again before its next attempt.
+    env.clock.advance(timedelta(seconds=59))
+    assert job(cast(Any, _Ctx()))["failed"] == 0
+    # Retried, fails again: the wait doubles.
+    env.clock.advance(timedelta(seconds=1))
+    assert job(cast(Any, _Ctx()))["failed"] == 1
+    failure = _failure(env, bad)
+    assert failure.attempts == 2
+    assert failure.next_attempt_at == env.clock.now() + timedelta(seconds=120)
+
+    # Fixed: the next attempt opens it and clears the record.
+    monkeypatch.undo()
+    env.clock.advance(timedelta(seconds=120))
+    assert job(cast(Any, _Ctx()))["complaints"] == 1
+    assert _subjects(env) == {bad, *good}
+    assert _failure(env, bad) is None
+
+
+def test_a_failing_suspect_backs_off_too(
+    env: Env,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#290, the mule-scorer trigger: the failing suspect backs off, the other opens."""
+    bad, good = _account(env), _account(env)
+    for n, account in enumerate((bad, good)):
+        _score(env, account, 0.9)
+        _credit(env, account, 1_000_000, days_ago=0.5 - n / 1440)
+    _fail_for(monkeypatch, {bad})
+    with env.sessions.begin() as s:
+        swept = open_mule_reviews(
+            s, env.clock, kb_version_id=env.kb_version_id, limit=10, backoff=BACKOFF
+        )
+    assert [c.subject_account_id for c in swept.opened] == [good]
+    assert swept.failed == [bad]
+    assert _failure(env, bad).attempts == 1
+    assert _mule_sweep(env) == []  # backing off
