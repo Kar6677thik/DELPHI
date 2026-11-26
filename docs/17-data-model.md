@@ -156,7 +156,7 @@ police_alert_drafts(id, case_id, status (DRAFT|SENT_SIMULATED|DISCARDED), payloa
        -- migration 0014 (#106); unique case_id; acted_by and acted_at set iff not DRAFT
 campaigns(id, leading_hypothesis, case_count, f3_stage_max, expected_loss_paise,
           vulnerable_victims, rank_score, merged_into null, created_at, updated_at)
-       -- migration 0017 (#107); idx (rank_score desc, id desc)
+       -- migration 0018 (#107); idx (rank_score desc, id desc)
        -- WHERE merged_into IS NULL AND case_count > 0 (the list's filter and order);
        -- cases.campaign_id gets its foreign key here (NOT VALID, then VALIDATE), with an index
 case_entities(case_id → cases ON DELETE CASCADE, entity, pk(case_id, entity))
@@ -268,8 +268,9 @@ lives in `delphi.platform.locks`, and a test checks that they are distinct (#78)
 chain, 43 outbox publishing (doc 04 §5.5), 44 the bootstrap admin, 45 dataset requests, 46
 dataset writes, 47 loading KB v1, 48 storing a sensing model artifact, 49 label delivery
 (#263), 50 the ACCOUNT_REVIEW sweep (doc 09 §1), 51 the demo reset, 53 the campaign recompute
-(doc 05 §5). Verifying a window checks that its first entry links to the entry just before the
-window (or to the genesis hash), so a deleted or edited earlier entry is caught too. `GET
+(doc 05 §5), 54 `MULE_SWEEP` (doc 13 §6). Verifying a window checks that its first entry links to
+the entry just before the window (or to the genesis hash), so a deleted or edited earlier entry is
+caught too. `GET
 /admin/audit/verify?from=&to=` recomputes the chain. The DD pack verifies the entries for its
 subject. Audited actions: every state transition of every aggregate, logins (success and
 failure), role changes, KB promotions, rollbacks, lien approvals, police-alert sends and demo
