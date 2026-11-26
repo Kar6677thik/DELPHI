@@ -1,4 +1,4 @@
-"""ACCOUNT_REVIEW cases from complaints (docs/09 §1, FR-NAV-01, #109).
+"""ACCOUNT_REVIEW cases from complaints and mule scores (docs/09 §1, FR-NAV-01, #109).
 
 A complaint that names a home-bank counterparty account opens an ACCOUNT_REVIEW case for it,
 unless the account already has one open. The initial posterior is the mule-scorer prior
@@ -10,16 +10,20 @@ so the console shows it in the timeline and never plans it again.
 Until an account has one, the docs/13 §6 fallback is used and logged. The account review has no
 anomaly percentile of its own, so q = 0 and the open mass is the profile's base.
 
-``COMPLAINT_SWEEP`` runs this every minute (docs/04 §5.4). It is idempotent per account: a case
-is opened only for complaints reported after the account's latest review was opened, so a
-disposed review is not reopened by the complaint that opened it.
+The mule-scorer trigger (``open_mule_reviews``) opens a review for a home-bank account whose
+stored score (``MULE_SWEEP``, #91) is at least ``navigator.mule_sweep_threshold`` and that was
+credited in the last ``navigator.mule_credit_window_h``, with the mule-scorer prior alone.
+
+``ACCOUNT_REVIEW_SWEEP`` runs both every minute (docs/04 §5.4), the complaints first. Each is
+idempotent per account: a case opens only for a complaint, or a credit, newer than the account's
+latest review, so a disposed review is not reopened by what opened it.
 
 It is bounded (the 2026-11-22 incident, #263): the candidates are chosen in SQL, oldest
-complaint first, with ``NOT EXISTS`` against the account's reviews and a ``LIMIT``; only
-complaints reported in the last ``review_complaint_lookback_days`` count; each batch of
+complaint (or credit) first, with ``NOT EXISTS`` against the account's reviews and a ``LIMIT``;
+only complaints reported in the last ``review_complaint_lookback_days`` count; each batch of
 ``review_sweep_batch`` reviews commits on its own, under a statement timeout and a small
-``work_mem``; and a run stops after ``review_sweep_max_per_run`` reviews, for the next run to carry
-on. A run that finds another one sweeping (the advisory lock) skips.
+``work_mem``; and a run stops after ``review_sweep_max_per_run`` reviews of either trigger, for
+the next run to carry on. A run that finds another one sweeping (the advisory lock) skips.
 """
 
 from __future__ import annotations
@@ -32,6 +36,7 @@ from uuid import UUID
 
 from sqlalchemy import BigInteger, column, exists, func, or_, select, text, true
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy.dialects.postgresql import distinct_on
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -248,17 +253,24 @@ def open_with_trigger(
     session: Session,
     clock: Clock,
     account_id: UUID,
-    trigger: str,
+    trigger: str | None,
     *,
     kb_version_id: int,
-    p_mule_fallback: float,
+    p_mule_fallback: float | None = None,
     demo_time: bool,
 ) -> CaseRecord | None:
-    """Open the account's review with its first evidence record, the ``trigger`` probe; None if
-    a review is already open (a concurrent open won)."""
+    """Open the account's review, with the ``trigger`` probe as its first evidence record (none
+    for the mule-scorer trigger); None if a review is already open (a concurrent open won).
+    ``p_mule_fallback`` is needed only when the account may have no stored score (complaints);
+    a mule suspect always has one."""
     p_mule = stored_p_mule(session, account_id)
     source = "account_scores"
     if p_mule is None:
+        if p_mule_fallback is None:
+            raise DelphiError(
+                f"Account {account_id} has no stored mule score and no fallback was given.",
+                code=ProblemCode.VALIDATION_FAILED,
+            )
         log.warning("navigator.p_mule_fallback", account_id=str(account_id))
         p_mule, source = p_mule_fallback, "fallback"
     try:
@@ -273,6 +285,8 @@ def open_with_trigger(
         )
     except CaseExistsError:
         return None
+    if trigger is None:
+        return case
     request_evidence(session, clock, case.id, trigger, requested_by=None, on_open=True)
     refreshed = get_case(session, case.id)
     assert refreshed is not None
@@ -309,6 +323,82 @@ def open_complaint_reviews(
     return opened
 
 
+def mule_candidates(
+    session: Session, now: datetime, *, threshold: float, window: timedelta, limit: int
+) -> list[UUID]:
+    """docs/09 §1: home-bank accounts whose stored mule score is at least ``threshold``, credited
+    in ``(now − window, now]`` after their latest review (none open, none opened at or after the
+    credit), oldest credit first, at most ``limit`` accounts. Each account counts once (its
+    oldest such credit), so one busy mule cannot fill a batch."""
+    s, a, p, k = bank.account_scores.c, bank.accounts.c, bank.payments.c, cases.c
+    reviewed = exists().where(
+        k.subject_account_id == p.payee_account_id,
+        k.type == CaseType.ACCOUNT_REVIEW.value,
+        or_(k.status != CaseStatus.DISPOSED.value, k.opened_at >= p.executed_at),
+    )
+    first_credit = (
+        select(p.payee_account_id, p.executed_at, p.id)
+        .select_from(
+            bank.account_scores.join(bank.accounts, a.id == s.account_id).join(
+                bank.payments, p.payee_account_id == s.account_id
+            )
+        )
+        .where(
+            s.p_mule >= threshold,
+            a.bank_code == bank.HOME_BANK,
+            p.status == EXECUTED,
+            p.executed_at > now - window,
+            p.executed_at <= now,
+            ~reviewed,
+        )
+        .ext(distinct_on(p.payee_account_id))
+        .order_by(p.payee_account_id, p.executed_at, p.id)
+        .subquery()
+    )
+    f = first_credit.c
+    return list(
+        session.execute(
+            select(f.payee_account_id).order_by(f.executed_at, f.id).limit(limit)
+        ).scalars()
+    )
+
+
+def open_mule_reviews(
+    session: Session,
+    clock: Clock,
+    *,
+    kb_version_id: int,
+    limit: int,
+    demo_time: bool = False,
+) -> list[CaseRecord]:
+    """docs/09 §1, the mule-scorer trigger: up to ``limit`` reviews, one for each suspect
+    (above), with the mule-scorer prior alone (no complaint to add). In the caller's
+    transaction."""
+    version = get_version(session, kb_version_id)
+    if version is None:
+        raise DelphiError(f"No KB version {kb_version_id}.", code=ProblemCode.VALIDATION_FAILED)
+    navigator = version.kb.config.navigator
+    opened: list[CaseRecord] = []
+    for account_id in mule_candidates(
+        session,
+        clock.now(),
+        threshold=navigator.mule_sweep_threshold,
+        window=timedelta(hours=navigator.mule_credit_window_h),
+        limit=limit,
+    ):
+        case = open_with_trigger(
+            session,
+            clock,
+            account_id,
+            None,
+            kb_version_id=kb_version_id,
+            demo_time=demo_time,
+        )
+        if case is not None:
+            opened.append(case)
+    return opened
+
+
 def begin_sweep_batch(session: Session) -> bool:
     """Bound this transaction and take the sweep lock; False if another run holds it."""
     session.execute(text(f"SET LOCAL statement_timeout = '{STATEMENT_TIMEOUT}'"))
@@ -321,9 +411,10 @@ def begin_sweep_batch(session: Session) -> bool:
 
 
 @dataclass(frozen=True, slots=True)
-class ComplaintSweepJob:
-    """``COMPLAINT_SWEEP`` (every minute, docs/04 §5.4): one transaction per batch, at most
-    ``limits.max_per_run`` reviews per run."""
+class AccountReviewSweepJob:
+    """``ACCOUNT_REVIEW_SWEEP`` (every minute, docs/04 §5.4): both docs/09 §1 triggers, the
+    complaints first (a complained-about suspect gets the complaint's update). One transaction
+    per batch; at most ``limits.max_per_run`` reviews per run, of both triggers together."""
 
     sessions: sessionmaker[Session]
     clock: Clock
@@ -332,27 +423,44 @@ class ComplaintSweepJob:
     limits: SweepLimits
 
     def __call__(self, ctx: JobContext) -> Mapping[str, Any] | None:
-        opened = 0
+        counts = {"complaints": 0, "mule_scores": 0}
         since = self.clock.now() - self.limits.complaint_lookback
-        while opened < self.limits.max_per_run:
+
+        def result(**extra: Any) -> dict[str, Any]:
+            return {"opened": sum(counts.values()), **counts, **extra}
+
+        while (opened := sum(counts.values())) < self.limits.max_per_run:
+            room = min(self.limits.batch, self.limits.max_per_run - opened)
             with self.sessions.begin() as session:
                 if not begin_sweep_batch(session):
-                    return {"opened": opened, "skipped": "busy"}
+                    return result(skipped="busy")
                 active = active_version(session)
                 if active is None:
-                    return {"opened": opened, "reason": "no ACTIVE KB version"}
-                batch = open_complaint_reviews(
+                    return result(reason="no ACTIVE KB version")
+                complaints = open_complaint_reviews(
                     session,
                     self.clock,
                     kb_version_id=active.id,
                     p_mule_fallback=self.p_mule_fallback,
                     since=since,
-                    limit=min(self.limits.batch, self.limits.max_per_run - opened),
+                    limit=room,
                     demo_time=self.demo_time,
                 )
-            opened += len(batch)
-            if not batch:
-                return {"opened": opened, "more": False}
-            if not ctx.report(opened / self.limits.max_per_run):
+                mules = (
+                    open_mule_reviews(
+                        session,
+                        self.clock,
+                        kb_version_id=active.id,
+                        limit=room - len(complaints),
+                        demo_time=self.demo_time,
+                    )
+                    if len(complaints) < room
+                    else []
+                )
+            counts["complaints"] += len(complaints)
+            counts["mule_scores"] += len(mules)
+            if not complaints and not mules:
+                return result(more=False)
+            if not ctx.report(sum(counts.values()) / self.limits.max_per_run):
                 break
-        return {"opened": opened, "more": True}
+        return result(more=True)

@@ -3411,6 +3411,18 @@
             ],
             "title": "Seed",
             "description": "default: the profile's"
+          },
+          "personas": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Personas",
+            "description": "add the demo personas (docs/14 §6); default: the profiles personas.yaml lists (`demo`). The E2E stack seeds `test` with them (docs/21 §1)."
           }
         },
         "additionalProperties": false,
@@ -4285,7 +4297,7 @@
           "SCOUT_AUTO_TRIGGER",
           "LABEL_DELIVERY",
           "CAMPAIGN_RECOMPUTE",
-          "COMPLAINT_SWEEP",
+          "ACCOUNT_REVIEW_SWEEP",
           "PROBE_YIELD_DAILY",
           "RETENTION_SWEEP",
           "AUDIT_VERIFY"
