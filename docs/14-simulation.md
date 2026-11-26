@@ -663,8 +663,10 @@ Details where the scripts are silent:
     the frozen response models. A test checks that every table is in one list or the other.
     Mule scores keep any rescoring done after the seed: `MULE_SWEEP` refreshes them.
   - **The persona state.** Rows from before the marker that the demo changed are put back:
-    account balances lose the deltas of the deleted ledger entries (one `DELETE … RETURNING`),
-    and every seeded schedule row done after the marker is due again, even one that was due
+    account balances lose the deltas of the deleted ledger entries (one `DELETE … RETURNING`):
+    those after the marker, and those of every payment the reset deletes. A live mule transfer
+    that fell due before the marker is created after it while its ledger entries carry its due
+    time (#114), so both go together. And every seeded schedule row done after the marker is due again, even one that was due
     before it, so a transfer whose payment the reset deletes runs again instead of vanishing.
     Not restored yet: account statuses (Chase's freezes), and the status of a seeded payment
     decided after the marker (its ledger entries are reversed, its status stays). Nothing in the

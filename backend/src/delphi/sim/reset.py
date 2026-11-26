@@ -5,7 +5,9 @@ The seed marks its dataset with ``seed_completed_at``; everything the demo did s
 deleted, in one transaction, children before parents (``RESET_TABLES``, each by its creation
 time), and the rows the demo changed are put back:
 
-- account balances lose the deltas of the ledger entries the reset deletes;
+- account balances lose the deltas of the ledger entries the reset deletes: those after the
+  marker, and those of the payments it deletes (a live mule transfer that fell due before the
+  marker is created after it, but its ledger entries carry its due time, #114);
 - schedule rows done after the marker are not done again;
 - labels delivered after the marker are deleted, and their schedule rows are undelivered, so
   ``LABEL_DELIVERY`` delivers them again against the re-activated KB v1 (#159);
@@ -30,7 +32,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Engine, column, func, select, table, text, update
+from sqlalchemy import Engine, column, func, or_, select, table, text, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from delphi.kb.store import KbStatus, kb_versions
@@ -38,7 +40,7 @@ from delphi.platform.audit import ActorType, record
 from delphi.platform.clock import Clock
 from delphi.platform.jobs import JobContext, JobRegistry, JobType
 from delphi.platform.locks import DEMO_RESET_LOCK_KEY, LABEL_DELIVERY_LOCK_KEY
-from delphi.sim.bank import accounts, ledger_entries, sim_schedule
+from delphi.sim.bank import accounts, ledger_entries, payments, sim_schedule
 from delphi.sim.catalog import datasets
 from delphi.sim.truth import label_schedule
 
@@ -126,18 +128,18 @@ def _marker(session: Session) -> Marker:
 
 
 def _restore_balances(session: Session, marker: datetime) -> tuple[int, int]:
-    """Delete the ledger entries after the marker and take their deltas back off their
-    accounts, in one statement. Returns (entries deleted, accounts restored)."""
+    """Delete the ledger entries after the marker, and those of the payments created after it,
+    and take their deltas back off their accounts, in one statement. Returns (entries deleted,
+    accounts restored)."""
     le = ledger_entries.c
-    entries = session.execute(
-        select(func.count()).select_from(ledger_entries).where(le.at > marker)
-    ).scalar_one()
-    gone = (
-        ledger_entries.delete()
-        .where(le.at > marker)
-        .returning(le.account_id, le.delta_paise)
-        .cte("gone")
+    after = or_(
+        le.at > marker,
+        le.payment_id.in_(select(payments.c.id).where(payments.c.created_at > marker)),
     )
+    entries = session.execute(
+        select(func.count()).select_from(ledger_entries).where(after)
+    ).scalar_one()
+    gone = ledger_entries.delete().where(after).returning(le.account_id, le.delta_paise).cte("gone")
     moved = (
         select(gone.c.account_id, func.sum(gone.c.delta_paise).label("delta"))
         .group_by(gone.c.account_id)
