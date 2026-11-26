@@ -18,6 +18,7 @@ MODEL_ARTIFACT_LOCK_KEY = 48  # storing a sensing artifact and switching the ACT
 LABEL_DELIVERY_LOCK_KEY = 49  # delivering due labels from the simulator's schedule (docs/14 §7)
 ACCOUNT_REVIEW_SWEEP_LOCK_KEY = 50  # opening ACCOUNT_REVIEW cases from triggers (docs/09 §1)
 DEMO_RESET_LOCK_KEY = 51  # one demo reset at a time (docs/14 §10)
+MULE_SWEEP_LOCK_KEY = 54  # rescoring accounts into account_scores (docs/13 §6)
 
 ALL_LOCK_KEYS: dict[str, int] = {
     "audit": AUDIT_LOCK_KEY,
@@ -30,4 +31,5 @@ ALL_LOCK_KEYS: dict[str, int] = {
     "label_delivery": LABEL_DELIVERY_LOCK_KEY,
     "account_review_sweep": ACCOUNT_REVIEW_SWEEP_LOCK_KEY,
     "demo_reset": DEMO_RESET_LOCK_KEY,
+    "mule_sweep": MULE_SWEEP_LOCK_KEY,
 }
