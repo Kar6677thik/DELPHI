@@ -1,8 +1,8 @@
 """Chase operations, freeze candidates, liens and CFCFRMS tickets (docs/10 §5, docs/05 §6,
 docs/17, #113).
 
-Revision ID: 0017
-Revises: 0016
+Revision ID: 0018
+Revises: 0017
 Create Date: 2026-11-23
 
 A chase operation traces a reported fraud's money (docs/10 §3) and stores each account still
@@ -19,8 +19,8 @@ from __future__ import annotations
 
 from alembic import op
 
-revision = "0017"
-down_revision = "0016"
+revision = "0018"
+down_revision = "0017"
 branch_labels = None
 depends_on = None
 

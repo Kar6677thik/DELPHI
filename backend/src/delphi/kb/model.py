@@ -261,6 +261,18 @@ class NavigatorSection(_Frozen):
     mule_sweep_threshold: float
     mule_sweep_interval_min: float
     campaign_window_days: int
+    # docs/09 §1 (#109, approved on #252): a mule suspect needs a credit this recent. A model
+    # default, so the stored KB v1 keeps its hash; later KB versions may set it.
+    mule_credit_window_h: float = Field(default=24.0, gt=0)
+
+    @model_serializer(mode="wrap")
+    def _keep_v1_hash(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        """Leave the default out of the canonical content unless a KB version sets it, so a
+        stored version without the key keeps its SHA-256 (docs/07 §1)."""
+        data: dict[str, Any] = handler(self)
+        if "mule_credit_window_h" not in self.model_fields_set:
+            data.pop("mule_credit_window_h", None)
+        return data
 
 
 class VisibilityLag(_Frozen):
