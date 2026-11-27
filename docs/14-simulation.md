@@ -633,11 +633,11 @@ Details where the scripts are silent:
 - **Arjun's new phone** (S-2) is a device of his first seen at the story's T, written by the job
   (both modes). Its id is keyed by the dataset, so running S-2 again before a reset reuses it,
   still NEW_DEVICE (doc 08 §5); the demo reset removes it with everything after the seed.
-- **The story's T is now.** A live run makes the payment when the presenter runs the story, so
-  S-1's `local_time` (23:40 IST) is not honoured: the prior's hour features see the real time.
-  Moving the payment's time would put it out of order with the session that decides it. The
-  23:40 is honoured where time is simulated: the persona tests' story time and the golden
-  replays (gap).
+- **The story's T is now.** A live run makes the payment when the presenter runs the story.
+  Moving the payment's time would put it out of order with the session that decides it, so the
+  script's `local_time` (S-1: 23:40 IST) goes on the payment instead (`story_local_time`, #291):
+  the job writes it in autoplay and returns it in the interactive `payment` body, and the prior's
+  hour features read it (doc 13 §3). Everything else about the payment is real time.
 - **Idempotency.** The payment's id is keyed by the job, so a retry after a lost lease finds the
   payment its first attempt made, and the runner returns its session (one per payment). Each run
   is one short transaction.
