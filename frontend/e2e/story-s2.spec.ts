@@ -19,8 +19,9 @@ const PURPOSE_AFTER_MS = 5_000;
 const STAGED_WITHIN_MS = 60_000;
 
 interface SessionView {
+  status: string;
   decision: string | null;
-  probe_runs: { probe_key: string; mode: string }[];
+  probe_runs: { probe_key: string; mode: string; status: string; outcome: string | null }[];
 }
 
 test('E2E-S2: Arjun answers as scripted and the payment is sent', async ({ page }) => {
@@ -50,6 +51,25 @@ test('E2E-S2: Arjun answers as scripted and the payment is sent', async ({ page 
   const sensor = phone.getByRole('button', { name: 'Touch the sensor' });
   const purpose = phone.getByRole('button', { name: 'Medical / hospital' });
   const otp = phone.getByLabel('One-time code');
+  // Any decision screen ends the run (its "Done"); a decision other than RELEASE fails below.
+  const decided = phone.getByRole('button', { name: 'Done' });
+  // What the session did, for a failure message: the server's view, not the phone's.
+  const trail = async (): Promise<string> => {
+    const s = (await (await page.request.get(`/api/v1/guardian/sessions/${id}`)).json()) as
+      SessionView | undefined;
+    if (!s?.probe_runs) return 'the session could not be read';
+    const runs = s.probe_runs.map((r) => `${r.probe_key} ${r.status} ${r.outcome ?? '-'}`);
+    return `session ${s.status} ${s.decision ?? '-'}: ${runs.join(', ')}`;
+  };
+  /** A failed wait, with what the server says the session did by then. */
+  const explained = async (wait: Promise<void>): Promise<void> => {
+    try {
+      await wait;
+    } catch (error) {
+      throw new Error(`${await trail()}
+${String(error)}`);
+    }
+  };
   const answer = async (screen: Locator, afterMs: number, act: () => Promise<void>) => {
     // Each probe screen is keyed by its run: wait for this one to go, even when the next
     // probe looks the same (two spell-breakers in a row both have a "No").
@@ -58,8 +78,10 @@ test('E2E-S2: Arjun answers as scripted and the payment is sent', async ({ page 
     await act();
     await page.waitForFunction((el) => !el?.isConnected, shown, { timeout: left() });
   };
-  while (!(await sent.isVisible())) {
-    await expect(sent.or(sensor).or(purpose).or(otp)).toBeVisible({ timeout: left() });
+  while (!(await decided.isVisible())) {
+    await explained(
+      expect(decided.or(sensor).or(purpose).or(otp)).toBeVisible({ timeout: left() }),
+    );
     if (await sensor.isVisible()) {
       await answer(sensor, STEP_UP_AFTER_MS, () => sensor.click());
     } else if (await purpose.isVisible()) {
@@ -74,6 +96,7 @@ test('E2E-S2: Arjun answers as scripted and the payment is sent', async ({ page 
       });
     }
   }
+  await explained(expect(sent).toBeVisible());
   expect(Date.now() - started).toBeLessThanOrEqual(SENT_WITHIN_MS);
 
   const view = await page.request.get(`/api/v1/guardian/sessions/${id}`);
