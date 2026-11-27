@@ -72,6 +72,9 @@ CREATE TABLE delphi.liens (
   account_id       uuid NOT NULL REFERENCES bank.accounts (id),
   bank_code        text NOT NULL,
   amount_paise     bigint NOT NULL CHECK (amount_paise >= 0),
+  -- The candidate's traced taint when the lien was approved: a snapshot, since re-traces
+  -- overwrite chase_candidates.taint_paise (#258's golden-hour metric reads this).
+  taint_at_approval_paise bigint NOT NULL CHECK (taint_at_approval_paise >= 0),
   status           text NOT NULL CHECK (status IN ('APPROVED', 'PLACED', 'TICKET_SENT',
                      'FAILED_FUNDS_MOVED', 'FAILED_NO_RESPONSE', 'RELEASED')),
   recorded_reasons text NOT NULL CHECK (recorded_reasons <> ''),
@@ -86,6 +89,8 @@ CREATE TABLE delphi.liens (
   CONSTRAINT liens_placed_check CHECK (
     (status IN ('PLACED', 'RELEASED')) = (placed_at IS NOT NULL AND review_due_at IS NOT NULL)
   ),
+  -- FR-CHS-05: a lien never exceeds the taint traced at approval.
+  CONSTRAINT liens_within_taint_check CHECK (amount_paise <= taint_at_approval_paise),
   CONSTRAINT liens_released_check CHECK (
     (status = 'RELEASED') = (released_at IS NOT NULL AND release_reason IS NOT NULL)
   )
