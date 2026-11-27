@@ -98,6 +98,9 @@ def _monetization(session: Session, payee_account: UUID | None, at: object, unti
             a.bank_code == bank.HOME_BANK,
             p.payer_account_id == payee_account,
             p.status == EXECUTED,
+            # A payment executed by ``until`` was initiated by then too: this bound lets the
+            # (payer_account_id, initiated_at) index limit the scan (#298 review).
+            p.initiated_at <= until,
             p.executed_at > at,
             p.executed_at <= until,
         )
