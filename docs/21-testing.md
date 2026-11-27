@@ -49,6 +49,14 @@ engine and KB v1 independently of the trained sensing model. The E2E tests (§4)
 stories with the real model's prior. If an E2E story diverges because of the prior, that is
 risk R-01: fix it in the persona or simulator, never by tuning KB v1 to the test.
 
+**S-2 and the step-up (#281, owner decision delegated, 2026-11-24).** ENG-S2's fixture prior puts
+20% on ATO, so the biometric wins over the OTP. The live prior model leaves the device to
+DEVICE_POSTURE (doc 13 §3), and on `demo` it gives Arjun's hospital payment about 0.1–0.5% ATO,
+so OTP and biometric are close to a tie and the planner picks either. A simulator change (local
+attackers, merchant cash-outs) did not move it: the prior cannot see the new phone. So E2E-S2
+checks the outcome the story is about (a quick release after at most one step-up and ≤ 2 active
+probes), and the biometric-over-OTP choice stays pinned at engine level by ENG-S2.
+
 | ID | Setup (demo dataset personas, KB v1, scripted responses) | Assertions |
 |---|---|---|
 | ENG-S1 | Kamala payment; passive outcomes from the persona telemetry (ON_CALL_UNKNOWN_NUMBER, NORMAL session, KNOWN_DEVICE, CLEAN_UNKNOWN beneficiary); coached purpose answer FAMILY_OR_FRIEND in 6 s; spell-breaker answered NO after 11 s with 1 app switch | `SPELL_BREAKER_DIGITAL_ARREST` is among the active probes run; `OTP_STEP_UP` is never selected; the leading hypothesis is `APP_DIGITAL_ARREST` (≥ 0.65); decision `PROTECTIVE_HOLD`; B2 baseline decision `RELEASE` |
@@ -65,13 +73,16 @@ test.
 | ID | Journey |
 |---|---|
 | E2E-S1 | Presenter logs in → `/phone` → Kamala → pays → answers each probe per the persona script (purpose: FAMILY_OR_FRIEND promptly; spell-breaker: NO after a delay and with a tab switch). The spell-breaker text is asserted to be Telugu if an APPROVED `te` variant exists in `kb/`, else English → the phone shows the protective screen → `/cases/:id` shows the COERCION protocol, outreach pinned → record CONFIRMS_COERCION → dispose CONFIRM_FRAUD → DD pack complete |
-| E2E-S2 | Arjun → biometric → "Payment sent" within 30 s; the session shows biometric selected over OTP |
+| E2E-S2 | `/phone?story=S2` → Arjun pays and answers what the Guardian asks at his script's pace (fingerprint MATCH, purpose MEDICAL, an OTP typed from the mock SMS) → "Payment sent" within 30 s; the session is `RELEASE` after ≤ 2 active probes, at most one of them a step-up (#281) |
 | E2E-S3 | Run story S3 → chase screen → approve the top 3 → liens PLACED/TICKET_SENT → the golden-hour gauge > 0 |
 | E2E-S4 | Run story S4 → Scout run → edit the draft → backtest → shadow → promote as a second user → a new collect-refund payment is attributed to the new typology |
 | E2E-S5 | Admin runs an evaluation on the `test` profile → the results table renders three policies |
 | E2E-RBAC | A VIEWER cannot see enabled write controls; direct API writes return 403 |
 | E2E-RESET | Demo reset returns personas to their initial state; S-1 can run again |
 | E2E-A11Y | axe scan on every route: no serious or critical violations |
+
+The journeys share one stack and one bank, and E2E-RESET deletes what the others made, so the
+spec files run one at a time (`workers: 1` in `frontend/playwright.config.ts`).
 
 **Implementation (#131).** `frontend/e2e/rbac.spec.ts`, `stories.spec.ts` and `a11y.spec.ts` run
 with the login smoke test, against the same stack.
