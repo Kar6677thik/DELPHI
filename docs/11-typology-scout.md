@@ -58,7 +58,10 @@ The output is `scout_clusters` rows plus one `typology_drafts` row per cluster, 
 `CANDIDATE` as `SUPERSEDED` (the owner's decision on #255), so only the latest run's candidates
 are open. A draft past `CANDIDATE` (edited, backtested, in shadow, promoted or rejected) is never
 touched. A `SUPERSEDED` draft is final: it cannot be edited, and the draft list shows
-`CANDIDATE` drafts unless asked for another status.
+`CANDIDATE` drafts unless asked for another status. The run audits the transition once, listing
+the drafts it superseded (`scout.drafts.superseded`, by the system, on the run). A run that finds
+no cluster supersedes the earlier candidates too: it read the newer queue, and a candidate it no
+longer finds is stale.
 
 **Implementation** (#117): the clustering core is `delphi.scout.clustering` (pure functions):
 `matrix`, `cluster_labels`, `distinguishing_features` (absolute standardised mean difference,

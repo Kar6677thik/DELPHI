@@ -70,6 +70,7 @@ liens = Table(
     Column("account_id", UUID(as_uuid=True), nullable=False),
     Column("bank_code", Text, nullable=False),
     Column("amount_paise", BigInteger, nullable=False),
+    Column("taint_at_approval_paise", BigInteger, nullable=False),
     Column("status", Text, nullable=False),
     Column("recorded_reasons", Text, nullable=False),
     Column("evidence_refs", JSONB, nullable=False),
