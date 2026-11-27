@@ -97,3 +97,52 @@ export function stagedStory(job: JobView | undefined): StagedStory | null {
   };
   return { story, customerId, payment: draft, situation: situationOf(telemetry) };
 }
+
+/**
+ * `POST /admin/demo/reset` (docs/16 §2, docs/14 §10): queues `DEMO_RESET`, which puts the bank
+ * back to the moment after the seed. 409 without a dataset or while a reset is under way.
+ */
+export function useResetDemo() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const response = await apiFetch('/admin/demo/reset', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          // docs/16 §1: a retried request with the same key starts one reset, not two.
+          'Idempotency-Key': crypto.randomUUID(),
+        },
+        body: '{}',
+      });
+      return (await response.json()) as JobView;
+    },
+    onSettled: () => {
+      void client.invalidateQueries({ queryKey: ADMIN_QUERY_KEY });
+    },
+  });
+}
+
+/** What a finished reset did, from its job's result (`null` until it succeeds). */
+export interface ResetOutcome {
+  /** Another reset held the lock: this one did nothing. */
+  skipped: boolean;
+  rowsDeleted: number;
+  accountsRestored: number;
+  /** A KB version changed: the api and the worker load the ACTIVE KB only at start-up. */
+  restartNeeded: boolean;
+}
+
+export function resetOutcome(job: JobView | undefined): ResetOutcome | null {
+  if (job?.status !== 'SUCCEEDED' || !isRecord(job.result)) return null;
+  const { skipped, deleted, accounts_restored: restored, restart_needed: restart } = job.result;
+  const rows = isRecord(deleted)
+    ? Object.values(deleted).reduce<number>((sum, n) => sum + (typeof n === 'number' ? n : 0), 0)
+    : 0;
+  return {
+    skipped: skipped !== undefined && skipped !== null && skipped !== false,
+    rowsDeleted: rows,
+    accountsRestored: typeof restored === 'number' ? restored : 0,
+    restartNeeded: restart === true,
+  };
+}

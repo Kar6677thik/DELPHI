@@ -330,6 +330,8 @@ def test_the_personas_carry_their_accounts_payees_and_devices(env: Env) -> None:
         ({"payee_account_id": None}, "no payee"),
         ({"surprise": True}, "an unknown field"),
         ({"telemetry": {"on_call": True}}, "partial telemetry"),
+        ({"story_local_time": "24:00"}, "not a time of day"),
+        ({"story_local_time": "9:05"}, "not HH:MM"),
     ],
 )
 def test_a_malformed_payment_is_refused(env: Env, changes: dict[str, Any], why: str) -> None:
@@ -390,6 +392,20 @@ def test_a_payment_starts_its_session_once_per_key(env: Env) -> None:
         telemetry = conn.execute(select(bank.session_telemetry.c.on_call)).scalars().all()
     assert rows == [("DEMO", "EXECUTED", p.device)]  # one payment, released and executed
     assert telemetry == [True]
+
+
+def test_a_story_payment_keeps_its_scripted_local_time(env: Env) -> None:
+    """docs/14 §10, #291: the phone pays a story payment with the job's `story_local_time`;
+    the bank records it for the prior's hour features."""
+    p = _persona(env)
+    live = _live(env, FixedPrior(GENUINE_SURE, p_mule=None), CLEAN)
+    body = {"payment": _payment(p, 2_000, story_local_time="23:40")}
+    with TestClient(_app(env, _user(env, Role.INVESTIGATOR), live), headers=BROWSER) as client:
+        reply = client.post(API, json=body, headers=_key())
+    assert reply.status_code == 201, reply.text
+    with env.owner.connect() as conn:
+        scripted = conn.execute(select(bank.payments.c.story_local_time)).scalars().all()
+    assert scripted == ["23:40"]
 
 
 # ---------------------------------------------------------------- answering and cancelling
