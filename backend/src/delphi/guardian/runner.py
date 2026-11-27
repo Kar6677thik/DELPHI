@@ -151,13 +151,16 @@ class SessionRunner:
     def task(self, session_id: UUID) -> asyncio.Task[GuardianSessionRecord] | None:
         return self._tasks.get(session_id)
 
-    async def shutdown(self) -> None:
-        """Stop every task; their sessions are resumed on the next start-up."""
+    async def shutdown(self) -> int:
+        """Stop every task; their sessions are resumed on the next start-up. The runner can
+        take new sessions afterwards (the demo reset drops the ones it is driving). Returns how
+        many tasks it stopped."""
         tasks = list(self._tasks.values())
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         self._tasks.clear()
+        return len(tasks)
 
     # ------------------------------------------------------------------ the session task
 

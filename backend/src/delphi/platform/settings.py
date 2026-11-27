@@ -85,6 +85,8 @@ class Settings(BaseSettings):
     worker_fast_concurrency: int = Field(default=1, ge=1, le=4)
     worker_poll_interval_s: float = Field(default=1.0, gt=0, le=60)
     worker_heartbeat_max_age_s: int = Field(default=30, ge=5, le=600)
+    # The demo reset's statement timeout: FR-SIM-08 wants it done in 60 s (docs/14 §10).
+    demo_reset_timeout_s: float = Field(default=60.0, gt=0, le=600)
     # Passive probe adapters (docs/08 §2 step 4): their own bounded thread pool, so adapters
     # that time out cannot starve the event loop's default executor; and each adapter query's
     # statement_timeout = the KB's passive_adapter_timeout_ms + this margin, so an abandoned
@@ -121,6 +123,10 @@ class Settings(BaseSettings):
     # Dataset profiles this deployment may generate (docs/23 §4). The home server leaves out
     # `eval`, whose generation needs about 3.8 GiB (docs/22 §1).
     dataset_profiles: str = "test,demo,eval"
+    # Worker processes for one evaluation run (docs/22 §1, #261). Each forked worker copies part
+    # of the dataset it reads, so 4 do not fit the cluster worker's 1536Mi on `eval`: evaluation
+    # runs off-cluster or as its own Job sized for it (docs/22 §1). #124's entry point reads it.
+    eval_workers: int = Field(default=4, ge=1, le=16)
     # The first ADMIN, created on start when no user exists (docs/19 §2, FR-PLT-03).
     bootstrap_admin_username: str | None = None
     bootstrap_admin_password: SecretStr | None = None
@@ -128,6 +134,15 @@ class Settings(BaseSettings):
     # docs/08 §4), so reading `probe_runs` reveals no live code (#171). Secret `delphi-app`,
     # api only. Generate with `openssl rand -hex 32`.
     secret_key: SecretStr | None = Field(default=None, min_length=MIN_SECRET_KEY_LENGTH)
+    # The ACCOUNT_REVIEW sweep (docs/09 §1, #109), bounded after #263: reviews opened per
+    # transaction and per run, and how old a complaint may be and still open a review.
+    review_sweep_batch: int = Field(default=25, ge=1, le=500)
+    review_sweep_max_per_run: int = Field(default=100, ge=1, le=5_000)
+    review_complaint_lookback_days: int = Field(default=30, ge=1, le=365)
+    # MULE_SWEEP (docs/13 §6, #252), bounded after #263: accounts rescored per transaction and
+    # per run. A run rescores the accounts whose score is older than mule_sweep_interval_min.
+    mule_sweep_batch: int = Field(default=200, ge=1, le=2_000)
+    mule_sweep_max_per_run: int = Field(default=2_000, ge=1, le=50_000)
     # Retention (docs/17 §6).
     outbox_retention_h: int = Field(default=24, ge=1, le=24 * 30)
     idempotency_retention_h: int = Field(default=24, ge=1, le=24 * 30)
