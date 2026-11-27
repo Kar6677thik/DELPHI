@@ -400,12 +400,18 @@ class Limits:
         )
 
 
+COUNT_KEYS = ("cases", "campaigns", "new", "merged", "moved_cases", "changed")
+
+
 def run_batch(
     session: Session, clock: Clock, *, window_days: float, limits: Limits
 ) -> dict[str, int] | None:
     """One batch: the next settled touches, their component, regrouped; the watermark moves past
     them. None when nothing was touched. A cut component writes no campaign or case change.
-    In the caller's transaction (it holds the lock)."""
+    When the batch's joint component is cut, each seed is regrouped on its own instead, and
+    only the seeds whose own component is cut are skipped (#288 review): one oversized campaign
+    no longer holds back the unrelated cases batched with it. In the caller's transaction (it
+    holds the lock)."""
     w = campaign_watermark.c
     mark = session.execute(select(w.at, w.case_id).where(w.id == 1)).one()
     until = clock.now() - limits.settle_lag
@@ -414,21 +420,33 @@ def run_batch(
         return None
     seeds = {case_id for _, case_id in batch}
     record_entities(session, load_cases(session, seeds))
-    members, cut = component(
-        session, seeds, window=timedelta(days=window_days), limit=limits.max_component
-    )
+    window = timedelta(days=window_days)
+    members, cut = component(session, seeds, window=window, limit=limits.max_component)
+    groups = [members] if not cut else []
+    cuts = 0
     if cut:
-        log.warning("campaigns.component_cut", seeds=len(seeds), limit=limits.max_component)
-        counts = dict.fromkeys(("cases", "campaigns", "new", "merged", "moved_cases", "changed"), 0)
-    else:
-        loaded = load_cases(session, members)
+        covered: set[UUID] = set()
+        for seed in sorted(seeds, key=str):
+            if seed in covered:
+                continue
+            own, own_cut = component(session, {seed}, window=window, limit=limits.max_component)
+            if own_cut:
+                cuts += 1
+                log.warning("campaigns.component_cut", seed=str(seed), limit=limits.max_component)
+                continue
+            covered |= own
+            groups.append(own)
+    counts = dict.fromkeys(COUNT_KEYS, 0)
+    for group in groups:
+        loaded = load_cases(session, group)
         record_entities(session, loaded)
-        counts = regroup(session, clock, loaded, window_days=window_days)
+        for key, value in regroup(session, clock, loaded, window_days=window_days).items():
+            counts[key] = counts.get(key, 0) + value
     last_at, last_case = batch[-1]
     session.execute(
         update(campaign_watermark).where(w.id == 1).values(at=last_at, case_id=last_case)
     )
-    return counts | {"touched": len(batch), "component_cut": int(cut)}
+    return counts | {"touched": len(batch), "component_cut": cuts}
 
 
 @dataclass(frozen=True, slots=True)
