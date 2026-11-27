@@ -169,7 +169,8 @@ chase_operations(id, complaint_id null, source_payment_ids uuid[], status, repor
        -- demo reset deletes an operation (doc 14 §10)
 chase_candidates(id, operation_id, account_id, hop, taint_paise, balance_paise, p_present, p_mule,
                  erv_paise, wrongful_cost_paise, net_paise, rank, recommended bool, traced_at)
-liens(id, operation_id, candidate_id, account_id, bank_code, amount_paise, status, recorded_reasons,
+liens(id, operation_id, candidate_id, account_id, bank_code, amount_paise,
+      taint_at_approval_paise (amount ≤ it), status, recorded_reasons,
       evidence_refs jsonb, approved_by, approved_at, placed_at null, review_due_at null,
       released_at null, release_reason null)
 cfcfrms_tickets(id, lien_id, target_bank, status (DRAFTED|SENT_SIMULATED|ACKNOWLEDGED|EXPIRED),

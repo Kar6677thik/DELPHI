@@ -29,7 +29,7 @@ from delphi.sim.bank import accounts, ledger_entries, sim_schedule
 from delphi.sim.catalog import datasets
 from delphi.sim.delivery import deliver_labels
 from delphi.sim.jobs import register_sim_jobs
-from delphi.sim.reset import KEPT_TABLES, RESET_TABLES, register_reset_job
+from delphi.sim.reset import CASCADED_TABLES, KEPT_TABLES, RESET_TABLES, register_reset_job
 from delphi.sim.tick import advance_transfers
 from delphi.sim.truth import label_schedule
 
@@ -183,7 +183,75 @@ def test_every_table_is_reset_or_kept(seeded: Bank) -> None:
         }
     reset = {name for name, _ in RESET_TABLES}
     assert not reset & KEPT_TABLES
-    assert found == reset | KEPT_TABLES
+    assert not reset & CASCADED_TABLES
+    assert not KEPT_TABLES & CASCADED_TABLES
+    assert found == reset | KEPT_TABLES | CASCADED_TABLES
+
+
+def test_a_chase_operation_and_everything_on_it_is_reset(seeded: Bank) -> None:
+    """#113: an operation made after the seed goes, and its candidates, liens and tickets with
+    it (ON DELETE CASCADE)."""
+    seeded.clock.advance(timedelta(minutes=1))
+    now = seeded.clock.now()
+    operation, candidate, lien, user = uuid4(), uuid4(), uuid4(), uuid4()
+    with seeded.owner.begin() as conn:
+        account = conn.execute(select(accounts.c.id).limit(1)).scalar_one()
+        conn.execute(
+            text(
+                "INSERT INTO delphi.users (id, username, display_name, password_hash, role,"
+                " disabled, created_at, version) VALUES (:u, 'ivy', 'Ivy', 'x', 'INVESTIGATOR',"
+                " false, :t, 1)"
+            ),
+            {"u": user, "t": now},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO delphi.chase_operations (id, source_payment_ids, status, reported_at,"
+                " reported_loss_paise, kb_version_id, golden_hour_ends_at, last_traced_at,"
+                " metrics, created_at, version) VALUES (:o, ARRAY[:p]::uuid[], 'OPEN', :t,"
+                " 100000, 1, :t, :t, '{}', :t, 1)"
+            ),
+            {"o": operation, "p": uuid4(), "t": now},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO delphi.chase_candidates (id, operation_id, account_id, hop,"
+                " taint_paise, balance_paise, traced_at) VALUES (:c, :o, :a, 1, 50000, 50000, :t)"
+            ),
+            {"c": candidate, "o": operation, "a": account, "t": now},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO delphi.liens (id, operation_id, candidate_id, account_id, bank_code,"
+                " amount_paise, taint_at_approval_paise, status, recorded_reasons, evidence_refs,"
+                " approved_by, approved_at) VALUES (:l, :o, :c, :a, 'XBK1', 50000, 50000,"
+                " 'TICKET_SENT', 'traced', '[\"x\"]', :u, :t)"
+            ),
+            {"l": lien, "o": operation, "c": candidate, "a": account, "u": user, "t": now},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO delphi.cfcfrms_tickets (id, lien_id, target_bank, status, payload,"
+                " sent_at) VALUES (:k, :l, 'XBK1', 'SENT_SIMULATED', '{}', :t)"
+            ),
+            {"k": uuid4(), "l": lien, "t": now},
+        )
+    chase = ("chase_operations", "chase_candidates", "liens", "cfcfrms_tickets")
+
+    def counts() -> list[int]:
+        with seeded.owner.connect() as conn:
+            return [
+                conn.execute(
+                    select(func.count()).select_from(table(t, schema="delphi"))
+                ).scalar_one()
+                for t in chase
+            ]
+
+    assert counts() == [1, 1, 1, 1]
+    seeded.clock.advance(timedelta(minutes=1))
+    job = _reset(seeded)
+    assert job["status"] == JobStatus.SUCCEEDED, job["error"]
+    assert counts() == [0, 0, 0, 0]
 
 
 def test_the_reset_restores_the_seeded_bank_and_s2_runs_again(

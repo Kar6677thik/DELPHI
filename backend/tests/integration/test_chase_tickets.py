@@ -14,8 +14,14 @@ from sqlalchemy import select, text
 
 from delphi.api.security import Principal
 from delphi.chase.api import cfcfrms_tickets, chase_operations
-from delphi.chase.tickets import ChaseRetraceJob, process_tickets, simulated_ack_delay
+from delphi.chase.tickets import (
+    ChaseRetraceJob,
+    close_due_operations,
+    process_tickets,
+    simulated_ack_delay,
+)
 from delphi.platform.jobs import JobContext
+from delphi.platform.locks import LIEN_ACCOUNT_LOCK_CLASS
 
 from .test_cases import Env, env, writer  # noqa: F401 - pytest fixtures
 from .test_chase_liens import INR, _account, _pay, _post, _scam
@@ -213,3 +219,47 @@ def test_an_acknowledged_lien_leaves_room_for_the_accounts_other_liens(
             {"a": mule},
         ).scalar_one()
     assert held == 30_000 * INR
+
+
+def test_a_ticket_not_yet_due_holds_no_account_lock(
+    env: Env,  # noqa: F811
+    writer: tuple[TestClient, Principal],  # noqa: F811
+) -> None:
+    """#253 review: the ticket pass locks only the accounts of the tickets it acknowledges, so
+    an approval on an account with a ticket still waiting is never blocked by it."""
+    client, _ = writer
+    _view, external, _ticket = _ticketed(client, env)
+    with env.sessions.begin() as s:
+        counts = process_tickets(s, env.clock, ack_delay=lambda _t: ACK_AFTER, limit=200)
+        assert counts == {"acknowledged": 0, "expired": 0}
+        with env.owner.connect() as other:
+            free = other.execute(
+                text("SELECT pg_try_advisory_lock(:k, hashtext(:a))"),
+                {"k": LIEN_ACCOUNT_LOCK_CLASS, "a": str(external)},
+            ).scalar_one()
+            other.execute(
+                text("SELECT pg_advisory_unlock(:k, hashtext(:a))"),
+                {"k": LIEN_ACCOUNT_LOCK_CLASS, "a": str(external)},
+            )
+    assert free is True
+
+
+def test_closing_skips_an_operation_another_transaction_holds(
+    env: Env,  # noqa: F811
+    writer: tuple[TestClient, Principal],  # noqa: F811
+) -> None:
+    """#253 review: the close step skips a locked operation instead of waiting for it (no
+    deadlock with an approval), and closes it on the next run."""
+    client, _ = writer
+    view, _external, _ticket = _ticketed(client, env)
+    env.clock.advance(timedelta(hours=4))  # golden hour over; the ticket expires
+    assert _settle(env, None) == {"acknowledged": 0, "expired": 1}
+    op_id = UUID(view["id"])
+    with env.owner.begin() as held:
+        held.execute(
+            select(chase_operations.c.id).where(chase_operations.c.id == op_id).with_for_update()
+        )
+        with env.sessions.begin() as s:
+            assert close_due_operations(s, env.clock, limit=10) == 0
+    with env.sessions.begin() as s:
+        assert close_due_operations(s, env.clock, limit=10) == 1
