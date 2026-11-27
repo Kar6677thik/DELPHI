@@ -12,8 +12,10 @@ from uuid import UUID, uuid4
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text, update
+from sqlalchemy.dialects import postgresql
 
 from delphi.api.security import Permission, Principal, current_principal
+from delphi.guardian.api import attributed_sessions_query, unexplained_sessions_query
 from delphi.guardian.tables import guardian_sessions
 from delphi.kb.store import active_version
 from delphi.platform.errors import DelphiError, ProblemCode
@@ -226,3 +228,29 @@ def test_the_count_is_bounded_by_since_and_the_cap(env: Env) -> None:  # noqa: F
             else queue_module.SubjectType.GUARDIAN_SESSION
         )
         assert queue_module.queue_item(s, version.kb, item.subject_id, other) is None
+
+
+def _plan(e: Env, query: Any) -> str:
+    """EXPLAIN with sequential scans off: a plan that still scans the table can't use an index."""
+    sql = str(query.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
+    with e.owner.begin() as conn:
+        conn.exec_driver_sql("SET LOCAL enable_seqscan = off")
+        return "\n".join(r[0] for r in conn.exec_driver_sql(f"EXPLAIN {sql}"))
+
+
+def test_the_session_source_uses_its_partial_index(env: Env) -> None:  # noqa: F811
+    """#254 review: `WHERE unexplained` matches the partial index; `IS true` did not, so every
+    page, lookup and count read the whole of guardian_sessions."""
+    _decided(env, unexplained=True)
+    query = unexplained_sessions_query().order_by(text("entered_at"), text("subject_id")).limit(50)
+    assert "guardian_sessions_unexplained_decided_idx" in _plan(env, query)
+
+
+def test_the_reference_set_uses_its_partial_index(env: Env) -> None:  # noqa: F811
+    """#255 review: `WHERE NOT unexplained` matches the reference index; `IS false` did not, so
+    every run read and sorted the whole of guardian_sessions."""
+    _decided(env, unexplained=False)
+    query = (
+        attributed_sessions_query().order_by(text("entered_at DESC"), text("subject_id")).limit(50)
+    )
+    assert "guardian_sessions_reference_decided_idx" in _plan(env, query)

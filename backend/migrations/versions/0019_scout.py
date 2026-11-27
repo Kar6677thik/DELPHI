@@ -102,6 +102,9 @@ CREATE INDEX guardian_sessions_reference_decided_idx ON delphi.guardian_sessions
   (decided_at DESC, id) WHERE NOT unexplained AND decided_at IS NOT NULL;
 CREATE INDEX cases_disposed_review_idx ON delphi.cases (disposed_at, id)
   WHERE type = 'ACCOUNT_REVIEW' AND status = 'DISPOSED';
+-- SCOUT_AUTO_TRIGGER's back-off reads the latest finished RUN_SCOUT every 5 minutes, and jobs
+-- are never deleted (#254 review).
+CREATE INDEX jobs_type_finished_idx ON delphi.jobs (type, finished_at);
 """
 
 
