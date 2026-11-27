@@ -14,6 +14,7 @@ from delphi.guardian.api import attributed_sessions_query
 from delphi.guardian.store import ProbeMode, add_probe_run
 from delphi.guardian.tables import guardian_sessions, probe_runs
 from delphi.kb.store import active_version
+from delphi.platform.audit import audit_log
 from delphi.platform.jobs import JobContext, JobType, enqueue
 from delphi.platform.locks import SCOUT_RUN_LOCK_KEY
 from delphi.scout.api import queue_items, run_scout, scout_clusters, typology_drafts
@@ -177,10 +178,10 @@ def test_a_new_run_supersedes_the_earlier_candidates_only(env: Env) -> None:  # 
     for minute in range(6):
         _with_outcomes(env, _decided(env, unexplained=True, minutes=minute), PATTERN)
     with env.sessions.begin() as s:
-        first = run_scout(s, env.clock, _kb(env), max_items=500)
+        first_run = run_scout(s, env.clock, _kb(env), max_items=500)
     env.clock.advance(timedelta(minutes=1))
     with env.sessions.begin() as s:
-        second = run_scout(s, env.clock, _kb(env), max_items=500)
+        second_run = run_scout(s, env.clock, _kb(env), max_items=500)
     # Each run's draft, by its run (ids alone would not order two runs at one instant).
     with env.owner.connect() as conn:
         first, second = (
@@ -189,9 +190,18 @@ def test_a_new_run_supersedes_the_earlier_candidates_only(env: Env) -> None:  # 
                 .join(scout_clusters, scout_clusters.c.id == typology_drafts.c.cluster_id)
                 .where(scout_clusters.c.run_id == run)
             ).scalar_one()
-            for run in (first, second)
+            for run in (first_run, second_run)
         )
     assert _statuses(env) == {first: "SUPERSEDED", second: "CANDIDATE"}
+    with env.owner.connect() as conn:  # audited once, on the run that superseded (#255 review)
+        audited = conn.execute(
+            select(audit_log.c.actor_type, audit_log.c.entity_id, audit_log.c.payload).where(
+                audit_log.c.action == "scout.drafts.superseded"
+            )
+        ).all()
+    assert [(a.actor_type, a.entity_id, a.payload["draft_ids"]) for a in audited] == [
+        ("SYSTEM", str(second_run), [str(first)])
+    ]
     with env.owner.begin() as conn:  # an engineer took the latest candidate on
         conn.execute(
             update(typology_drafts).where(typology_drafts.c.id == second).values(status="DRAFT")

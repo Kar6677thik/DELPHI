@@ -26,7 +26,9 @@ do not pile up.
 
 **Superseded drafts** (the owner's decision on #255). In the same transaction, a run marks the
 earlier runs' drafts that are still CANDIDATE as SUPERSEDED, so only the latest candidates are
-open. A draft past CANDIDATE is never touched.
+open, and audits it once, listing the drafts (``scout.drafts.superseded``). A draft past
+CANDIDATE is never touched. A run that finds no cluster supersedes them too: its queue is the
+newer one, and an older candidate it no longer finds is stale.
 
 **Gap fills (docs/11 §2 is silent):**
 - The sensing artifacts store no feature means or standard deviations, so the z-scores use the
@@ -57,6 +59,7 @@ from delphi.guardian.api import attributed_sessions_query, observed_outcomes
 from delphi.kb.model import KnowledgeBase
 from delphi.kb.store import active_version
 from delphi.navigator.api import current_records
+from delphi.platform.audit import ActorType, record
 from delphi.platform.clock import Clock
 from delphi.platform.events import EventType, publish
 from delphi.platform.ids import uuid7
@@ -182,10 +185,13 @@ def run_scout(
         selection_epsilon=cfg.cluster_selection_epsilon,
     )
     run_id = uuid7(unix_ms=int(started.timestamp() * 1000))
-    session.execute(  # the owner's decision on #255: only the latest run's candidates stay open
-        update(typology_drafts)
-        .where(typology_drafts.c.status == CANDIDATE)
-        .values(status=SUPERSEDED, updated_at=started, version=typology_drafts.c.version + 1)
+    superseded = list(  # the owner's decision on #255: only the latest run's candidates stay
+        session.execute(
+            update(typology_drafts)
+            .where(typology_drafts.c.status == CANDIDATE)
+            .values(status=SUPERSEDED, updated_at=started, version=typology_drafts.c.version + 1)
+            .returning(typology_drafts.c.id)
+        ).scalars()
     )
     params = {
         "lookback_days": cfg.lookback_days,
@@ -206,6 +212,17 @@ def run_scout(
             params=params,
         )
     )
+    if superseded:  # a state transition, so audited (docs/17): one record per run
+        record(
+            session,
+            clock,
+            actor_type=ActorType.SYSTEM,
+            actor_id=None,
+            action="scout.drafts.superseded",
+            entity_type="scout_run",
+            entity_id=str(run_id),
+            payload={"draft_ids": sorted(str(d) for d in superseded)},
+        )
     by_id = {q.item.id: q.ref for q in queue}
     for n, cluster in enumerate(result.clusters, start=1):
         members = [by_id[m] for m in cluster.member_ids]
