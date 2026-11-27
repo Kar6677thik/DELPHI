@@ -134,7 +134,12 @@ as joining every pair, in O(n log n). The store is `delphi.navigator.campaign_st
   the other members of the campaigns it meets. Only that component is regrouped. A component that
   reaches `DELPHI_CAMPAIGN_MAX_COMPONENT` (2,000, at most 5,000) cases is **cut**: regrouping part
   of it could split or dissolve its campaigns wrongly, so the job changes no campaign and no case
-  for it, moves the watermark past the batch, and logs and counts it (`component_cut`).
+  for it, and logs and counts it (`component_cut`). When a batch's joint component is cut, each
+  touched case is regrouped on its own, so only the cases whose own component is cut are
+  skipped; the rest of the batch is grouped as usual. The watermark moves past the batch.
+- **A case's campaign** is set null if its campaign row is deleted (`ON DELETE SET NULL`), so a
+  demo reset that deletes a campaign made after the seed never leaves a case from before the
+  seed pointing at it.
 - **Entities** are written to `case_entities` the first time the job sees a case:
   - a payment case: the payee account, the payment's device fingerprint, and the payer's latest
     login /24 at or before the payment;

@@ -240,6 +240,28 @@ def test_a_cut_component_writes_nothing(env: Env) -> None:  # noqa: F811
     assert _recompute(env, small) == {}  # the watermark moved past it
 
 
+def test_a_cut_seed_does_not_hold_back_the_rest_of_its_batch(env: Env) -> None:  # noqa: F811
+    """#288 review: a batch whose joint component is cut regroups each seed on its own; only the
+    seed in the oversized campaign is skipped, and an unrelated pair batched with it still gets
+    its campaign."""
+    big = [_case(env, minutes=m) for m in range(3)]
+    mule = _new_account(env)
+    for case_id in big:
+        _payee(env, case_id, mule)
+    _recompute(env)
+    extra = _case(env, minutes=3)  # touches the 3-case campaign: its component is cut
+    _payee(env, extra, mule)
+    x, y = _case(env, minutes=3), _case(env, minutes=4)
+    other = _new_account(env)
+    _payee(env, x, other)
+    _payee(env, y, other)  # an unrelated pair, in the same batch
+    small = Limits(batch=50, batches_per_run=20, max_component=3, settle_lag=timedelta(0))
+    counts = _recompute(env, small)
+    assert counts["touched"] == 3 and counts["component_cut"] == 1
+    assert _campaign_of(env, extra) is None
+    assert _campaign_of(env, x) is not None and _campaign_of(env, x) == _campaign_of(env, y)
+
+
 def test_a_late_commit_is_still_taken(env: Env) -> None:  # noqa: F811
     """#288: touch times are read before their transaction commits. With the settle lag, a
     case whose opened_at is older than one already seen, but committed later, is not skipped."""

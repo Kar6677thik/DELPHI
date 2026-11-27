@@ -50,7 +50,7 @@ CREATE INDEX campaigns_rank_idx ON delphi.campaigns (rank_score DESC, id DESC)
 CREATE INDEX campaigns_merged_into_idx ON delphi.campaigns (merged_into);
 ALTER TABLE delphi.cases
   ADD CONSTRAINT cases_campaign_id_fkey FOREIGN KEY (campaign_id) REFERENCES delphi.campaigns (id)
-  NOT VALID;
+  ON DELETE SET NULL NOT VALID;
 ALTER TABLE delphi.cases VALIDATE CONSTRAINT cases_campaign_id_fkey;
 CREATE INDEX cases_campaign_id_idx ON delphi.cases (campaign_id);
 CREATE TABLE delphi.case_entities (
