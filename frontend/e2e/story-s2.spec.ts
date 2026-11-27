@@ -66,8 +66,7 @@ test('E2E-S2: Arjun answers as scripted and the payment is sent', async ({ page 
     try {
       await wait;
     } catch (error) {
-      throw new Error(`${await trail()}
-${String(error)}`);
+      throw new Error(`${await trail()}\n${String(error)}`, { cause: error });
     }
   };
   const answer = async (screen: Locator, afterMs: number, act: () => Promise<void>) => {
