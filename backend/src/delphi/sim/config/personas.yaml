@@ -80,12 +80,9 @@ stories:
     local_time: "23:40"
     scenario: APP_DIGITAL_ARREST   # the story payment's truth (docs/14 §10)
     coached: true                  # "coached purpose answer"
-    # On a call with an unknown number, typing normally, but she pastes the "safe account"
-    # the caller sent her (#291, R-01: the live prior's DA is ~.03, not the fixture's .30, so
-    # the typed-normally path ends in a cooling-off; ENG-S1 pins both paths on the fixture).
-    telemetry:
+    telemetry:                  # on a call with an unknown number, typing normally
       typing_cadence_z: 0.3     # gap
-      paste_on_account_field: true
+      paste_on_account_field: false
       max_field_dwell_s: 6.0    # gap
       remote_access_active: false
       screen_share_active: false

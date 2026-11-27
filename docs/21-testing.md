@@ -57,13 +57,6 @@ attackers, merchant cash-outs) did not move it: the prior cannot see the new pho
 checks the outcome the story is about (a quick release after at most one step-up and ≤ 2 active
 probes), and the biometric-over-OTP choice stays pinned at engine level by ENG-S2.
 
-**S-1 (#291, owner decision delegated, 2026-11-25).** The live prior gives Kamala DA ≈ .03 (the
-fixture .30). Typing normally, she then ends in the 10-minute cooling-off, not the protective
-screen. The persona was fixed instead (R-01): she pastes the account the caller sent her, so
-SESSION_BEHAVIOUR is HESITANT_OR_PASTED and the live run protects her, as ENG-S1's hesitant path
-does. ENG-S1 still pins the typed-normally path (purpose, then the spell-breaker) on the fixture,
-and the Theatre's Act 1 replays it.
-
 | ID | Setup (demo dataset personas, KB v1, scripted responses) | Assertions |
 |---|---|---|
 | ENG-S1 | Kamala payment; passive outcomes from the persona telemetry (ON_CALL_UNKNOWN_NUMBER, NORMAL session, KNOWN_DEVICE, CLEAN_UNKNOWN beneficiary); coached purpose answer FAMILY_OR_FRIEND in 6 s; spell-breaker answered NO after 11 s with 1 app switch | `SPELL_BREAKER_DIGITAL_ARREST` is among the active probes run; `OTP_STEP_UP` is never selected; the leading hypothesis is `APP_DIGITAL_ARREST` (≥ 0.65); decision `PROTECTIVE_HOLD`; B2 baseline decision `RELEASE` |

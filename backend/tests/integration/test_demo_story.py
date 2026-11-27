@@ -227,8 +227,8 @@ def test_s2_autoplay_releases_after_the_biometric(seeded: Bank, kb: KnowledgeBas
 
 
 def test_s1_autoplay_reaches_the_protective_hold(seeded: Bank, kb: KnowledgeBase) -> None:
-    """ENG-S1's hesitant path: Kamala pastes the account the caller sent her (#291), so her
-    staged payment's passive outcomes alone give PROTECTIVE_HOLD, with no active probe."""
+    """ENG-S1: purpose, then the spell-breaker (answered by the script), never OTP, and
+    PROTECTIVE_HOLD; Kamala's staged payment gives her golden passive outcomes."""
     guardian, customer = _worker(seeded, kb, story_prior(KAMALA_PRIOR))
     guardian.start()
     try:
@@ -238,8 +238,14 @@ def test_s1_autoplay_reaches_the_protective_hold(seeded: Bank, kb: KnowledgeBase
     finally:
         guardian.stop()
     passive = {r.probe_key: r.outcome for r in _runs(seeded, decided["id"], "PASSIVE")}
-    assert passive == {**KAMALA_PASSIVE, "SESSION_BEHAVIOUR": "HESITANT_OR_PASTED"}
-    assert _runs(seeded, decided["id"], "ACTIVE") == []
+    assert passive == KAMALA_PASSIVE
+    active = _runs(seeded, decided["id"], "ACTIVE")
+    assert [r.probe_key for r in active[:2]] == ["PURPOSE_QUESTION", "SPELL_BREAKER_DIGITAL_ARREST"]
+    assert [r.outcome for r in active[:2]] == [
+        "PLAUSIBLE_NORMAL_TIMING",  # FAMILY_OR_FRIEND after 6 s
+        "HESITATION_OR_APP_SWITCH",  # NO after 11 s with an app switch
+    ]
+    assert "OTP_STEP_UP" not in [r.probe_key for r in active]
     assert decided["decision"] == "PROTECTIVE_HOLD"
     with seeded.owner.connect() as conn:  # the story payment's truth (docs/14 §10)
         truth = conn.execute(

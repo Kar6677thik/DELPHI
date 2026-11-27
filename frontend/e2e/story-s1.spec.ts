@@ -1,10 +1,10 @@
 import { expect, type Locator, type Page, test } from '@playwright/test';
 
-// E2E-S1, the Guardian half (docs/21 §4, #101): Kamala, on a call with an unknown number,
-// pastes the "safe account" the caller sent her and pays it; answering whatever is asked as
-// her persona script does, she ends on the protective screen (live, the passive evidence can
-// be enough on its own: #291). The Navigator half (the case, the outreach, the DD pack)
-// follows with #105/#108.
+// E2E-S1, the Guardian half (docs/21 §4, #101): Kamala, on a call with an unknown number and
+// typing normally, pays a "safe account" at her script's 23:40 (#291); answering what is asked
+// as her persona script does (purpose, then the spell-breaker with an app switch), she ends on
+// the protective screen. The Navigator half (the case, the outreach, the DD pack) follows with
+// #105/#108.
 // The stack needs the demo dataset with its personas and trained models (ci.yml e2e job).
 const USERNAME = process.env.E2E_USERNAME ?? 'admin';
 const PASSWORD = process.env.E2E_PASSWORD ?? 'dev-only-admin-pw';
@@ -44,7 +44,7 @@ test('E2E-S1 (Guardian): Kamala answers as scripted and is protected', async ({ 
     'aria-pressed',
     'true',
   );
-  await expect(around.getByRole('button', { name: 'Pasted, hesitant' })).toHaveAttribute(
+  await expect(around.getByRole('button', { name: 'Natural' })).toHaveAttribute(
     'aria-pressed',
     'true',
   );
@@ -103,6 +103,7 @@ test('E2E-S1 (Guardian): Kamala answers as scripted and is protected', async ({ 
     }
   }
   await expect(protectedScreen).toBeVisible();
+  expect(spellBreakers, 'the spell-breaker was asked (ENG-S1)').toBeGreaterThanOrEqual(1);
 
   const view = await page.request.get(`/api/v1/guardian/sessions/${id}`);
   expect(view.ok()).toBe(true);
