@@ -19,6 +19,10 @@ LABEL_DELIVERY_LOCK_KEY = 49  # delivering due labels from the simulator's sched
 ACCOUNT_REVIEW_SWEEP_LOCK_KEY = 50  # opening ACCOUNT_REVIEW cases from triggers (docs/09 §1)
 DEMO_RESET_LOCK_KEY = 51  # one demo reset at a time (docs/14 §10)
 MULE_SWEEP_LOCK_KEY = 54  # rescoring accounts into account_scores (docs/13 §6)
+# Two-key locks (class, hashtext(id)): one per bank account while its liens are set, so two
+# approvals or acknowledgements cannot both use the same headroom (FR-CHS-05). The class is a
+# separate namespace from the one-key locks above (their high half is 0).
+LIEN_ACCOUNT_LOCK_CLASS = 52
 
 ALL_LOCK_KEYS: dict[str, int] = {
     "audit": AUDIT_LOCK_KEY,
