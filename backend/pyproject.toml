@@ -37,6 +37,7 @@ dev = [
   "types-PyYAML>=6.0",
   "httpx>=0.28",
   "pandas-stubs>=2.2",
+  "locust>=2.32",
 ]
 
 [build-system]

@@ -27,6 +27,16 @@ from delphi.sensing.features import (
 )
 from delphi.sim import api as bank
 
+MINUTES_PER_HOUR = 60
+
+
+def _hour_of(local_time: str | None) -> float | None:
+    """A story's scripted IST "HH:MM" as a fractional local hour (docs/14 §10)."""
+    if local_time is None:
+        return None
+    hours, minutes = local_time.split(":")
+    return int(hours) + int(minutes) / MINUTES_PER_HOUR
+
 
 def load_payment_snapshot(
     conn: Connection, payment_id: UUID, config: FeatureConfig
@@ -70,6 +80,7 @@ def load_payment_snapshot(
         payee_p_mule=payee_mule_score(conn, row.payee_account_id, as_of, config),
         session_duration_s=row.session_duration_s,
         remote_access_active=row.remote_access_active,
+        local_hour=_hour_of(row.story_local_time),
     )
 
     customer = conn.execute(

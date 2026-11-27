@@ -1757,137 +1757,6 @@
         }
       }
     },
-    "/api/v1/scout/queue": {
-      "get": {
-        "tags": [
-          "scout"
-        ],
-        "summary": "Read Queue",
-        "operationId": "read_queue_api_v1_scout_queue_get",
-        "parameters": [
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 200,
-              "minimum": 1,
-              "default": 50,
-              "title": "Limit"
-            }
-          },
-          {
-            "name": "cursor",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Cursor"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/QueueView"
-                }
-              }
-            }
-          },
-          "default": {
-            "description": "An RFC 9457 problem (docs/16 §1)",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/scout/queue/{item_id}/dismiss": {
-      "post": {
-        "tags": [
-          "scout"
-        ],
-        "summary": "Dismiss Item",
-        "description": "docs/11 §1: 404 for an id not in the queue (already dismissed, or assigned); 409 when a\nconcurrent dismissal of the same item won.",
-        "operationId": "dismiss_item_api_v1_scout_queue__item_id__dismiss_post",
-        "parameters": [
-          {
-            "name": "item_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Item Id"
-            }
-          },
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/Dismissal"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/QueueItemView"
-                }
-              }
-            }
-          },
-          "default": {
-            "description": "An RFC 9457 problem (docs/16 §1)",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/v1/guardian/sessions": {
       "get": {
         "tags": [
@@ -3602,22 +3471,6 @@
         ],
         "title": "DiffOp"
       },
-      "Dismissal": {
-        "properties": {
-          "reason": {
-            "type": "string",
-            "maxLength": 500,
-            "minLength": 1,
-            "title": "Reason"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "reason"
-        ],
-        "title": "Dismissal"
-      },
       "DispositionRequest": {
         "properties": {
           "decision": {
@@ -5154,6 +5007,18 @@
                 "type": "null"
               }
             ]
+          },
+          "story_local_time": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Story Local Time"
           }
         },
         "additionalProperties": false,
@@ -6016,90 +5881,6 @@
           "message"
         ],
         "title": "ProblemFieldError"
-      },
-      "QueueItemView": {
-        "properties": {
-          "id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Id"
-          },
-          "subject_type": {
-            "type": "string",
-            "title": "Subject Type"
-          },
-          "entered_at": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Entered At"
-          },
-          "p_unexplained": {
-            "type": "number",
-            "title": "P Unexplained"
-          },
-          "payment_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "uuid"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Payment Id"
-          },
-          "account_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "uuid"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Account Id"
-          }
-        },
-        "type": "object",
-        "required": [
-          "id",
-          "subject_type",
-          "entered_at",
-          "p_unexplained",
-          "payment_id",
-          "account_id"
-        ],
-        "title": "QueueItemView"
-      },
-      "QueueView": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/QueueItemView"
-            },
-            "type": "array",
-            "title": "Items"
-          },
-          "next_cursor": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Next Cursor"
-          }
-        },
-        "type": "object",
-        "required": [
-          "items",
-          "next_cursor"
-        ],
-        "title": "QueueView"
       },
       "ReadinessView": {
         "properties": {
