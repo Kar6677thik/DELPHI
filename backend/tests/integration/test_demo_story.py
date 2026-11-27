@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from delphi.api.app import create_app
 from delphi.api.routers import demo as demo_router
 from delphi.api.security import current_principal
+from delphi.guardian import service as service_module
 from delphi.guardian.api import WorkerGuardian, live_guardian, worker_guardian
 from delphi.guardian.service import GuardianService
 from delphi.guardian.store import Runner, SessionMode, SessionStatus
@@ -81,6 +82,30 @@ class FixedMuleScore:
         return P_MULE
 
 
+# The story tests check what a story does, not how fast the simulated bank answers (#305). Their
+# adapters' queries already get this long; the passive runner waits the same, instead of the KB's
+# 300 ms, which a CI runner's disk stall (a Postgres checkpoint) once outlasted.
+STORY_PASSIVE_TIMEOUT_MS = 2_000
+
+
+@pytest.fixture(autouse=True)
+def story_passive_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    real = service_module.run_passive_probes
+
+    async def patient(*args: Any, **kwargs: Any) -> Any:
+        keys, fetchers, request, thresholds, timeout_ms = args
+        return await real(
+            keys,
+            fetchers,
+            request,
+            thresholds,
+            max(timeout_ms, STORY_PASSIVE_TIMEOUT_MS),
+            **kwargs,
+        )
+
+    monkeypatch.setattr(service_module, "run_passive_probes", patient)
+
+
 @dataclass
 class Bank:
     url: str
@@ -93,7 +118,7 @@ class Bank:
 
     def service(self, prior: FixedPrior) -> GuardianService:
         """The real simulated passive adapters, with a fixture prior and mule score."""
-        timeout_ms = 2_000
+        timeout_ms = STORY_PASSIVE_TIMEOUT_MS
         telemetry = SimSessionTelemetry(self.app, timeout_ms)
         fetchers = passive_fetchers(
             SimBeneficiaryIntel(self.app, FixedMuleScore(), timeout_ms),
