@@ -123,7 +123,7 @@ this repo, so don't depend on the wiki.
 ## 5. Before you push
 
 CI runs every gate on every push, and branch protection blocks a merge until CI passes. Before a
-push, run the **quick checks**, and add the **full run** when the change is risky (#262).
+push, run the **quick checks** below; CI runs the full suite (#262).
 
 **Quick checks** (always), from `backend/`:
 
@@ -143,19 +143,22 @@ uv run pytest <the tests for the area you changed>
 also runs, from `frontend/`: `pnpm lint`, `pnpm typecheck`, `pnpm format:check`, `pnpm test` and
 `pnpm check:api`.
 
-**The full run** is required, in addition, when a change touches a migration, `kb/`, or any of:
+**The full run is CI's.** CI runs the whole suite with coverage on every push, so it is not
+run locally by default (owner decision, 2026-11-27: it saves the contributor's machine). A
+change is **risky** when it touches a migration, `kb/`, or any of:
 - `delphi.platform` (including the job queue, the scheduler and the worker);
 - `delphi.api`;
 - `delphi.engine`;
 - `delphi/guardian/service.py`.
+
+Push a risky change as a **draft** and mark it ready only once CI's full run is green. Run the
+full set locally only to reproduce a CI failure:
 
 ```sh
 uv run coverage run -m pytest
 uv run coverage report --include="src/delphi/engine/*" --fail-under=95
 uv run coverage report --fail-under=80
 ```
-
-CI runs this full set on every push regardless.
 
 All checks must pass. Never skip, delete or weaken a failing test or check to get green, and
 never mark a PR ready, or merge it, with red CI. When CI fails, reproduce it locally with the
