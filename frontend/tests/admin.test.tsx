@@ -237,6 +237,93 @@ describe('/admin demo stories', () => {
   });
 });
 
+describe('/admin demo reset', () => {
+  const RESET = '01930000-0000-7000-8000-0000000000f1';
+
+  it('asks first, then resets with an idempotency key and says what it did', async () => {
+    setMockSession('admin');
+    const sent: { key?: string | null; calls: number } = { calls: 0 };
+    server.use(
+      http.get('/api/v1/jobs', () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.post('/api/v1/admin/demo/reset', ({ request }) => {
+        sent.calls += 1;
+        sent.key = request.headers.get('Idempotency-Key');
+        return HttpResponse.json(job({ id: RESET, type: 'DEMO_RESET', status: 'QUEUED' }), {
+          status: 202,
+        });
+      }),
+      http.get(`/api/v1/jobs/${RESET}`, () =>
+        HttpResponse.json(
+          job({
+            id: RESET,
+            type: 'DEMO_RESET',
+            result: {
+              deleted: { 'bank.payments': 12, 'delphi.guardian_sessions': 3 },
+              accounts_restored: 4,
+              restart_needed: true,
+            },
+          }),
+        ),
+      ),
+    );
+    const { user } = renderApp('/admin');
+    const card = await screen.findByRole('region', { name: 'Reset the demo' });
+    await user.click(within(card).getByRole('button', { name: 'Reset the demo' }));
+    await user.click(within(card).getByRole('button', { name: 'Keep it' }));
+    expect(sent.calls).toBe(0);
+
+    await user.click(within(card).getByRole('button', { name: 'Reset the demo' }));
+    await user.click(within(card).getByRole('button', { name: 'Yes, reset' }));
+    expect(await within(card).findByText(/15 rows removed, 4 accounts restored/)).toBeVisible();
+    expect(within(card).getByText(/Restart the api and the worker/)).toBeVisible();
+    expect(sent.calls).toBe(1);
+    expect(sent.key).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it('says when another reset was running', async () => {
+    setMockSession('admin');
+    server.use(
+      http.get('/api/v1/jobs', () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.post('/api/v1/admin/demo/reset', () =>
+        HttpResponse.json(job({ id: RESET, type: 'DEMO_RESET', status: 'QUEUED' }), {
+          status: 202,
+        }),
+      ),
+      http.get(`/api/v1/jobs/${RESET}`, () =>
+        HttpResponse.json(
+          job({
+            id: RESET,
+            type: 'DEMO_RESET',
+            result: { skipped: 'another demo reset is running' },
+          }),
+        ),
+      ),
+    );
+    const { user } = renderApp('/admin');
+    const card = await screen.findByRole('region', { name: 'Reset the demo' });
+    await waitFor(() => {
+      expect(within(card).getByRole('button', { name: 'Reset the demo' })).toBeEnabled();
+    });
+    await user.click(within(card).getByRole('button', { name: 'Reset the demo' }));
+    await user.click(within(card).getByRole('button', { name: 'Yes, reset' }));
+    expect(await within(card).findByText(/Another reset was already running/)).toBeVisible();
+  });
+
+  it('is disabled without a dataset', async () => {
+    setMockSession('admin');
+    server.use(
+      http.get('/api/v1/status', () =>
+        HttpResponse.json({ ...MOCK_STATUS, dataset_ready: false, models_ready: false }),
+      ),
+      http.get('/api/v1/jobs', () => HttpResponse.json({ items: [], next_cursor: null })),
+    );
+    renderApp('/admin');
+    const card = await screen.findByRole('region', { name: 'Reset the demo' });
+    expect(within(card).getByRole('button', { name: 'Reset the demo' })).toBeDisabled();
+    expect(within(card).getByText('There is no dataset to reset yet.')).toBeVisible();
+  });
+});
+
 describe('/admin users', () => {
   it('lists the users, marks you, and never offers to disable you', async () => {
     setMockSession('admin');

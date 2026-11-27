@@ -116,6 +116,11 @@ opening fields (posterior, prior components, leading hypothesis, amount, SLA and
 | POST `/chase/operations/{id}/liens/{lien_id}/release` | `chase:write` | `{reason}` |
 | POST `/chase/operations/{id}/close` | `chase:write` | |
 
+`ChaseView` carries `ETag: "<version>"` on create, read and lien approval, so a client can tell
+it changed. The Chase actions take no `If-Match`: lien approval is guarded by `Idempotency-Key`,
+and release and close by the lien's or the operation's state. The list, `GET /chase/operations`,
+is not built yet.
+
 ### Scout, typologies, KB
 
 | Method & path | Perm | Notes |
@@ -162,7 +167,7 @@ opening fields (posterior, prior components, leading hypothesis, amount, SLA and
 | Method & path | Perm | Notes |
 |---|---|---|
 | GET/POST `/admin/users`, PATCH `/admin/users/{id}` | `admin` | Create `{username, display_name, password, role}`; a taken username is 422. PATCH `{display_name?, role?, disabled?, password?}` with `If-Match` (ETag `"<version>"`): a stale one is 412, a missing one 422. Disabling, a role change or a password reset ends the user's sessions at once. Removing the last enabled ADMIN (disable or demote) is `409 INVALID_STATE_TRANSITION`. Every change is audited |
-| POST `/admin/datasets` | `admin` | `{profile, seed?}` → 202 with the `GENERATE_DATASET` job. One dataset per database (doc 17 §3): 409 `JOB_ALREADY_RUNNING` while one is being generated, 409 `INVALID_STATE_TRANSITION` once one is there |
+| POST `/admin/datasets` | `admin` | `{profile, seed?, personas?}` (`personas`: add the doc 14 §6 personas; default as `personas.yaml` lists, i.e. `demo` only; the E2E stack seeds `test` with them, doc 21 §1) → 202 with the `GENERATE_DATASET` job. One dataset per database (doc 17 §3): 409 `JOB_ALREADY_RUNNING` while one is being generated, 409 `INVALID_STATE_TRANSITION` once one is there |
 | POST `/admin/sensing/train` | `admin` | `Idempotency-Key` → `202` with the `TRAIN_SENSING` job, on the dataset in the bank. `409 INVALID_STATE_TRANSITION` without a dataset, `409 JOB_ALREADY_RUNNING` while one is queued or running (doc 13 §7) |
 | POST `/admin/demo/scenarios/{story}/run` | `demo:drive` | story ∈ `S1,S2,S3,S4`; `Idempotency-Key`; `{mode: "interactive" \| "autoplay"}` → 202 job (`DEMO_STORY`, doc 14 §10). The worker stages the story; the job's result has `story`, `mode`, `customer_id`, and in `autoplay` `payment_id` and `session_id` (a WORKER session the simulated customer answers from the script), in `interactive` `payment`: the `POST /guardian/sessions` body the mock phone pays with, so the phone answers the API session. 422 for S3 and S4 (not runnable yet) or an unknown mode. 409 `INVALID_STATE_TRANSITION` while a demo reset is queued or running. 503 `NOT_INITIALISED` until the dataset and the models are ready, while `DELPHI_SIMULATION_ENABLED` is off, or, for `interactive`, while the api has no runner |
 | POST `/admin/demo/reset` | `admin` | `Idempotency-Key` → 202 with the `DEMO_RESET` job (doc 14 §10). This process first drops the LIVE sessions it is driving. The job's result has `deleted` (rows per table), `accounts_restored`, `schedule_rows_due_again`, `labels_undelivered`, `worker_sessions_dropped`, `kb_v1_reactivated` and `restart_needed`, or `skipped` when another reset held the lock. 409 `INVALID_STATE_TRANSITION` without a dataset, 409 `JOB_ALREADY_RUNNING` while a reset is queued or running; 503 `NOT_INITIALISED` while `DELPHI_SIMULATION_ENABLED` is off |
