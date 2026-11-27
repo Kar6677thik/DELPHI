@@ -197,7 +197,7 @@ def attributed_sessions_query(since: datetime | None = None) -> Select[Any]:
         )
         .select_from(guardian_sessions.join(top, true()))
         .where(
-            gs.unexplained.is_(False),
+            ~gs.unexplained,  # not IS false: it must match the reference index (#255 review)
             gs.decided_at.is_not(None),
             gs.posterior.is_not(None),
             top.c.key.not_in(("GENUINE", "UNEXPLAINED")),
