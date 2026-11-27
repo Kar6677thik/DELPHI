@@ -238,7 +238,9 @@ Implementation rules (`delphi.platform.events`):
 - `publish(session, type, entity_id, payload)` takes `pg_advisory_xact_lock(43)` before
   inserting, so publishing transactions commit in id order and a reader that has seen id N has
   seen every id below it. Lock 42 is the audit chain's (doc 17 §4). Publish as the last step of
-  a transaction, so the lock is held briefly.
+  a transaction, so the lock is held briefly. `publish` is one statement (the lock in the
+  INSERT's source row, so before the id is drawn, and the NOTIFY in a CTE): each client round
+  trip under a lock that every publisher shares holds up the whole process (#285).
 - The api's listener thread holds one plain connection that LISTENs. On each notification, and
   every 5 s as a safety net, it reads the outbox rows after the last id it has seen. It hands
   them to the event loop, which puts each event on every matching subscriber's queue (1,000

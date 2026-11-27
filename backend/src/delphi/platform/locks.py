@@ -21,6 +21,10 @@ DEMO_RESET_LOCK_KEY = 51  # one demo reset at a time (docs/14 §10)
 # 52 is the lien-account class (#250).
 CAMPAIGN_RECOMPUTE_LOCK_KEY = 53  # regrouping cases into campaigns (docs/05 §5)
 MULE_SWEEP_LOCK_KEY = 54  # rescoring accounts into account_scores (docs/13 §6)
+# Two-key locks (class, hashtext(id)): one per bank account while its liens are set, so two
+# approvals or acknowledgements cannot both use the same headroom (FR-CHS-05). The class is a
+# separate namespace from the one-key locks above (their high half is 0).
+LIEN_ACCOUNT_LOCK_CLASS = 52
 
 ALL_LOCK_KEYS: dict[str, int] = {
     "audit": AUDIT_LOCK_KEY,
