@@ -1,7 +1,7 @@
 """The ACCOUNT_REVIEW sweep's failed candidates and their backoff.
 
-Revision ID: 0018
-Revises: 0017
+Revision ID: 0020
+Revises: 0019
 Create Date: 2026-11-26
 
 `ACCOUNT_REVIEW_SWEEP` (docs/09 §1) takes its candidates oldest first, so an account whose review
@@ -19,8 +19,8 @@ from __future__ import annotations
 
 from alembic import op
 
-revision = "0018"
-down_revision = "0017"
+revision = "0020"
+down_revision = "0019"
 branch_labels = None
 depends_on = None
 

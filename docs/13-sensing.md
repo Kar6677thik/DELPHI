@@ -71,6 +71,10 @@ Where the table is silent (gap fills, #87):
 
 - Windows count the customer's earlier payments from any of their accounts, whatever their
   status, never the payment being scored. Local time is IST (UTC+05:30, no daylight saving).
+- A demo story payment's scripted `story_local_time` (doc 14 §10) replaces the payment's own
+  local hour in `hour_sin`, `hour_cos` and `hour_deviation`; nothing else changes. It is NULL
+  on every other payment, and the offline features (training, evaluation, replay) never read
+  it, so normal traffic is scored on `initiated_at` as before.
 - With no earlier payment, `amount_z_30d` and `hour_deviation` are 0 and
   `amount_ratio_max_lifetime` is 1. The z-score uses the population std of the 30-day window.
 - `hour_deviation` is the circular distance from the *circular* median local hour of the earlier

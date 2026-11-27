@@ -44,7 +44,9 @@ triggers and the console come with M5 (#103, #109).
   next attempt: `DELPHI_REVIEW_RETRY_BASE_S` (60 s) after the first failure, doubling with each
   failure, at most `DELPHI_REVIEW_RETRY_MAX_S` (1 h). A successful open deletes the record. The
   per-run cap counts the candidates tried, opened or failed, and the job's result reports
-  `failed`. The mule-scorer trigger below works the same way.
+  `failed`. The mule-scorer trigger below works the same way. A connection-level error (the
+  database itself failing, `OperationalError`) also breaks the recording of the failure, so the
+  whole batch rolls back then; that is intended, since no candidate could open either.
 - It opens an ACCOUNT_REVIEW case (STANDARD, `account_review_sla_minutes`) for each, unless the
   account has an open review or a review opened after its latest complaint. So it is idempotent
   per account, and a disposed review reopens only for a newer complaint.

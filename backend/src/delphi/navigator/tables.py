@@ -1,6 +1,6 @@
 """SQLAlchemy Core descriptions of ``delphi.cases`` (migration 0012),
 ``delphi.evidence_records`` (0013), ``delphi.police_alert_drafts`` (0014),
-``delphi.trace_events`` (0015) and ``delphi.review_sweep_failures`` (0018, docs/17). The
+``delphi.trace_events`` (0015) and ``delphi.review_sweep_failures`` (0020, docs/17). The
 migrations are the source of truth for constraints; a test compares these columns with the
 migrated schema."""
 
