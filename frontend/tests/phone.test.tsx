@@ -378,6 +378,7 @@ describe('/phone demo stories', () => {
           channel: 'IMPS',
           device_id: 'd-story',
           telemetry: STORY_TELEMETRY,
+          story_local_time: '23:40',
         },
       },
       error: null,
@@ -440,6 +441,7 @@ describe('/phone demo stories', () => {
         amount_paise: 4_80_000_00,
         channel: 'IMPS',
         device_id: 'd-story',
+        story_local_time: '23:40',
         telemetry: { on_call: true, call_counterparty_known: false },
       },
     });

@@ -428,6 +428,7 @@ function PayScreen({
       amount_paise: number;
       channel: PayChannel;
       device_id: string;
+      story_local_time?: string;
     },
     sessionSeconds: number,
   ) => void;
@@ -461,6 +462,7 @@ function PayScreen({
               amount_paise: amount,
               channel,
               device_id: deviceId,
+              ...(story?.story_local_time ? { story_local_time: story.story_local_time } : {}),
             },
             elapsedSeconds(openedAt.current),
           );
