@@ -21,8 +21,9 @@ Jobs run at least once, so the payment's id is keyed by the job: a retry after a
 finds the payment its earlier attempt wrote, and the runner finds its session (one per
 payment), instead of making a second one. Each run is one short transaction.
 
-The story's T is the clock's now. S-1's scripted `local_time` (23:40 IST) is not honoured live:
-the payment is made when the presenter runs it (docs/14 §10 lists the gap).
+The story's T is the clock's now. S-1's scripted `local_time` (23:40 IST) goes on the payment
+(`story_local_time`, #291), and the prior's hour features read it instead of the real time,
+which is when the presenter runs it; everything else about the payment stays real.
 """
 
 from __future__ import annotations
@@ -154,6 +155,7 @@ def stage(conn: Connection, config: PersonaConfig, name: str, at: datetime) -> S
         device_id=device,
         payee_account_id=manifest.story_payees[name],
         telemetry=telemetry,
+        story_local_time=story.local_time,
     )
     return StagedStory(customer, request)
 
@@ -198,6 +200,8 @@ def _payment_body(request: PaymentRequest) -> dict[str, Any]:
     }
     if request.telemetry is not None:
         body["telemetry"] = asdict(request.telemetry)
+    if request.story_local_time is not None:
+        body["story_local_time"] = request.story_local_time
     return body
 
 

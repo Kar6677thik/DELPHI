@@ -1,7 +1,7 @@
 """Scout runs, clusters, typology drafts and queue dismissals (docs/11 §1–2, docs/17, #117).
 
-Revision ID: 0019
-Revises: 0018
+Revision ID: 0020
+Revises: 0019
 Create Date: 2026-11-23
 
 `RUN_SCOUT` stores each run, its clusters and one CANDIDATE `typology_drafts` row per cluster
@@ -26,8 +26,8 @@ from __future__ import annotations
 
 from alembic import op
 
-revision = "0019"
-down_revision = "0018"
+revision = "0020"
+down_revision = "0019"
 branch_labels = None
 depends_on = None
 

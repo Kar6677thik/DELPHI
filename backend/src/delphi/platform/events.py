@@ -29,7 +29,7 @@ from enum import StrEnum
 from typing import Any
 
 import psycopg
-from sqlalchemy import func, select
+from sqlalchemy import Text, cast, func, literal, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from delphi.platform.locks import OUTBOX_LOCK_KEY
@@ -94,14 +94,27 @@ def publish(
     payload: Mapping[str, Any] | None = None,
 ) -> int:
     """Add an event in the caller's transaction and return its id. Payloads stay small:
-    clients re-fetch the entity over REST (docs/16 §3)."""
-    session.execute(select(func.pg_advisory_xact_lock(OUTBOX_LOCK_KEY)))
-    event_id: int = session.execute(
+    clients re-fetch the entity over REST (docs/16 §3).
+
+    One statement: the lock is taken in the INSERT's source row, so before the event's id is
+    drawn (ids still commit in order, docs/04 §5.5), and the NOTIFY rides in the same
+    statement. Every round trip the client makes under the lock holds up every other
+    publisher in the process (#285)."""
+    locked = select(func.pg_advisory_xact_lock(OUTBOX_LOCK_KEY).label("locked")).subquery()
+    row = select(
+        literal(event_type.value),
+        literal(entity_id, outbox_events.c.entity_id.type),
+        literal(dict(payload or {}), outbox_events.c.payload.type),
+    ).select_from(locked)
+    added = (
         outbox_events.insert()
-        .values(type=event_type.value, entity_id=entity_id, payload=dict(payload or {}))
+        .from_select(["type", "entity_id", "payload"], row)
         .returning(outbox_events.c.id)
+        .cte("added")
+    )
+    event_id: int = session.execute(
+        select(added.c.id, func.pg_notify(CHANNEL, cast(added.c.id, Text)))
     ).scalar_one()
-    session.execute(select(func.pg_notify(CHANNEL, str(event_id))))
     return event_id
 
 
