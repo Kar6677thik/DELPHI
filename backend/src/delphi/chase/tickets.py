@@ -99,20 +99,30 @@ def process_tickets(
         .limit(limit)
         .with_for_update(of=cfcfrms_tickets, skip_locked=True)
     ).all()
-    # FR-CHS-05 across operations: an acknowledged lien takes at most the balance less the
-    # account's other active liens, under the same per-account lock as approval (#250 review).
-    lock_lien_accounts(session, [r.account_id for r in rows])
     counts = {"acknowledged": 0, "expired": 0}
     kbs: dict[int, Any] = {}
-    for row in rows:
+
+    def kb_of(row: Any) -> Any:
         if row.kb_version_id not in kbs:
             version = get_version(session, row.kb_version_id)
             assert version is not None
             kbs[row.kb_version_id] = version.kb
-        kb = kbs[row.kb_version_id]
-        scale = _scale(demo_time, kb)
+        return kbs[row.kb_version_id]
+
+    def ack_due(row: Any) -> bool:
         delay = ack_delay(str(row.id)) if ack_delay is not None else None
-        if delay is not None and row.sent_at + delay * scale <= now:
+        return delay is not None and row.sent_at + delay * _scale(demo_time, kb_of(row)) <= now
+
+    acknowledging = {row.id for row in rows if ack_due(row)}
+    # FR-CHS-05 across operations: an acknowledged lien takes at most the balance less the
+    # account's other active liens, under the same per-account lock as approval (#250 review).
+    # Only the accounts of tickets acknowledged now are locked, so a ticket not yet due never
+    # holds an account an approval is waiting for (#253 review).
+    lock_lien_accounts(session, [r.account_id for r in rows if r.id in acknowledging])
+    for row in rows:
+        kb = kb_of(row)
+        scale = _scale(demo_time, kb)
+        if row.id in acknowledging:
             others = active_liens_paise(session, [row.account_id], excluding=row.lien_id)
             headroom = _balance(session, row.account_id) - others.get(row.account_id, 0)
             amount = max(min(int(row.amount_paise), headroom), 0)
@@ -178,8 +188,11 @@ def _close(session: Session, clock: Clock, op: Any, *, by: UUID | None, reason: 
     publish(session, EventType.CHASE_UPDATED, str(op.id), {"operation_id": str(op.id)})
 
 
-def close_due_operations(session: Session, clock: Clock) -> int:
-    """Step 7: OPEN operations past their golden hour with no ticket still pending."""
+def close_due_operations(session: Session, clock: Clock, *, limit: int) -> int:
+    """Step 7: OPEN operations past their golden hour with no ticket still pending, at most
+    ``limit``. An operation another transaction holds (an approval) is skipped, not waited
+    for, so this can't deadlock with an approval that holds it and waits for an account lock
+    the ticket pass took (#253 review); the next run closes it."""
     now = clock.now()
     c, t, lien = chase_operations.c, cfcfrms_tickets.c, liens.c
     pending = (
@@ -190,7 +203,9 @@ def close_due_operations(session: Session, clock: Clock) -> int:
     due = session.execute(
         select(chase_operations)
         .where(c.status == "OPEN", c.golden_hour_ends_at <= now, ~pending)
-        .with_for_update(of=chase_operations)
+        .order_by(c.golden_hour_ends_at, c.id)
+        .limit(limit)
+        .with_for_update(of=chase_operations, skip_locked=True)
     ).all()
     for op in due:
         _close(session, clock, op, by=None, reason="GOLDEN_HOUR_ELAPSED")
@@ -268,7 +283,7 @@ class ChaseRetraceJob:
                     demo_time=self.demo_time,
                 )
             )
-            counts["closed"] = close_due_operations(session, self.clock)
+            counts["closed"] = close_due_operations(session, self.clock, limit=self.tickets_per_run)
         return counts
 
 
