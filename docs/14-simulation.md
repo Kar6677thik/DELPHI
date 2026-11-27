@@ -159,10 +159,13 @@ review pending):
   - **DECLINE:** ends `DECLINED`.
 
   Labels are scheduled by `schedule_payment_labels` (§7).
-- **GENUINE_UNUSUAL** runs at each customer's routine rate × 150 / 9,700 (the table's rates)
-  × 0.85 (`made_share`): a routine payment the customer cannot fund is not made, but a one-off
-  always is (it is capped at 90% of the balance), so its planned rate is scaled to come out at
-  150 per 10,000 payments made (calibrated on `eval`, #55). Each event is one of two kinds:
+- **GENUINE_UNUSUAL** runs at each customer's genuine session rate × 150 / 9,700 (the table's
+  rates) × 0.85 (`made_share`). The session rate is the routine λ plus the new-payee streams'
+  expected sessions a day, `(1 + mean follow-ups) / mean_days` each (v17: v16 used λ alone, so
+  the new payees diluted unusual events to about 107 per 10,000). A routine payment the
+  customer cannot fund is not made, but a one-off always is (it is capped at 90% of the
+  balance), so its planned rate is scaled to come out at 150 per 10,000 payments made
+  (calibrated on `eval`, #55). Each event is one of two kinds:
   - **New merchant** (0.6): a hospital, wedding vendor or property merchant, saved 2–30 minutes
     before paying it.
   - **New phone** (0.4): a phone first seen 2–30 minutes before, paying an established family

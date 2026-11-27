@@ -8,6 +8,49 @@ upgrade changes them, `test_committed_freeze_matches_kb_v1_and_config` fails eve
 input changed. Then either keep the previous numpy, or regenerate with
 `uv run delphi sim freeze-response-models`, bump `generator_version` and record the upgrade here.
 
+## 17
+
+Fixes from the #192 review and the nightly (#36). S-4 is handled separately.
+
+- **GENUINE_UNUSUAL rate.** v16's new-payee streams plan genuine sessions outside the routine
+  λ, but the unusual rate was still drawn from λ alone. So each customer made 30–40% more
+  genuine sessions with the same number of unusual events: about 107 per 10,000 on `eval`
+  against 150 configured, and the nightly's slow rate check has failed on `main` since v16.
+  Each customer's unusual rate is now based on all of its genuine sessions: each new-payee
+  stream adds its expected sessions a day, `(1 + mean follow-ups) / mean_days`, to λ before the
+  150 / 9,700 scaling. Personas save no new payees, so they are unchanged.
+- **Payees saved after both accounts open** (#192 review). A payee in the population was saved
+  at a time between the customer's account opening and the history start, which could be
+  before the payee's own account was opened. It is now saved after the later of the two
+  openings.
+- **#192 nits:** the v16 entry's wording (the staged takeover is "hours before the drain"; the
+  routine draws shift), a comment on window saves clamped to the stream's start,
+  `generator.yaml`'s new-person comment (every 45 days, 0–1 follow-ups), and no code defaults
+  for `early_lead_days` and `staged_lead_hours` (`generator.yaml` sets both).
+
+**Rates on `eval`** (`uv run delphi sim stats --profile eval`; configured / history / window,
+per 10,000):
+
+| | configured | v16 | v17 |
+|---|---|---|---|
+| GENUINE_UNUSUAL | 150 | 106.9 / 110.3 | 140.8 / 143.2 |
+
+Every scenario is within ±10% of its rate again (`DELPHI_RUN_SLOW=1`
+`test_eval_matches_the_configured_rates_within_ten_percent` passes). A new fast check in
+`test_the_stats_report` keeps GENUINE_UNUSUAL within ±20% of 150 on `test` (157.6 there), so a
+change like v16's now fails in PR CI.
+
+**Separability on `eval`** is unchanged in substance (`uv run python -m scripts.prior_separability
+--profile eval`, 29 min):
+
+| | v16 | v17 |
+|---|---|---|
+| Macro AUC | 0.984 | 0.986 |
+| GENUINE / ATO / DA / INV AUC | 0.975 / 0.998 / 0.989 / 0.975 | 0.977 / 0.998 / 0.990 / 0.978 |
+| Highest single-feature AUC | 0.871 (`payee_age_days`) | 0.871 (`is_new_payee`; `payee_age_days` 0.870) |
+
+No single feature separates any fraud class above 0.90 (#166's target).
+
 ## 16
 
 Makes the simulator realistically hard for the payment prior (#166, decided on #148). The #148

@@ -169,6 +169,7 @@ genuine_unusual:
   # cannot fund is not made (about 13–17% on `eval`), but a one-off always is (it is capped
   # above), so the planned one-off rate is scaled by this share. Measured on `eval`: without
   # it, 172.2 (history) and 179.9 (window) per 10,000; 0.85 brings both within ±3% of 150.
+  # v17 (the rate counts new-payee sessions): 140.8 and 143.2, inside the ±10% check.
   made_share: 0.85
   lead_minutes: {min: 2, max: 30}          # payee saved / phone first seen before paying
   channel: IMPS
