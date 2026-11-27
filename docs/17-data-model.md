@@ -211,7 +211,7 @@ jobs(id, type, status (QUEUED|RUNNING|SUCCEEDED|FAILED|CANCELLED), params jsonb,
      error text null, progress real, attempts int, max_attempts int default 3,
      idempotency_key unique, locked_by null, locked_until null, run_after timestamptz,
      created_by null, created_at, started_at null, finished_at null)
-   idx (status, run_after)
+   idx (status, run_after); idx (type, finished_at) (migration 0019, the Scout auto-trigger's back-off)
 outbox_events(id bigint identity, type, entity_id, payload jsonb, at)   idx (at)
 ops_backup_runs(id bigint identity, finished_at, file_name, size_bytes, status)  -- written by the backup CronJob
 llm_calls(id, purpose, provider, model null, prompt_version, request_redacted jsonb null,
