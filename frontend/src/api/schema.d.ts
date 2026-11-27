@@ -279,6 +279,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/demo/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reset Demo
+         * @description Queue a `DEMO_RESET` job (202 with the job): back to the state right after the seed
+         *     (docs/14 §10). The LIVE sessions this process drives are dropped first. 409
+         *     INVALID_STATE_TRANSITION without a dataset, 409 JOB_ALREADY_RUNNING while a reset is under
+         *     way; 503 NOT_INITIALISED while `DELPHI_SIMULATION_ENABLED` is off.
+         */
+        post: operations["reset_demo_api_v1_admin_demo_reset_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/kb/versions": {
         parameters: {
             query?: never;
@@ -528,6 +551,65 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/chase/operations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start Chase
+         * @description docs/10 §1: trace a complaint's (or the payments') money; 422 if nothing executed.
+         */
+        post: operations["start_chase_api_v1_chase_operations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/chase/operations/{operation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Chase */
+        get: operations["read_chase_api_v1_chase_operations__operation_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/chase/operations/{operation_id}/liens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve
+         * @description FR-CHS-04: the investigator approves candidates; each lien is the taint still traced to
+         *     the account, at most its balance now (FR-CHS-05). 409 for a closed operation or a
+         *     candidate already liened; 422 for more than `max_liens_per_round`.
+         */
+        post: operations["approve_api_v1_chase_operations__operation_id__liens_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/guardian/sessions": {
         parameters: {
             query?: never;
@@ -720,6 +802,11 @@ export interface components {
             /** Count */
             count: number;
         };
+        /** ApproveLiens */
+        ApproveLiens: {
+            /** Candidate Ids */
+            candidate_ids: string[];
+        };
         /**
          * ArtifactKind
          * @description The sensing models (docs/13 §1).
@@ -753,6 +840,39 @@ export interface components {
              * @enum {string}
              */
             biometric: "MATCH" | "NO_MATCH" | "CANCEL";
+        };
+        /** CandidateView */
+        CandidateView: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Account Id
+             * Format: uuid
+             */
+            account_id: string;
+            /** Hop */
+            hop: number;
+            /** Taint Paise */
+            taint_paise: number;
+            /** Balance Paise */
+            balance_paise: number;
+            /** P Present */
+            p_present: number | null;
+            /** P Mule */
+            p_mule: number | null;
+            /** Erv Paise */
+            erv_paise: number | null;
+            /** Wrongful Cost Paise */
+            wrongful_cost_paise: number | null;
+            /** Net Paise */
+            net_paise: number | null;
+            /** Rank */
+            rank: number | null;
+            /** Recommended */
+            recommended: boolean | null;
         };
         /**
          * CaseDetail
@@ -958,6 +1078,48 @@ export interface components {
             version: number;
         };
         /**
+         * ChaseView
+         * @description docs/16 `ChaseView` (the graph and metrics come with #114's Chase screen work).
+         */
+        ChaseView: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Complaint Id */
+            complaint_id: string | null;
+            /** Source Payment Ids */
+            source_payment_ids: string[];
+            /** Status */
+            status: string;
+            /**
+             * Reported At
+             * Format: date-time
+             */
+            reported_at: string;
+            /** Reported Loss Paise */
+            reported_loss_paise: number;
+            /**
+             * Golden Hour Ends At
+             * Format: date-time
+             */
+            golden_hour_ends_at: string;
+            /**
+             * Last Traced At
+             * Format: date-time
+             */
+            last_traced_at: string;
+            /** Candidates */
+            candidates: components["schemas"]["CandidateView"][];
+            /** Liens */
+            liens: components["schemas"]["LienView"][];
+            /** Tickets */
+            tickets: components["schemas"]["TicketView"][];
+            /** Version */
+            version: number;
+        };
+        /**
          * CheckStatus
          * @enum {string}
          */
@@ -1031,6 +1193,11 @@ export interface components {
              * @description default: the profile's
              */
             seed?: number | null;
+            /**
+             * Personas
+             * @description add the demo personas (docs/14 §6); default: the profiles personas.yaml lists (`demo`). The E2E stack seeds `test` with them (docs/21 §1).
+             */
+            personas?: boolean | null;
         };
         /**
          * DdPackFormat
@@ -1320,7 +1487,7 @@ export interface components {
          * @description Every job type in docs/04 §5.4. A type is only claimed once a handler is registered.
          * @enum {string}
          */
-        JobType: "GENERATE_DATASET" | "TRAIN_SENSING" | "RUN_EVALUATION" | "RUN_SCOUT" | "RUN_LEARNING" | "RUN_BACKTEST" | "KB_REBASE" | "LLM_NARRATIVE" | "LLM_CASE_SUMMARY" | "LLM_QUESTION_VARIANTS" | "LLM_TYPOLOGY_DESCRIPTION" | "SIM_OUTREACH_CALL" | "DEMO_STORY" | "DEMO_RESET" | "SIM_TICK" | "CHASE_RETRACE" | "MULE_SWEEP" | "SESSION_TIMEOUT_SWEEP" | "SCOUT_AUTO_TRIGGER" | "LABEL_DELIVERY" | "PROBE_YIELD_DAILY" | "RETENTION_SWEEP" | "AUDIT_VERIFY";
+        JobType: "GENERATE_DATASET" | "TRAIN_SENSING" | "RUN_EVALUATION" | "RUN_SCOUT" | "RUN_LEARNING" | "RUN_BACKTEST" | "KB_REBASE" | "LLM_NARRATIVE" | "LLM_CASE_SUMMARY" | "LLM_QUESTION_VARIANTS" | "LLM_TYPOLOGY_DESCRIPTION" | "SIM_OUTREACH_CALL" | "DEMO_STORY" | "DEMO_RESET" | "SIM_TICK" | "CHASE_RETRACE" | "MULE_SWEEP" | "SESSION_TIMEOUT_SWEEP" | "SCOUT_AUTO_TRIGGER" | "LABEL_DELIVERY" | "ACCOUNT_REVIEW_SWEEP" | "PROBE_YIELD_DAILY" | "RETENTION_SWEEP" | "AUDIT_VERIFY";
         /** JobView */
         JobView: {
             /**
@@ -1431,6 +1598,48 @@ export interface components {
             content: {
                 [key: string]: unknown;
             };
+        };
+        /** LienView */
+        LienView: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Candidate Id
+             * Format: uuid
+             */
+            candidate_id: string;
+            /**
+             * Account Id
+             * Format: uuid
+             */
+            account_id: string;
+            /** Bank Code */
+            bank_code: string;
+            /** Amount Paise */
+            amount_paise: number;
+            /** Status */
+            status: string;
+            /** Recorded Reasons */
+            recorded_reasons: string;
+            /** Evidence Refs */
+            evidence_refs: string[];
+            /**
+             * Approved By
+             * Format: uuid
+             */
+            approved_by: string;
+            /**
+             * Approved At
+             * Format: date-time
+             */
+            approved_at: string;
+            /** Placed At */
+            placed_at: string | null;
+            /** Review Due At */
+            review_due_at: string | null;
         };
         /** LoginRequest */
         LoginRequest: {
@@ -1844,6 +2053,13 @@ export interface components {
          * @enum {string}
          */
         SessionStatus: "CREATED" | "PASSIVE_PROBING" | "PLANNING" | "AWAITING_CUSTOMER" | "DECIDED" | "CANCELLED_BY_CUSTOMER";
+        /** StartChase */
+        StartChase: {
+            /** Complaint Id */
+            complaint_id?: string | null;
+            /** Payment Ids */
+            payment_ids?: string[];
+        };
         /**
          * StartSessionRequest
          * @description docs/16: `POST /guardian/sessions`.
@@ -1897,6 +2113,27 @@ export interface components {
             call_counterparty_known?: boolean | null;
             /** Session Duration S */
             session_duration_s: number;
+        };
+        /** TicketView */
+        TicketView: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Lien Id
+             * Format: uuid
+             */
+            lien_id: string;
+            /** Target Bank */
+            target_bank: string;
+            /** Status */
+            status: string;
+            /** Sent At */
+            sent_at: string | null;
+            /** Acknowledged At */
+            acknowledged_at: string | null;
         };
         /** TraceBatch */
         TraceBatch: {
@@ -2494,6 +2731,37 @@ export interface operations {
             };
         };
     };
+    reset_demo_api_v1_admin_demo_reset_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobView"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     read_kb_versions_api_v1_kb_versions_get: {
         parameters: {
             query?: {
@@ -2883,6 +3151,109 @@ export interface operations {
                 content: {
                     "application/json": unknown;
                     "text/html": unknown;
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    start_chase_api_v1_chase_operations_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartChase"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChaseView"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    read_chase_api_v1_chase_operations__operation_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                operation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChaseView"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    approve_api_v1_chase_operations__operation_id__liens_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                operation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApproveLiens"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChaseView"];
                 };
             };
             /** @description An RFC 9457 problem (docs/16 §1) */

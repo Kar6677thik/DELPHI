@@ -19,6 +19,7 @@ real LLM, fixed seeds.
 | Slow | pytest `-m slow` with `DELPHI_RUN_SLOW=1` and PostgreSQL 16 | minutes-long acceptance checks, e.g. FR-SIM-02 (the `eval` profile's stats within ±10%) | nightly at 20:30 UTC and on demand (`.github/workflows/nightly.yml`), not on PRs |
 | E2E | Playwright (Chromium) against the docker compose stack, `DELPHI_LLM_PROVIDER=template`, `test`+personas dataset | E2E-S1…S5, login/RBAC, demo reset, accessibility scan | PRs to `main` and `main` |
 | Load | Locust | §5 | M9 and before demos (manual) |
+| Smoke load | pytest `-m load` (`just smoke-load`) against a running stack | §5: NFR-02 for 2 minutes | M4 and on demand (manual), never in CI |
 | Security | gitleaks, pip-audit, pnpm audit, Trivy, bandit | | every PR (Trivy on image builds) |
 | LLM eval | `just llm-eval` | doc 15 §8 | manual |
 | Restore drill | runbook | doc 23 §7 | M9, then monthly |
@@ -87,12 +88,53 @@ test.
 | E2E-RESET | Demo reset returns personas to their initial state; S-1 can run again |
 | E2E-A11Y | axe scan on every route: no serious or critical violations |
 
+The journeys share one stack and one bank, and E2E-RESET deletes what the others made, so the
+spec files run one at a time (`workers: 1` in `frontend/playwright.config.ts`).
+
+**Implementation (#131).** `frontend/e2e/rbac.spec.ts`, `stories.spec.ts` and `a11y.spec.ts` run
+with the login smoke test, against the same stack.
+- **E2E-RBAC** creates a VIEWER through `POST /admin/users`.
+  - The navigation hides Admin and Phone, and those routes show "No access" (`rbac.spec.ts`).
+  - Every write in the running api's `openapi.json` (POST, PUT, PATCH, DELETE), except an
+    allowlist of the writes a viewer may make (login, logout and `POST /cases/{id}/trace-events`,
+    which needs only `view`), answers 403 with code `FORBIDDEN`, so a request that fails the CSRF
+    check (`CSRF_REJECTED`) cannot pass for one RBAC refused. A new write endpoint is covered
+    without editing the test.
+  - On a real case (`stories.spec.ts`), the admin sees the disposition form and an enabled
+    evidence request; the viewer sees the form hidden ("Only investigators decide cases.") and
+    every evidence-request button disabled.
+- **The data** (`stories.spec.ts`): the admin seeds `test` with the personas
+  (`POST /admin/datasets {profile: "test", personas: true}`) and waits for `/status` to report the
+  dataset and models ready, about 10 s. The case comes from S-1 (autoplay). The autoplay
+  customer's answers are sampled, so about one S-1 run in five takes the cooling-off path, whose
+  window is 600 s in REAL time and opens no case in time; the test runs S-1 again from a reset bank,
+  up to three times (60 s each).
+- **E2E-RESET** (`stories.spec.ts`): S-1 starts a Guardian session; `POST /admin/demo/reset`
+  succeeds, after which that session is gone (404) and there are no cases; S-1 then runs again for
+  the same persona, as a new session.
+- **E2E-A11Y** runs axe (`@axe-core/playwright`, the WCAG 2.0, 2.1 and 2.2 A and AA rules:
+  `wcag2a`, `wcag2aa`, `wcag21a`, `wcag21aa`, `wcag22aa`) on `/login`, the Overview, every route
+  in `SCREENS`, the Theatre and the not-found page, signed in as the admin. A route with an id
+  opens with one that does not exist, so its not-found state is scanned. These scans run without
+  data; a rescan of the screens with data (a case, a session) is a follow-up with the story
+  journeys.
+
 ## 5. Load test (Locust, M9)
 
 The scenario keeps 20 Guardian sessions/s for 10 minutes using autoplay customers (60%
 fast-path, 40% full), plus 5 investigators browsing cases. Pass: Guardian create p95 ≤ 400 ms
 (fast-path + passive phase), planner p95 ≤ 50 ms, no 5xx, worker queue lag < 60 s, api memory
 stable (< 10% growth over the run).
+
+**Smoke load (M4, #101).** Before the Locust run, `backend/tests/load/test_nfr02_smoke.py`
+checks NFR-02 alone: it pays from the personas at 20 sessions/s for 2 minutes through
+`POST /guardian/sessions`, as the mock phone does, with 40% of the payments made on a call with
+remote access on. It times each session from the request to its first response: the response
+itself when the fast path decided it, otherwise the session's first event on `/phone/stream`.
+Pass: every payment 201, every session reached the phone, and p95 ≤ 400 ms. Nobody answers the
+probes, so those sessions time out on their own. `DELPHI_LOAD_RATE_PER_S` and
+`DELPHI_LOAD_DURATION_S` change the rate and length when diagnosing, but such a run isn't the
+NFR-02 check.
 
 ## 6. Quality gates (CI must be green to merge to `main`)
 

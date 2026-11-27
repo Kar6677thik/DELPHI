@@ -215,10 +215,11 @@ A type is scheduled only once its handler is registered:
 |---|---|---|
 | `SIM_TICK` | 10 s real (only when `DELPHI_TIME_MODE=DEMO`) | doc 14 §8: due mule transfers, background payments, ticket acks/expiry |
 | `CHASE_RETRACE` | `retrace_interval_min` time-scaled, floor 20 s | re-trace open operations; auto-close (doc 10 §5) |
-| `MULE_SWEEP` | `mule_sweep_interval_min` time-scaled | recompute `account_scores`; open ACCOUNT_REVIEW cases (doc 09 §1, from M5) |
 | `SESSION_TIMEOUT_SWEEP` | 30 s | resolve sessions past their timeouts whose owner process is gone |
 | `SCOUT_AUTO_TRIGGER` | 5 min | enqueue `RUN_SCOUT` if ≥ `auto_trigger_new_items` new queue items |
+| `MULE_SWEEP` | 60 s | rescore into `account_scores`, in bounded batches, the accounts whose score is missing or older than `mule_sweep_interval_min` (time-scaled), so that interval bounds a score's age; one transaction per batch, skipped while another run holds the lock, at most `DELPHI_MULE_SWEEP_MAX_PER_RUN` accounts per run (doc 13 §6) |
 | `LABEL_DELIVERY` | 60 s (DEMO), virtual in evaluation | deliver due rows from `sim_truth.label_schedule` (doc 14 §7) |
+| `ACCOUNT_REVIEW_SWEEP` | 60 s | open ACCOUNT_REVIEW cases, in bounded batches: home-bank accounts named by new complaints, and mule suspects (score ≥ `mule_sweep_threshold`, credited within `mule_credit_window_h`) from `MULE_SWEEP`'s scores (doc 09 §1) |
 | `PROBE_YIELD_DAILY` | daily 00:15 IST | aggregate `probe_yield_daily`; evaluate drift alerts (doc 12 §5) |
 | `RETENTION_SWEEP` | daily 01:00 IST | doc 17 §6 |
 | `AUDIT_VERIFY` | daily 02:00 IST | verify the last 24 h of the audit chain; alert on failure |
@@ -236,7 +237,9 @@ Implementation rules (`delphi.platform.events`):
 - `publish(session, type, entity_id, payload)` takes `pg_advisory_xact_lock(43)` before
   inserting, so publishing transactions commit in id order and a reader that has seen id N has
   seen every id below it. Lock 42 is the audit chain's (doc 17 §4). Publish as the last step of
-  a transaction, so the lock is held briefly.
+  a transaction, so the lock is held briefly. `publish` is one statement (the lock in the
+  INSERT's source row, so before the id is drawn, and the NOTIFY in a CTE): each client round
+  trip under a lock that every publisher shares holds up the whole process (#285).
 - The api's listener thread holds one plain connection that LISTENs. On each notification, and
   every 5 s as a safety net, it reads the outbox rows after the last id it has seen. It hands
   them to the event loop, which puts each event on every matching subscriber's queue (1,000

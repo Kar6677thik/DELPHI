@@ -122,6 +122,12 @@ def test_a_seed_is_passed_on(env: Env) -> None:
     assert env.jobs()[0]["params"] == {"profile": "test", "seed": 42}
 
 
+def test_personas_are_passed_on(env: Env) -> None:
+    """docs/21 §1: the E2E stack seeds `test` with the personas, so S-1 can run on it."""
+    assert env.post({"profile": "test", "personas": True}).status_code == 202
+    assert env.jobs()[0]["params"] == {"profile": "test", "personas": True}
+
+
 def test_one_generation_at_a_time(env: Env) -> None:
     assert env.post({"profile": "demo"}).status_code == 202
     second = env.post({"profile": "test"})
