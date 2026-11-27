@@ -116,6 +116,8 @@ class PaymentView:
     payee_p_mule: float
     session_duration_s: float | None  # from session telemetry; None without a session
     remote_access_active: bool | None
+    # A demo story's scripted local hour (docs/14 §10, #291): the hour features use it.
+    local_hour: float | None = None
 
 
 def _empty() -> IntArray:
@@ -200,7 +202,11 @@ def build_payment_features(
     lifetime_max = float(amounts_inr.max()) if n else 0.0
     daily_mean_30d = float(in_30d.sum()) / config.baseline_days
 
-    hour = float(_local_hours(as_of, config.local_utc_offset_minutes))
+    hour = (
+        payment.local_hour
+        if payment.local_hour is not None
+        else float(_local_hours(as_of, config.local_utc_offset_minutes))
+    )
     if n:
         median = circular_median(_local_hours(at, config.local_utc_offset_minutes))
         gap = abs(hour - median) % _HOURS_PER_DAY

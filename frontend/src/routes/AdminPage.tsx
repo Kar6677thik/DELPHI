@@ -10,7 +10,7 @@ import {
   useTrainSensing,
   useVerifyAudit,
 } from '../api/admin';
-import { STORIES, useRunStory } from '../api/demo';
+import { isFinished, resetOutcome, STORIES, useJob, useResetDemo, useRunStory } from '../api/demo';
 import { useStatus } from '../api/overview';
 import type { DatasetRequest, JobStatus, JobType, JobView, StatusView } from '../api/types';
 import { ProblemAlert } from '../components/ProblemAlert';
@@ -19,8 +19,8 @@ import { Users } from './AdminUsers';
 
 /**
  * Admin (docs/18 §2 `/admin`, docs/16 §2 "Admin and jobs", #231): is the demo set up, is the
- * audit trail intact, run a demo story, what are the background jobs doing, and who can sign
- * in. The demo reset arrives with its endpoint (#101).
+ * audit trail intact, run a demo story or reset the demo, what are the background jobs doing,
+ * and who can sign in.
  */
 
 const PERCENT = 100;
@@ -110,7 +110,10 @@ export function AdminPage() {
         <AuditChain />
       </div>
 
-      <DemoStories ready={status.data?.models_ready ?? false} />
+      <div className="mt-6 grid gap-6 lg:grid-cols-2">
+        <DemoStories ready={status.data?.models_ready ?? false} />
+        <DemoReset hasDataset={status.data?.dataset_ready ?? false} />
+      </div>
 
       <Jobs />
       <Users />
@@ -303,61 +306,149 @@ function Setup({ status }: { status: StatusView | undefined }) {
 function DemoStories({ ready }: { ready: boolean }) {
   const run = useRunStory();
   return (
-    <div className="mt-6">
-      <Card
-        id="stories-title"
-        title="Demo stories"
-        note="Autoplay plays the story on the server: the simulated customer answers, and the Guardian monitor shows it live. On the phone, you are the customer."
-      >
-        <ul className="divide-y divide-line">
-          {STORIES.map((story) => (
-            <li
-              key={story.name}
-              className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 py-4 first:pt-0 last:pb-0"
-            >
-              <div className="min-w-0">
-                <h3 className="text-[14px] text-ink">{story.title}</h3>
-                <p className="mt-1 text-[12px] text-muted">{story.note}</p>
-              </div>
-              <div className="flex flex-wrap gap-3">
-                <button
-                  type="button"
-                  className={PRIMARY}
-                  disabled={run.isPending || !ready}
-                  onClick={() => {
-                    run.mutate({ story: story.name, mode: 'autoplay' });
-                  }}
-                >
-                  Autoplay
-                </button>
-                <Link to={`/phone?story=${story.name}`} className={SECONDARY}>
-                  Play on the phone
-                </Link>
-              </div>
-            </li>
-          ))}
-        </ul>
-        {!ready && (
-          <p className="mt-4 text-[12px] text-muted">
-            The stories run once the dataset and the sensing models are ready.
+    <Card
+      id="stories-title"
+      title="Demo stories"
+      note="Autoplay plays the story on the server: the simulated customer answers, and the Guardian monitor shows it live. On the phone, you are the customer."
+    >
+      <ul className="divide-y divide-line">
+        {STORIES.map((story) => (
+          <li
+            key={story.name}
+            className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 py-4 first:pt-0 last:pb-0"
+          >
+            <div className="min-w-0">
+              <h3 className="text-[14px] text-ink">{story.title}</h3>
+              <p className="mt-1 text-[12px] text-muted">{story.note}</p>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="button"
+                className={PRIMARY}
+                disabled={run.isPending || !ready}
+                onClick={() => {
+                  run.mutate({ story: story.name, mode: 'autoplay' });
+                }}
+              >
+                Autoplay
+              </button>
+              <Link to={`/phone?story=${story.name}`} className={SECONDARY}>
+                Play on the phone
+              </Link>
+            </div>
+          </li>
+        ))}
+      </ul>
+      {!ready && (
+        <p className="mt-4 text-[12px] text-muted">
+          The stories run once the dataset and the sensing models are ready.
+        </p>
+      )}
+      {run.isError && (
+        <div className="mt-4">
+          <ProblemAlert error={run.error} title="Could not start the story" />
+        </div>
+      )}
+      {run.data && (
+        <p role="status" className="mt-4 text-[13px] text-soft">
+          Queued: the story plays in a few seconds. Watch it on the{' '}
+          <Link to="/guardian" className="text-accent underline-offset-2 hover:underline">
+            Guardian monitor
+          </Link>
+          .
+        </p>
+      )}
+    </Card>
+  );
+}
+
+/**
+ * The demo reset (docs/14 §10, #101): back to the moment after the seed, so a story can run
+ * again. It deletes every session, case and payment made since, so it asks first.
+ */
+function DemoReset({ hasDataset }: { hasDataset: boolean }) {
+  const reset = useResetDemo();
+  const [confirming, setConfirming] = useState(false);
+  const job = useJob(reset.data?.id ?? null);
+  const outcome = resetOutcome(job.data);
+  const running = reset.isPending || (job.data !== undefined && !isFinished(job.data));
+  return (
+    <Card
+      id="reset-title"
+      title="Reset the demo"
+      note="Back to right after the seed: every session, case and payment made since is deleted, balances are restored and KB v1 is active again."
+    >
+      {confirming ? (
+        <div
+          role="group"
+          aria-label="Confirm the reset"
+          className="flex flex-wrap items-center gap-3"
+        >
+          <p className="text-[13px] text-ink">Delete everything since the seed?</p>
+          <button
+            type="button"
+            className={PRIMARY}
+            onClick={() => {
+              setConfirming(false);
+              reset.mutate();
+            }}
+          >
+            Yes, reset
+          </button>
+          <button
+            type="button"
+            className={SECONDARY}
+            onClick={() => {
+              setConfirming(false);
+            }}
+          >
+            Keep it
+          </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          className={SECONDARY}
+          disabled={!hasDataset || running}
+          onClick={() => {
+            setConfirming(true);
+          }}
+        >
+          {running ? 'Resetting…' : 'Reset the demo'}
+        </button>
+      )}
+      {!hasDataset && (
+        <p className="mt-3 text-[12px] text-muted">There is no dataset to reset yet.</p>
+      )}
+      {reset.isError && (
+        <div className="mt-4">
+          <ProblemAlert error={reset.error} title="Could not reset the demo" />
+        </div>
+      )}
+      {(job.data?.status === 'FAILED' || job.data?.status === 'CANCELLED') && (
+        <p role="alert" className="mt-4 text-[13px] text-negative">
+          The reset failed{job.data.error ? `: ${job.data.error}` : '.'}
+        </p>
+      )}
+      {outcome?.skipped && (
+        <p role="status" className="mt-4 text-[13px] text-soft">
+          Another reset was already running, so this one did nothing.
+        </p>
+      )}
+      {outcome && !outcome.skipped && (
+        <div role="status" className="mt-4 space-y-2 text-[13px]">
+          <p className="text-positive">
+            The demo is back to the seed: {COUNT.format(outcome.rowsDeleted)} rows removed,{' '}
+            {COUNT.format(outcome.accountsRestored)} accounts restored.
           </p>
-        )}
-        {run.isError && (
-          <div className="mt-4">
-            <ProblemAlert error={run.error} title="Could not start the story" />
-          </div>
-        )}
-        {run.data && (
-          <p role="status" className="mt-4 text-[13px] text-soft">
-            Queued: the story plays in a few seconds. Watch it on the{' '}
-            <Link to="/guardian" className="text-accent underline-offset-2 hover:underline">
-              Guardian monitor
-            </Link>
-            .
-          </p>
-        )}
-      </Card>
-    </div>
+          {outcome.restartNeeded && (
+            <p className="rounded-md bg-warning-bg px-3 py-2 text-warning">
+              The active KB changed. Restart the api and the worker so they load KB v1.
+            </p>
+          )}
+        </div>
+      )}
+    </Card>
   );
 }
 
