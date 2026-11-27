@@ -118,6 +118,8 @@ export interface PaymentDraft {
   amount_paise: number;
   channel: PayChannel;
   device_id: string;
+  /** A demo story's scripted local time, IST "HH:MM" (docs/14 §10): the story's job sets it. */
+  story_local_time?: string;
 }
 
 /**

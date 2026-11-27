@@ -1886,6 +1886,179 @@
         }
       }
     },
+    "/api/v1/chase/operations": {
+      "post": {
+        "tags": [
+          "chase"
+        ],
+        "summary": "Start Chase",
+        "description": "docs/10 §1: trace a complaint's (or the payments') money; 422 if nothing executed.",
+        "operationId": "start_chase_api_v1_chase_operations_post",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartChase"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChaseView"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An RFC 9457 problem (docs/16 §1)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/chase/operations/{operation_id}": {
+      "get": {
+        "tags": [
+          "chase"
+        ],
+        "summary": "Read Chase",
+        "operationId": "read_chase_api_v1_chase_operations__operation_id__get",
+        "parameters": [
+          {
+            "name": "operation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Operation Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChaseView"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An RFC 9457 problem (docs/16 §1)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/chase/operations/{operation_id}/liens": {
+      "post": {
+        "tags": [
+          "chase"
+        ],
+        "summary": "Approve",
+        "description": "FR-CHS-04: the investigator approves candidates; each lien is the taint still traced to\nthe account, at most its balance now (FR-CHS-05). 409 for a closed operation or a\ncandidate already liened; 422 for more than `max_liens_per_round`.",
+        "operationId": "approve_api_v1_chase_operations__operation_id__liens_post",
+        "parameters": [
+          {
+            "name": "operation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Operation Id"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApproveLiens"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChaseView"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An RFC 9457 problem (docs/16 §1)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/guardian/sessions": {
       "get": {
         "tags": [
@@ -2481,6 +2654,25 @@
         ],
         "title": "AlertView"
       },
+      "ApproveLiens": {
+        "properties": {
+          "candidate_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Candidate Ids"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "candidate_ids"
+        ],
+        "title": "ApproveLiens"
+      },
       "ArtifactKind": {
         "type": "string",
         "enum": [
@@ -2579,6 +2771,125 @@
           "biometric"
         ],
         "title": "BiometricAnswer"
+      },
+      "CandidateView": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "account_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Account Id"
+          },
+          "hop": {
+            "type": "integer",
+            "title": "Hop"
+          },
+          "taint_paise": {
+            "type": "integer",
+            "title": "Taint Paise"
+          },
+          "balance_paise": {
+            "type": "integer",
+            "title": "Balance Paise"
+          },
+          "p_present": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P Present"
+          },
+          "p_mule": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P Mule"
+          },
+          "erv_paise": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Erv Paise"
+          },
+          "wrongful_cost_paise": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wrongful Cost Paise"
+          },
+          "net_paise": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Net Paise"
+          },
+          "rank": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rank"
+          },
+          "recommended": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recommended"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "account_id",
+          "hop",
+          "taint_paise",
+          "balance_paise",
+          "p_present",
+          "p_mule",
+          "erv_paise",
+          "wrongful_cost_paise",
+          "net_paise",
+          "rank",
+          "recommended"
+        ],
+        "title": "CandidateView"
       },
       "CaseDetail": {
         "properties": {
@@ -3179,6 +3490,100 @@
           "version"
         ],
         "title": "CaseView"
+      },
+      "ChaseView": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "complaint_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Complaint Id"
+          },
+          "source_payment_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "title": "Source Payment Ids"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "reported_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Reported At"
+          },
+          "reported_loss_paise": {
+            "type": "integer",
+            "title": "Reported Loss Paise"
+          },
+          "golden_hour_ends_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Golden Hour Ends At"
+          },
+          "last_traced_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Last Traced At"
+          },
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/CandidateView"
+            },
+            "type": "array",
+            "title": "Candidates"
+          },
+          "liens": {
+            "items": {
+              "$ref": "#/components/schemas/LienView"
+            },
+            "type": "array",
+            "title": "Liens"
+          },
+          "tickets": {
+            "items": {
+              "$ref": "#/components/schemas/TicketView"
+            },
+            "type": "array",
+            "title": "Tickets"
+          },
+          "version": {
+            "type": "integer",
+            "title": "Version"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "complaint_id",
+          "source_payment_ids",
+          "status",
+          "reported_at",
+          "reported_loss_paise",
+          "golden_hour_ends_at",
+          "last_traced_at",
+          "candidates",
+          "liens",
+          "tickets",
+          "version"
+        ],
+        "title": "ChaseView",
+        "description": "docs/16 `ChaseView` (the graph and metrics come with #114's Chase screen work)."
       },
       "CheckStatus": {
         "type": "string",
@@ -4655,6 +5060,98 @@
         ],
         "title": "KbVersionView"
       },
+      "LienView": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "candidate_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Candidate Id"
+          },
+          "account_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Account Id"
+          },
+          "bank_code": {
+            "type": "string",
+            "title": "Bank Code"
+          },
+          "amount_paise": {
+            "type": "integer",
+            "title": "Amount Paise"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "recorded_reasons": {
+            "type": "string",
+            "title": "Recorded Reasons"
+          },
+          "evidence_refs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Evidence Refs"
+          },
+          "approved_by": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Approved By"
+          },
+          "approved_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Approved At"
+          },
+          "placed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Placed At"
+          },
+          "review_due_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Due At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "candidate_id",
+          "account_id",
+          "bank_code",
+          "amount_paise",
+          "status",
+          "recorded_reasons",
+          "evidence_refs",
+          "approved_by",
+          "approved_at",
+          "placed_at",
+          "review_due_at"
+        ],
+        "title": "LienView"
+      },
       "LoginRequest": {
         "properties": {
           "username": {
@@ -4938,6 +5435,18 @@
                 "type": "null"
               }
             ]
+          },
+          "story_local_time": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Story Local Time"
           }
         },
         "additionalProperties": false,
@@ -5883,6 +6392,34 @@
         ],
         "title": "SessionStatus"
       },
+      "StartChase": {
+        "properties": {
+          "complaint_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Complaint Id"
+          },
+          "payment_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "maxItems": 50,
+            "title": "Payment Ids"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "StartChase"
+      },
       "StartSessionRequest": {
         "properties": {
           "payment": {
@@ -6036,6 +6573,62 @@
         ],
         "title": "TelemetryIn",
         "description": "The app session's signals, as the mobile SDK reports them (docs/08 §5)."
+      },
+      "TicketView": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "lien_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Lien Id"
+          },
+          "target_bank": {
+            "type": "string",
+            "title": "Target Bank"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "sent_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sent At"
+          },
+          "acknowledged_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Acknowledged At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "lien_id",
+          "target_bank",
+          "status",
+          "sent_at",
+          "acknowledged_at"
+        ],
+        "title": "TicketView"
       },
       "TraceBatch": {
         "properties": {

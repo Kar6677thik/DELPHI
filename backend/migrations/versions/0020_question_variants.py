@@ -1,7 +1,7 @@
 """Question variants drafted in the app, waiting for review (docs/07 §9, docs/15, #110).
 
-Revision ID: 0018
-Revises: 0017
+Revision ID: 0020
+Revises: 0019
 Create Date: 2026-11-26
 
 `LLM_QUESTION_VARIANTS` stores the variants it drafts as PENDING_REVIEW. An FDE approves (with
@@ -21,8 +21,8 @@ from __future__ import annotations
 
 from alembic import op
 
-revision = "0018"
-down_revision = "0017"
+revision = "0020"
+down_revision = "0019"
 branch_labels = None
 depends_on = None
 
