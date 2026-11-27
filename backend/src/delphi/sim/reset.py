@@ -11,8 +11,10 @@ time), and the rows the demo changed are put back:
   ``LABEL_DELIVERY`` delivers them again against the re-activated KB v1 (#159);
 - KB v1 is ACTIVE again, and any other version left is RETIRED.
 
-The platform's own tables (``KEPT_TABLES``: users, jobs, the audit chain, sensing models …) are
-not demo data and stay. A test checks every table is in one list or the other.
+Tables deleted only with a parent (``CASCADED_TABLES``: probe runs, chase candidates, liens and
+tickets) are locked too. The platform's own tables (``KEPT_TABLES``: users, jobs, the audit
+chain, sensing models …) are not demo data and stay. A test checks every table is in exactly
+one of the three lists.
 
 Sessions still running are dropped by both runners (the api's when the reset is asked for,
 the worker's here, once this reset holds its lock), so no task drives a session the reset
@@ -48,6 +50,8 @@ _MS_PER_S = 1000
 # The demo's rows, deleted children first: (schema.table, its creation-time column).
 RESET_TABLES: tuple[tuple[str, str], ...] = (
     ("delphi.police_alert_drafts", "created_at"),
+    # Chase (#113): candidates, liens and tickets go with their operation (ON DELETE CASCADE).
+    ("delphi.chase_operations", "created_at"),
     ("delphi.trace_events", "at"),
     ("delphi.evidence_records", "created_at"),
     ("delphi.cases", "created_at"),  # its sessions point back at it: DEFERRABLE (docs/17)
@@ -75,23 +79,33 @@ RESET_TABLES: tuple[tuple[str, str], ...] = (
     ("bank.customers", "created_at"),
     ("bank.sim_phone_risk", "created_at"),
 )
-# Locked against writers for the reset's transaction: the tables it deletes from, plus the
-# ones it updates or that cascade with them. In one fixed order, so two lockers never deadlock.
+# Demo data deleted with a parent in RESET_TABLES (ON DELETE CASCADE), never by its own time.
+CASCADED_TABLES: frozenset[str] = frozenset(
+    {
+        "delphi.probe_runs",  # with its Guardian session
+        "delphi.chase_candidates",  # with its chase operation
+        "delphi.liens",  # with its chase operation (and its candidate)
+        "delphi.cfcfrms_tickets",  # with its lien
+        "delphi.case_entities",  # with its case (#107)
+    }
+)
+# Locked against writers for the reset's transaction: the tables it deletes from, the ones that
+# cascade with them, and the ones it updates. In one fixed order, so two lockers never deadlock.
 LOCKED_TABLES: tuple[str, ...] = tuple(
     sorted(
         {name for name, _ in RESET_TABLES}
-        | {"bank.accounts", "bank.account_scores", "delphi.probe_runs"}
+        | CASCADED_TABLES
+        | {"bank.accounts", "bank.account_scores"}
     )
 )
 # Not demo data: the platform's records, the dataset and what was trained on it, and the
-# frozen response models. `probe_runs` goes with its session.
+# frozen response models.
 KEPT_TABLES: frozenset[str] = frozenset(
     {
         "bank.account_scores",  # the mule scorer's, refreshed by MULE_SWEEP
         "delphi.audit_log",  # append-only; the reset is audited in it
         # The campaign recompute's position: cases opened after the reset are after it.
         "delphi.campaign_watermark",
-        "delphi.case_entities",  # goes with its case (ON DELETE CASCADE)
         "delphi.auth_sessions",
         "delphi.datasets",
         "delphi.idempotency_keys",
@@ -99,7 +113,6 @@ KEPT_TABLES: frozenset[str] = frozenset(
         "delphi.llm_calls",
         "delphi.model_artifacts",
         "delphi.outbox_events",
-        "delphi.probe_runs",
         "delphi.users",
         "sim_truth.persona_manifests",
         "sim_truth.response_overrides",
