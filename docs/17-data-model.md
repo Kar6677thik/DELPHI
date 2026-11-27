@@ -254,7 +254,10 @@ definitions; only `delphi.sim` and `delphi.evaluation` may import it (doc 04 §4
 
 `hash = SHA-256(prev_hash || canonical_json({at, actor_type, actor_id, action, entity_type,
 entity_id, payload}))`, and the genesis `prev_hash` is 32 zero bytes. Writes take a transaction
-advisory lock (`pg_advisory_xact_lock(42)`), so the chain is serial. Every advisory lock key
+advisory lock (`pg_advisory_xact_lock(42)`), so the chain is serial. A write is two statements:
+the lock, then one INSERT that reads the previous hash and computes the SHA-256 in PostgreSQL
+(`sha256`, the same bytes as above), so the lock is held for as few client round trips as
+possible (#285). Every advisory lock key
 lives in `delphi.platform.locks`, and a test checks that they are distinct (#78): 42 the audit
 chain, 43 outbox publishing (doc 04 §5.5), 44 the bootstrap admin, 45 dataset requests, 46
 dataset writes, 47 loading KB v1, 48 storing a sensing model artifact, 49 label delivery

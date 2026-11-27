@@ -23,7 +23,7 @@ from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import LargeBinary, func, literal, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from delphi.platform.clock import Clock
@@ -41,8 +41,7 @@ class ActorType(StrEnum):
     JOB = "JOB"
 
 
-def entry_hash(
-    prev_hash: bytes,
+def canonical_content(
     *,
     at: datetime,
     actor_type: str,
@@ -52,6 +51,7 @@ def entry_hash(
     entity_id: str | None,
     payload: Mapping[str, Any],
 ) -> bytes:
+    """The bytes an entry's hash covers after the previous hash (docs/17 §4)."""
     content = {
         "at": at.astimezone(UTC).isoformat(),
         "actor_type": actor_type,
@@ -62,7 +62,12 @@ def entry_hash(
         "payload": payload,
     }
     canonical = json.dumps(content, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    return hashlib.sha256(prev_hash + canonical.encode()).digest()
+    return canonical.encode()
+
+
+def entry_hash(prev_hash: bytes, **content: Any) -> bytes:
+    """``SHA-256(prev_hash || canonical_json(content))``; ``content`` as ``canonical_content``."""
+    return hashlib.sha256(prev_hash + canonical_content(**content)).digest()
 
 
 def record(
@@ -77,17 +82,18 @@ def record(
     payload: Mapping[str, Any] | None = None,
 ) -> int:
     """Append an audit entry in the caller's transaction and return its id. ``payload`` must be
-    JSON-serialisable and must not contain secrets (it is kept forever)."""
-    session.execute(select(func.pg_advisory_xact_lock(AUDIT_LOCK_KEY)))
-    prev = session.execute(
-        select(audit_log.c.hash).order_by(audit_log.c.id.desc()).limit(1)
-    ).scalar_one_or_none()
-    prev_hash = prev if prev is not None else GENESIS
+    JSON-serialisable and must not contain secrets (it is kept forever).
+
+    Two statements under the chain's lock, which is held until the caller commits: the lock,
+    then one INSERT that reads the previous hash and hashes in PostgreSQL (`sha256`, the same
+    SHA-256 over the same bytes). Every round trip the client makes under the lock holds up
+    every other writer in the process (#285). The lock stays its own statement, so the INSERT's
+    snapshot is taken after it is granted and sees the entry a waiting writer was waiting for.
+    """
     # Microseconds survive the round trip through timestamptz, so verify recomputes the same.
     at = clock.now()
     content = dict(payload or {})
-    digest = entry_hash(
-        prev_hash,
+    canonical = canonical_content(
         at=at,
         actor_type=actor_type.value,
         actor_id=actor_id,
@@ -96,19 +102,24 @@ def record(
         entity_id=entity_id,
         payload=content,
     )
+    session.execute(select(func.pg_advisory_xact_lock(AUDIT_LOCK_KEY)))
+    last = select(audit_log.c.hash).order_by(audit_log.c.id.desc()).limit(1).scalar_subquery()
+    prev = select(func.coalesce(last, literal(GENESIS, LargeBinary)).label("prev_hash")).subquery()
+    entry = select(
+        literal(at, audit_log.c.at.type),
+        literal(actor_type.value),
+        literal(actor_id, audit_log.c.actor_id.type),
+        literal(action),
+        literal(entity_type),
+        literal(entity_id, audit_log.c.entity_id.type),
+        literal(content, audit_log.c.payload.type),
+        prev.c.prev_hash,
+        func.sha256(prev.c.prev_hash.op("||")(literal(canonical, LargeBinary))),
+    ).select_from(prev)
+    columns = ["at", "actor_type", "actor_id", "action", "entity_type", "entity_id", "payload"]
     entry_id: int = session.execute(
         audit_log.insert()
-        .values(
-            at=at,
-            actor_type=actor_type.value,
-            actor_id=actor_id,
-            action=action,
-            entity_type=entity_type,
-            entity_id=entity_id,
-            payload=content,
-            prev_hash=prev_hash,
-            hash=digest,
-        )
+        .from_select([*columns, "prev_hash", "hash"], entry)
         .returning(audit_log.c.id)
     ).scalar_one()
     return entry_id
