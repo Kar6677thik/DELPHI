@@ -81,6 +81,9 @@ test.
 | E2E-RESET | Demo reset returns personas to their initial state; S-1 can run again |
 | E2E-A11Y | axe scan on every route: no serious or critical violations |
 
+The journeys share one stack and one bank, and E2E-RESET deletes what the others made, so the
+spec files run one at a time (`workers: 1` in `frontend/playwright.config.ts`).
+
 **Implementation (#131).** `frontend/e2e/rbac.spec.ts`, `stories.spec.ts` and `a11y.spec.ts` run
 with the login smoke test, against the same stack.
 - **E2E-RBAC** creates a VIEWER through `POST /admin/users`.
