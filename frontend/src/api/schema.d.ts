@@ -1770,6 +1770,8 @@ export interface components {
              */
             device_id: string;
             telemetry?: components["schemas"]["TelemetryIn"] | null;
+            /** Story Local Time */
+            story_local_time?: string | null;
         };
         /** PaymentSummary */
         PaymentSummary: {
