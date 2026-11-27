@@ -58,6 +58,8 @@ class PaymentRequest:
     payee_account_id: UUID | None = None
     payee_vpa: str | None = None
     telemetry: PhoneTelemetry | None = None
+    # A demo story's scripted local time, IST "HH:MM" (docs/14 §10): only a story sets it.
+    story_local_time: str | None = None
 
 
 def _invalid(message: str) -> DelphiError:
@@ -125,6 +127,7 @@ def initiate_payment(
             device_id=request.device_id,
             status=PaymentStatus.PENDING_GUARDIAN.value,
             origin=DEMO_ORIGIN,
+            story_local_time=request.story_local_time,
         )
     )
     if request.telemetry is not None:

@@ -159,7 +159,7 @@ def unexplained_sessions_query(since: datetime | None = None) -> Select[Any]:
     """docs/11 §1, the Scout's queue source: decided sessions whose terminal posterior was
     flagged unexplained, as ``(subject_type, subject_id, entered_at, p_unexplained,
     payment_id, account_id)``. A query, so the Scout bounds and pages it in SQL; it uses the
-    partial index on ``decided_at WHERE unexplained`` (0019). The filter is the bare column, not
+    partial index on ``decided_at WHERE unexplained`` (0020). The filter is the bare column, not
     ``IS true``, which PostgreSQL can't match to that index condition (#254 review)."""
     gs = guardian_sessions.c
     query = select(
