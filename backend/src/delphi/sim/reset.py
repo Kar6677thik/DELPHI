@@ -86,6 +86,7 @@ CASCADED_TABLES: frozenset[str] = frozenset(
         "delphi.chase_candidates",  # with its chase operation
         "delphi.liens",  # with its chase operation (and its candidate)
         "delphi.cfcfrms_tickets",  # with its lien
+        "delphi.case_entities",  # with its case (#107)
     }
 )
 # Locked against writers for the reset's transaction: the tables it deletes from, the ones that
@@ -105,7 +106,6 @@ KEPT_TABLES: frozenset[str] = frozenset(
         "delphi.audit_log",  # append-only; the reset is audited in it
         # The campaign recompute's position: cases opened after the reset are after it.
         "delphi.campaign_watermark",
-        "delphi.case_entities",  # goes with its case (ON DELETE CASCADE)
         "delphi.auth_sessions",
         "delphi.datasets",
         "delphi.idempotency_keys",
