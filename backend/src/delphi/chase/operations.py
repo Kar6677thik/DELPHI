@@ -374,6 +374,7 @@ def approve_liens(
                 account_id=row.account_id,
                 bank_code=banks[row.account_id],
                 amount_paise=amount,
+                taint_at_approval_paise=taint_now,
                 status=status,
                 recorded_reasons=reasons,
                 evidence_refs=refs,

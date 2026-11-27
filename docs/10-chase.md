@@ -89,7 +89,8 @@ For every account with T_now ≥ ₹500 (the **freeze candidates**):
 p_present = exp(−Δ / τ_acc)
 p_mule    = mule scorer (doc 13 §6) for the account
 κ         = 0.30   # chance a lien on a non-mule holder's tainted balance is upheld (config)
-lien_amount = min(T_now, current balance)
+lien_amount = min(T_now, headroom)
+             # headroom = current balance − the account's other active liens (PLACED, TICKET_SENT)
 ERV       = lien_amount · p_present · (p_mule + (1 − p_mule) · κ)
 wrongful  = (1 − p_mule) · (5,000 ₹ + 0.02 · lien_amount)
 net       = ERV − wrongful
@@ -141,7 +142,10 @@ stable. The 30 days, the 80% and the 3-credit minimum are the definition above, 
 - **Candidates** come through a `CandidateSource`. The default is the tracer's accounts above
   `min_trace_inr`, unscored; #112's scoring plugs in there and fills the score columns.
 - **Approval:** `POST /chase/operations/{id}/liens` re-traces as of now. Each approved candidate's
-  lien is `min(T_now, balance now)` (`lien_amount`).
+  lien is `min(T_now, headroom)` (`lien_amount`): the headroom is the balance now less the
+  account's active liens (PLACED and TICKET_SENT) from any operation, and less any lien set
+  earlier in the same approval (FR-CHS-05). The lien keeps the taint traced at approval
+  (`taint_at_approval_paise`), since later re-traces overwrite the candidate's.
   - An internal account's lien is PLACED, with `review_due_at`, or FAILED_FUNDS_MOVED at 0.
   - An external account's lien waits as TICKET_SENT, with its ticket SENT_SIMULATED.
 - **Ticket worker:** acknowledgement, expiry and auto-close are PR 2.

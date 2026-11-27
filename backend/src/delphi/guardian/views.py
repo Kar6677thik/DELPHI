@@ -159,7 +159,8 @@ def unexplained_sessions_query(since: datetime | None = None) -> Select[Any]:
     """docs/11 §1, the Scout's queue source: decided sessions whose terminal posterior was
     flagged unexplained, as ``(subject_type, subject_id, entered_at, p_unexplained,
     payment_id, account_id)``. A query, so the Scout bounds and pages it in SQL; it uses the
-    partial index on ``decided_at WHERE unexplained`` (0017)."""
+    partial index on ``decided_at WHERE unexplained`` (0019). The filter is the bare column, not
+    ``IS true``, which PostgreSQL can't match to that index condition (#254 review)."""
     gs = guardian_sessions.c
     query = select(
         literal("GUARDIAN_SESSION").label("subject_type"),
@@ -168,7 +169,7 @@ def unexplained_sessions_query(since: datetime | None = None) -> Select[Any]:
         func.coalesce(gs.posterior["UNEXPLAINED"].as_float(), 0.0).label("p_unexplained"),
         gs.payment_id.label("payment_id"),
         null().cast(PG_UUID(as_uuid=True)).label("account_id"),
-    ).where(gs.unexplained.is_(True), gs.decided_at.is_not(None))
+    ).where(gs.unexplained, gs.decided_at.is_not(None))
     if since is not None:
         query = query.where(gs.decided_at >= since)
     return query
