@@ -108,6 +108,35 @@ fast-path, 40% full), plus 5 investigators browsing cases. Pass: Guardian create
 (fast-path + passive phase), planner p95 ≤ 50 ms, no 5xx, worker queue lag < 60 s, api memory
 stable (< 10% growth over the run).
 
+**Implementation (#130).** `backend/tests/load/locustfile.py`, run with `just load` against a
+running stack (`DELPHI_LOAD_URL`, `DELPHI_LOAD_USERNAME`, `DELPHI_LOAD_PASSWORD`, and
+`DELPHI_LOAD_METRICS_URL` for the api's `/metrics`); never in CI. Locust is a dev dependency.
+- **Payers:** 20 users at one payment a second each (`constant_throughput(1)`), paying the way
+  the mock phone does (`POST /guardian/sessions`, the NFR-02 smoke test's payloads, 40% on a call
+  with remote access on). Nobody answers the probes. They share two signed-in sessions, so each
+  stays under the per-session rate limit; 25 sign-ins at once are refused.
+- **Investigators:** 5 users opening the case queue and a case every 2–5 s, on a third session.
+- **Checked at the end**, with exit code 1 on a failure: Guardian create p95 ≤ 400 ms, no 5xx,
+  the oldest QUEUED job younger than 60 s (sampled every 10 s), and the api's resident memory
+  growing < 10% (from `/metrics`). The planner's p95 isn't exported, so the planner benchmark
+  covers it. NFR-06's resource fit needs `kubectl top` on the cluster: the owner's server run.
+- A payer waits for its response before the next payment, so a saturated stack is offered fewer
+  than 20 sessions/s; the report gives the rate it sustained.
+
+**Local run (#130), 2026-11-26.** One 4-core container ran the load generator, PostgreSQL, the
+api and the worker together, on `test` with the personas, for 10 minutes. Not met:
+
+| Check | Result |
+|---|---|
+| Guardian create p95 | 5,700 ms (median 4,800); 2,460 sessions, 4.1/s sustained, not 20 |
+| 5xx | 0 |
+| Worker queue lag | 0 s |
+| api memory | 278 → 339 MiB (+21.7%) |
+| Investigators | `GET /cases` p95 2,700 ms; `GET /cases/{id}` p95 400 ms |
+
+The stack saturated at about 4 sessions/s on this machine, so the latency is mostly queueing.
+The verdict that counts is the server run (the owner's), with the generator on another machine.
+
 **Smoke load (M4, #101).** Before the Locust run, `backend/tests/load/test_nfr02_smoke.py`
 checks NFR-02 alone: it pays from the personas at 20 sessions/s for 2 minutes through
 `POST /guardian/sessions`, as the mock phone does, with 40% of the payments made on a call with
