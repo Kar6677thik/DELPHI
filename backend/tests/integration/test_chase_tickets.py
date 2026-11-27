@@ -110,7 +110,14 @@ def test_the_operation_closes_after_the_golden_hour_with_nothing_pending(
 ) -> None:
     client, _ = writer
     view, _external, _ticket = _ticketed(client, env)
-    job = ChaseRetraceJob(env.sessions, env.clock, lambda _s: lambda _t: None, tickets_per_run=200)
+    job = ChaseRetraceJob(
+        env.sessions,
+        env.clock,
+        lambda _s: lambda _t: None,
+        tickets_per_run=200,
+        retrace_batch=10,
+        retrace_max_per_run=50,
+    )
     ctx: Any = JobContext.__new__(JobContext)
     env.clock.advance(timedelta(minutes=90))  # the golden hour is over, the ticket is pending
     assert job(ctx) == {"acknowledged": 0, "expired": 0, "closed": 0, "retraced": 1}
@@ -169,7 +176,14 @@ def test_tickets_expire_with_no_seeded_dataset_a_capped_batch_at_a_time(
     first, _e1, first_ticket = _ticketed(client, env)
     env.clock.advance(timedelta(minutes=1))
     _second, _e2, second_ticket = _ticketed(client, env)
-    job = ChaseRetraceJob(env.sessions, env.clock, simulated_ack_delay, tickets_per_run=1)
+    job = ChaseRetraceJob(
+        env.sessions,
+        env.clock,
+        simulated_ack_delay,
+        tickets_per_run=1,
+        retrace_batch=10,
+        retrace_max_per_run=50,
+    )
     ctx: Any = JobContext.__new__(JobContext)
     env.clock.advance(timedelta(hours=4))  # both past ticket_expiry_min
     assert job(ctx)["expired"] == 1

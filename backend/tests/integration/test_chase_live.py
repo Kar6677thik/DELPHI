@@ -14,6 +14,9 @@ from sqlalchemy import text
 
 from delphi.api.security import Principal
 from delphi.chase.api import TracedOnly, placed_lien_totals, retrace_due
+from delphi.chase.tickets import ChaseRetraceJob
+from delphi.platform.jobs import JobContext
+from delphi.platform.locks import CHASE_RETRACE_LOCK_KEY, LIEN_ACCOUNT_LOCK_CLASS
 from delphi.sim.tick import advance_transfers
 
 from .test_cases import T0, Env, env, writer  # noqa: F401 - pytest fixtures
@@ -81,7 +84,7 @@ def test_the_ring_moves_on_around_the_lien_and_the_retrace_follows(
     assert _tick(env) == []  # each row runs once
 
     with env.sessions.begin() as s:
-        assert retrace_due(s, env.clock, TracedOnly()) == 1
+        assert retrace_due(s, env.clock, TracedOnly(), limit=10) == 1
     view = client.get(f"/api/v1/chase/operations/{op['id']}").json()
     taint = {c["account_id"]: c["taint_paise"] for c in view["candidates"]}
     assert taint[str(cash)] == 50_000 * INR  # the money's new holder is a candidate
@@ -93,4 +96,78 @@ def test_the_ring_moves_on_around_the_lien_and_the_retrace_follows(
     assert metrics["golden_hour_recovery_ratio"] == 0.4  # ₹80k of ₹2L, within the hour
     assert metrics["amount_frozen_beyond_taint_paise"] == 0
     with env.sessions.begin() as s:  # not again before retrace_interval_min has passed
-        assert retrace_due(s, env.clock, TracedOnly()) == 0
+        assert retrace_due(s, env.clock, TracedOnly(), limit=10) == 0
+
+
+def test_the_metrics_use_the_taint_at_approval(
+    env: Env,  # noqa: F811
+    writer: tuple[TestClient, Principal],  # noqa: F811
+) -> None:
+    """#258 review: a re-trace overwrites the candidates' taint; the metrics read each lien's
+    taint at approval, so a later, lower taint doesn't make the lien look beyond its taint."""
+    client, _ = writer
+    source, internal, _external = _scam(env)
+    op = _post(client, "/chase/operations", {"payment_ids": [str(source)]}).json()
+    candidate = next(c for c in op["candidates"] if c["account_id"] == str(internal))
+    _post(client, f"/chase/operations/{op['id']}/liens", {"candidate_ids": [candidate["id"]]})
+    with env.owner.begin() as conn:  # as if the money had since been traced elsewhere
+        conn.execute(
+            text("UPDATE delphi.chase_candidates SET taint_paise = 0 WHERE id = :c"),
+            {"c": candidate["id"]},
+        )
+    env.clock.advance(timedelta(minutes=10))
+    with env.sessions.begin() as s:
+        assert retrace_due(s, env.clock, TracedOnly(), limit=10) == 1
+    with env.owner.connect() as conn:
+        metrics = conn.execute(
+            text("SELECT metrics FROM delphi.chase_operations WHERE id = :o"), {"o": op["id"]}
+        ).scalar_one()
+    assert metrics["amount_frozen_beyond_taint_paise"] == 0
+
+
+def test_a_retrace_takes_at_most_its_limit_and_skips_while_busy(
+    env: Env,  # noqa: F811
+    writer: tuple[TestClient, Principal],  # noqa: F811
+) -> None:
+    """#258 review: due operations are picked in SQL, least recently traced first, at most the
+    limit; the job skips while another run holds lock 56."""
+    client, _ = writer
+    for _ in range(2):
+        source, _internal, _external = _scam(env)
+        _post(client, "/chase/operations", {"payment_ids": [str(source)]})
+    env.clock.advance(timedelta(minutes=10))
+    with env.sessions.begin() as s:
+        assert retrace_due(s, env.clock, TracedOnly(), limit=1) == 1
+    with env.sessions.begin() as s:
+        assert retrace_due(s, env.clock, TracedOnly(), limit=10) == 1
+    job = ChaseRetraceJob(
+        env.sessions,
+        env.clock,
+        lambda _s: None,
+        tickets_per_run=10,
+        retrace_batch=1,
+        retrace_max_per_run=5,
+    )
+    ctx: Any = JobContext.__new__(JobContext)
+    env.clock.advance(timedelta(minutes=10))
+    with env.owner.begin() as held:
+        held.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": CHASE_RETRACE_LOCK_KEY})
+        busy = job(ctx)
+    assert busy["retraced"] == 0 and busy["retrace_skipped"] == "busy"
+    assert job(ctx)["retraced"] == 2  # two batches of one
+
+
+def test_the_tick_holds_its_payers_lien_locks(env: Env) -> None:  # noqa: F811
+    """#258 review: SIM_TICK takes the per-account lien locks before reading the liens, so an
+    approval racing it waits instead of setting a lien the transfer then moves past."""
+    payer, payee = _account(env, "DLPH", 10_000), _account(env, "XBK2", 0)
+    _schedule(env, payer, payee, 1_000, minutes=1)
+    env.clock.advance(timedelta(minutes=2))
+    with env.owner.begin() as conn:
+        assert len(advance_transfers(conn, env.clock.now(), held=placed_lien_totals)) == 1
+        with env.owner.connect() as other:
+            free = other.execute(
+                text("SELECT pg_try_advisory_lock(:k, hashtext(:a))"),
+                {"k": LIEN_ACCOUNT_LOCK_CLASS, "a": str(payer)},
+            ).scalar_one()
+    assert free is False

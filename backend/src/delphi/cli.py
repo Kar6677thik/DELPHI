@@ -312,6 +312,8 @@ def worker_registry(
         sessions=platform.sessions,
         clock=platform.clock,
         tickets_per_run=settings.chase_tickets_per_run,
+        retrace_batch=settings.chase_retrace_batch,
+        retrace_max_per_run=settings.chase_retrace_max_per_run,
     )
     llm = LlmService(
         platform.sessions,

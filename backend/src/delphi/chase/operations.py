@@ -25,7 +25,7 @@ from datetime import datetime, timedelta
 from typing import Any, Protocol
 from uuid import UUID
 
-from sqlalchemy import Connection, Text, cast, func, literal, select, text, update
+from sqlalchemy import Connection, Text, and_, cast, func, literal, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -448,11 +448,13 @@ def placed_lien_totals(conn: Connection, account_ids: Iterable[UUID]) -> dict[UU
 
 
 def _metrics(session: Session, op: Any) -> dict[str, Any]:
-    k, lien = chase_candidates.c, liens.c
+    """The operation's §6 metrics, from each lien's taint at approval: re-traces overwrite the
+    candidates' taint, so it can't come from there (#258 review)."""
+    lien = liens.c
     rows = session.execute(
-        select(lien.amount_paise, lien.status, lien.placed_at, k.taint_paise)
-        .join(chase_candidates, k.id == lien.candidate_id)
-        .where(lien.operation_id == op.id)
+        select(lien.amount_paise, lien.status, lien.placed_at, lien.taint_at_approval_paise).where(
+            lien.operation_id == op.id
+        )
     ).all()
     return dict(
         operation_metrics(
@@ -464,27 +466,49 @@ def _metrics(session: Session, op: Any) -> dict[str, Any]:
     )
 
 
-def retrace_due(session: Session, clock: Clock, source: CandidateSource) -> int:
-    """docs/10 §5 step 5: re-trace every OPEN operation last traced ``retrace_interval_min``
-    ago or more. New candidates appear, existing ones get their taint, balance and score now;
-    liens are not changed. The operation's metrics are refreshed. Returns how many re-traced."""
+def due_for_retrace(session: Session, now: datetime, *, limit: int) -> list[Any]:
+    """The OPEN operations last traced ``retrace_interval_min`` (their KB version's) ago or more,
+    least recently traced first, at most ``limit``, locked; one another transaction holds is
+    skipped. The interval is applied in SQL, per KB version (there are few)."""
+    c = chase_operations.c
+    versions = session.execute(
+        select(c.kb_version_id).where(c.status == "OPEN").distinct()
+    ).scalars()
+    cutoffs = []
+    for version_id in versions:
+        version = get_version(session, version_id)
+        assert version is not None
+        interval = timedelta(minutes=version.kb.config.chase.retrace_interval_min)
+        cutoffs.append(and_(c.kb_version_id == version_id, c.last_traced_at <= now - interval))
+    if not cutoffs:
+        return []
+    return list(
+        session.execute(
+            select(chase_operations)
+            .where(c.status == "OPEN", or_(*cutoffs))
+            .order_by(c.last_traced_at, c.id)
+            .limit(limit)
+            .with_for_update(skip_locked=True)
+        ).all()
+    )
+
+
+def retrace_due(session: Session, clock: Clock, source: CandidateSource, *, limit: int) -> int:
+    """docs/10 §5 step 5: re-trace up to ``limit`` due OPEN operations (``due_for_retrace``), in
+    the caller's transaction, which ``bound_trace`` bounds. New candidates appear, existing ones
+    get their taint, balance and score now; liens are not changed. The operation's metrics are
+    refreshed. Returns how many re-traced."""
     now = clock.now()
-    ops = session.execute(
-        select(chase_operations)
-        .where(chase_operations.c.status == "OPEN")
-        .with_for_update(skip_locked=True)
-    ).all()
+    bound_trace(session)
     done = 0
-    for op in ops:
+    for op in due_for_retrace(session, now, limit=limit):
         version = get_version(session, op.kb_version_id)
         assert version is not None
         kb = version.kb
-        if now - op.last_traced_at < timedelta(minutes=kb.config.chase.retrace_interval_min):
-            continue
         sources, moves = load_trace_inputs(
             session.connection(),
             list(op.source_payment_ids),
-            until=visible_until(now, kb.config.chase.visibility_lag_min.demo),
+            until=visible_until(now, visibility_lag(session, kb)),
         )
         traced = trace(
             sources,

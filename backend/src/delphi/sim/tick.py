@@ -20,10 +20,11 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import Connection, Engine, select, update
+from sqlalchemy import Connection, Engine, Text, cast, func, literal, select, update
 
 from delphi.platform.clock import Clock
 from delphi.platform.jobs import JobContext
+from delphi.platform.locks import LIEN_ACCOUNT_LOCK_CLASS
 from delphi.sim.bank import accounts, ledger_entries, payments, sim_schedule
 
 TRANSFER = "TRANSFER"
@@ -74,6 +75,17 @@ def advance_transfers(conn: Connection, now: datetime, *, held: HeldPaise) -> li
         .with_for_update(skip_locked=True)
     ).all()
     payers = {UUID(str(r.payload["payer_account_id"])) for r in rows}
+    # The same per-account locks as a lien's approval and acknowledgement (FR-CHS-05), taken
+    # before reading what is liened, in a fixed order: an approval racing this tick waits, so
+    # a transfer never moves money a lien set meanwhile holds (#258 review).
+    for payer in sorted(payers, key=str):
+        conn.execute(
+            select(
+                func.pg_advisory_xact_lock(
+                    LIEN_ACCOUNT_LOCK_CLASS, func.hashtext(cast(literal(payer), Text))
+                )
+            )
+        )
     liened = dict(held(conn, payers)) if payers else {}
     moved: list[Moved] = []
     for r in rows:
