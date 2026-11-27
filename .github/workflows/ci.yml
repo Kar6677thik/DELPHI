@@ -118,18 +118,35 @@ jobs:
         run: pnpm check:api
 
   # End to end (docs/21 §4): the production image in the compose stack (compose.yaml), and the
-  # Playwright journeys against it. For now the M0 login smoke test; the story journeys join as
+  # Playwright journeys against it: the M0 login smoke test, and the story journeys as
   # their milestones land.
   e2e:
     # The browser runs in Microsoft's Playwright image (Chromium and its system packages
     # included, the same version as @playwright/test), so the job never needs apt: Ubuntu's
     # mirrors timing out was the e2e job's only flake.
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Start the stack (postgres, migrate, api, worker)
         run: docker compose up --build --detach --wait --wait-timeout 300 api worker
+      # The story journeys (E2E-S2, #101) need the demo dataset with its personas, and the
+      # sensing models trained on it: the seed job queues the training. About two minutes.
+      - name: Seed the demo dataset and train the models
+        run: |
+          docker compose exec -T api delphi seed --profile demo
+          jobs() {
+            docker compose exec -T postgres psql -U postgres -d delphi -tA -c \
+              "select type || ' ' || status from delphi.jobs
+               where type in ('GENERATE_DATASET', 'TRAIN_SENSING') order by created_at"
+          }
+          for _ in $(seq 1 90); do
+            state="$(jobs)"
+            if grep -q FAILED <<<"$state"; then echo "$state"; exit 1; fi
+            if grep -q "TRAIN_SENSING SUCCEEDED" <<<"$state"; then echo "$state"; exit 0; fi
+            sleep 10
+          done
+          echo "the dataset and models were not ready in 15 minutes:"; jobs; exit 1
       - name: Journeys (Playwright 1.55.0, Chromium)
         run: >-
           docker run --rm --network host --ipc host

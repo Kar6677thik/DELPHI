@@ -11,6 +11,8 @@ repository's KB v1 as the ACTIVE version when the table is empty, and does nothi
 from __future__ import annotations
 
 import json
+import threading
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
@@ -25,8 +27,10 @@ from sqlalchemy import (
     MetaData,
     Table,
     Text,
+    cast,
     func,
     insert,
+    literal_column,
     select,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -164,10 +168,43 @@ def ensure_kb_v1(session: Session, clock: Clock, kb: KnowledgeBase) -> int | Non
     return insert_version(session, clock, kb, status=KbStatus.ACTIVE, change_summary=KB_V1_SUMMARY)
 
 
-def _stored(row: Any) -> StoredVersion:
-    kb = KnowledgeBase.model_validate(row.content)
-    if content_sha256(kb) != row.content_sha256:
-        raise KbIntegrityError(f"KB version {row.id}: content does not match its SHA-256")
+# The parsed content of the versions this process has loaded. A version's content never
+# changes, and validating it into a KnowledgeBase (and checking its hash) is the costliest part
+# of loading one: every Guardian step loads its session's version, so doing it once per process
+# saves that CPU on every step (#285). The key is the row as it stands now: its id, its hash,
+# and its `xmin` (the transaction that last wrote it), so a row edited in any way, even outside
+# the app with its hash left alone, is loaded and checked again.
+KB_CACHE_SIZE = 16
+_parsed: OrderedDict[tuple[int, str, str], KnowledgeBase] = OrderedDict()
+_parsed_lock = threading.Lock()
+# Every column but the content, and the row's version: what a cached version still reads.
+_META = [
+    *(c for c in kb_versions.c if c.name != "content"),
+    cast(literal_column("delphi.kb_versions.xmin"), Text).label("row_xmin"),
+]
+
+
+def _parse(conn: Connection | Session, version_id: int, sha: str, xmin: str) -> KnowledgeBase:
+    key = (version_id, sha, xmin)
+    with _parsed_lock:
+        kb = _parsed.get(key)
+        if kb is not None:
+            _parsed.move_to_end(key)
+            return kb
+    content = conn.execute(
+        select(kb_versions.c.content).where(kb_versions.c.id == version_id)
+    ).scalar_one()
+    kb = KnowledgeBase.model_validate(content)
+    if content_sha256(kb) != sha:
+        raise KbIntegrityError(f"KB version {version_id}: content does not match its SHA-256")
+    with _parsed_lock:
+        _parsed[key] = kb
+        while len(_parsed) > KB_CACHE_SIZE:
+            _parsed.popitem(last=False)
+    return kb
+
+
+def _stored(conn: Connection | Session, row: Any) -> StoredVersion:
     return StoredVersion(
         id=row.id,
         status=KbStatus(row.status),
@@ -180,13 +217,13 @@ def _stored(row: Any) -> StoredVersion:
         activated_at=row.activated_at,
         retired_at=row.retired_at,
         rollback_reason=row.rollback_reason,
-        kb=kb,
+        kb=_parse(conn, row.id, row.content_sha256, row.row_xmin),
     )
 
 
 def get_version(conn: Connection | Session, version_id: int) -> StoredVersion | None:
-    row = conn.execute(select(kb_versions).where(kb_versions.c.id == version_id)).one_or_none()
-    return _stored(row) if row is not None else None
+    row = conn.execute(select(*_META).where(kb_versions.c.id == version_id)).one_or_none()
+    return _stored(conn, row) if row is not None else None
 
 
 def list_versions(
@@ -224,9 +261,9 @@ def list_versions(
 def active_version(conn: Connection | Session) -> StoredVersion | None:
     """The ACTIVE version, or ``None`` before ``delphi migrate`` has loaded KB v1."""
     row = conn.execute(
-        select(kb_versions).where(kb_versions.c.status == KbStatus.ACTIVE.value)
+        select(*_META).where(kb_versions.c.status == KbStatus.ACTIVE.value)
     ).one_or_none()
-    return _stored(row) if row is not None else None
+    return _stored(conn, row) if row is not None else None
 
 
 def active_version_id(conn: Connection | Session) -> int | None:

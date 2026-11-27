@@ -387,6 +387,9 @@ class NewPayeeIn(BaseModel):
     vpa: str = Field(min_length=1, max_length=MAX_TEXT)
 
 
+STORY_LOCAL_TIME = r"^([01][0-9]|2[0-3]):[0-5][0-9]$"  # the migration 0019 check
+
+
 class PaymentIn(BaseModel):
     model_config = _Strict
     payer_account_id: UUID
@@ -396,6 +399,8 @@ class PaymentIn(BaseModel):
     channel: PayChannel
     device_id: UUID
     telemetry: TelemetryIn | None = None
+    # A demo story's scripted IST "HH:MM" (docs/14 §10): the DEMO_STORY job's result carries it.
+    story_local_time: Annotated[str, Field(pattern=STORY_LOCAL_TIME)] | None = None
 
     @model_validator(mode="after")
     def _one_payee(self) -> PaymentIn:
@@ -491,6 +496,7 @@ def _initiate(platform: Platform, payment: PaymentIn) -> UUID:
                 payee_account_id=payment.payee_account_id,
                 payee_vpa=payment.new_payee.vpa if payment.new_payee else None,
                 telemetry=PhoneTelemetry(**t.model_dump()) if t else None,
+                story_local_time=payment.story_local_time,
             ),
             platform.clock.now(),
         )

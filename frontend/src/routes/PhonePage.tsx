@@ -300,7 +300,7 @@ function Phone({
   story: StagedStory | null;
   situation: Situation;
   flight: Flight | null;
-  onFlight: (next: Flight | null) => void;
+  onFlight: React.Dispatch<React.SetStateAction<Flight | null>>;
 }) {
   const start = useStartPayment();
   const answer = useAnswerProbe();
@@ -316,16 +316,21 @@ function Phone({
       {
         onSuccess: (session) => {
           remember(session);
-          if (!flight) return;
           // A wrong OTP keeps the run waiting; anything else clears the screen for what's next.
           const waiting = session.probe_runs.some(
             (r) => r.id === probe.probe_run_id && r.status === 'AWAITING_CUSTOMER',
           );
-          onFlight({
-            ...flight,
-            probe: waiting ? flight.probe : null,
-            sms: waiting ? flight.sms : null,
-            decided: session.decision ?? flight.decided,
+          // From the flight as it is now: the next probe's event can arrive before this
+          // response, and must not be cleared with the answered one.
+          onFlight((current) => {
+            if (current?.sessionId !== probe.session_id) return current;
+            const answered = !waiting && current.probe?.probe_run_id === probe.probe_run_id;
+            return {
+              ...current,
+              probe: answered ? null : current.probe,
+              sms: answered ? null : current.sms,
+              decided: session.decision ?? current.decided,
+            };
           });
         },
       },
@@ -428,6 +433,7 @@ function PayScreen({
       amount_paise: number;
       channel: PayChannel;
       device_id: string;
+      story_local_time?: string;
     },
     sessionSeconds: number,
   ) => void;
@@ -461,6 +467,7 @@ function PayScreen({
               amount_paise: amount,
               channel,
               device_id: deviceId,
+              ...(story?.story_local_time ? { story_local_time: story.story_local_time } : {}),
             },
             elapsedSeconds(openedAt.current),
           );

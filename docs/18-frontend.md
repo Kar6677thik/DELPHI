@@ -141,7 +141,12 @@ re-read. "Add a user" posts `POST /admin/users` (username pattern, display name,
 least 12 characters, role). "Demo stories" lists S-1 and S-2 (#101): "Autoplay" queues
 `POST /admin/demo/scenarios/{story}/run` with `mode: autoplay` (disabled until the dataset and
 models are ready) and points to the Guardian monitor; "Play on the phone" opens
-`/phone?story=S1`. The demo reset comes with its endpoint.
+`/phone?story=S1`. "Reset the demo" asks first ("Yes, reset" / "Keep it"), then posts
+`POST /admin/demo/reset` with an `Idempotency-Key` and reads the `DEMO_RESET` job each second
+until it finishes: the rows removed and accounts restored, "another reset was already running"
+for a `skipped` result, the job's error if it failed, and a warning to restart the api and the
+worker when `restart_needed` (the processes load the ACTIVE KB at start-up). It is disabled
+without a dataset.
 
 **M4 Guardian screens (#100):** `/guardian` lists `GET /guardian/sessions` newest first, 50 at a
 time, with "Load more sessions" while `next_cursor` is set: start time (linking to
