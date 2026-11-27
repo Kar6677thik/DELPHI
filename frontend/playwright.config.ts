@@ -6,6 +6,7 @@ import { defineConfig, devices } from '@playwright/test';
 export default defineConfig({
   testDir: 'e2e',
   fullyParallel: false,
+  workers: 1, // the reset journey shares the bank, so the spec files run one at a time
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',

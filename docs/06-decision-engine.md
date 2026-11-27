@@ -360,7 +360,8 @@ and M4 tests must reproduce them:
 
 These priors are fixtures (`prior_override`) for the ENG-S1/ENG-S2 tests (doc 21 §3). They
 respect u ≥ 0.02. The live demo uses the trained model's prior instead, and the E2E tests check
-the same story outcomes there.
+the same story outcomes there. For S-2 the live prior's ATO share is far lower, so which step-up
+runs is not part of the live outcome (doc 21 §3, #281).
 
 - **Arjun** (prior G .69 / ATO .20 / DA .04 / INV .03 / MULE .02 / ∅ .02, ₹1,80,000, passive:
   CLEAN_KNOWN_ENTITY, LOW_OR_UNKNOWN, NEW_DEVICE, NORMAL, NOT_ON_CALL).
