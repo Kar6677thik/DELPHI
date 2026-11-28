@@ -176,6 +176,24 @@ def test_hour_deviation_uses_a_circular_median(config: FeatureConfig) -> None:
     assert f["hour_deviation"] == pytest.approx(0.1 + 24 - (23 + 40 / 60), abs=1e-6)
 
 
+def test_a_story_payment_uses_its_scripted_local_hour(config: FeatureConfig) -> None:
+    """docs/14 §10, #291: S-1 is scripted at 23:40 IST, whenever the presenter runs it; the hour
+    features read that, not the real time. Nothing else moves."""
+    noon = to_us(datetime(2026, 7, 1, 6, 30, tzinfo=UTC))  # 12:00 IST
+    real = build_payment_features(_payment(initiated_at_us=noon), _history(), config)
+    scripted = build_payment_features(
+        _payment(initiated_at_us=noon, local_hour=23 + 40 / 60), _history(), config
+    )
+    at_2340 = to_us(datetime(2026, 7, 1, 18, 10, tzinfo=UTC))  # 23:40 IST
+    expected = build_payment_features(_payment(initiated_at_us=at_2340), _history(), config)
+    for name in ("hour_sin", "hour_cos", "hour_deviation"):
+        assert scripted[name] == pytest.approx(expected[name])
+    assert scripted["hour_sin"] != pytest.approx(real["hour_sin"])
+    assert {k: v for k, v in scripted.items() if not k.startswith("hour")} == {
+        k: v for k, v in real.items() if not k.startswith("hour")
+    }
+
+
 @pytest.mark.parametrize(
     ("hours", "median"),
     [

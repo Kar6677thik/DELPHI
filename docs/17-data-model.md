@@ -54,7 +54,8 @@ accounts(id, customer_id null → customers, bank_code, is_merchant bool, mercha
 devices(id, customer_id → customers, fingerprint, os, first_seen_at)
 payees(id, customer_id, account_id, label, added_at, unique(customer_id, account_id))
 payments(id, payer_account_id, payee_account_id, amount_paise > 0, channel, initiated_at,
-         device_id null, status, origin, executed_at null, scheduled_by null, created_at)
+         device_id null, status, origin, executed_at null, scheduled_by null, created_at,
+         story_local_time null)  -- a DEMO_STORY payment's scripted IST "HH:MM" (doc 14 §10)
    idx: (payer_account_id, initiated_at), (payee_account_id, initiated_at), (status)
 ledger_entries(id bigint identity, account_id, payment_id, delta_paise, balance_after_paise, at)
    idx: (account_id, at)
@@ -164,10 +165,13 @@ labels(id, subject_type, subject_id, hypothesis_key, label_source, known_at, cre
 
 chase_operations(id, complaint_id null, source_payment_ids uuid[], status, reported_at,
                  reported_loss_paise, kb_version_id, golden_hour_ends_at, last_traced_at,
-                 metrics jsonb, created_by, version)
+                 metrics jsonb, created_by, created_at, version)
+       -- candidates, liens and tickets go with their operation (ON DELETE CASCADE): only the
+       -- demo reset deletes an operation (doc 14 §10)
 chase_candidates(id, operation_id, account_id, hop, taint_paise, balance_paise, p_present, p_mule,
                  erv_paise, wrongful_cost_paise, net_paise, rank, recommended bool, traced_at)
-liens(id, operation_id, candidate_id, account_id, bank_code, amount_paise, status, recorded_reasons,
+liens(id, operation_id, candidate_id, account_id, bank_code, amount_paise,
+      taint_at_approval_paise (amount ≤ it), status, recorded_reasons,
       evidence_refs jsonb, approved_by, approved_at, placed_at null, review_due_at null,
       released_at null, release_reason null)
 cfcfrms_tickets(id, lien_id, target_bank, status (DRAFTED|SENT_SIMULATED|ACKNOWLEDGED|EXPIRED),
@@ -180,6 +184,9 @@ typology_drafts(id, cluster_id null, status, revision int, spec jsonb, last_edit
                 editors uuid[] (every user who ever saved a revision),
                 backtest_report jsonb null, backtested_revision null, shadow_kb_version_id null,
                 approved_by null, rejected_reason null, created_at, updated_at, version)
+       -- status CANDIDATE|DRAFT|BACKTESTED|IN_SHADOW|PROMOTED|REJECTED|SUPERSEDED (a CHECK)
+scout_queue_dismissals(subject_type (GUARDIAN_SESSION|CASE), subject_id, reason, dismissed_by,
+                       dismissed_at, primary key(subject_type, subject_id))   -- #117, docs/11 §1
 shadow_evaluations(id bigint identity, kb_version_id, subject_type, subject_id, posterior jsonb,
                    decision, would_select_first null, agrees bool, at)
 
@@ -205,7 +212,7 @@ jobs(id, type, status (QUEUED|RUNNING|SUCCEEDED|FAILED|CANCELLED), params jsonb,
      error text null, progress real, attempts int, max_attempts int default 3,
      idempotency_key unique, locked_by null, locked_until null, run_after timestamptz,
      created_by null, created_at, started_at null, finished_at null)
-   idx (status, run_after)
+   idx (status, run_after); idx (type, finished_at) (migration 0020, the Scout auto-trigger's back-off)
 outbox_events(id bigint identity, type, entity_id, payload jsonb, at)   idx (at)
 ops_backup_runs(id bigint identity, finished_at, file_name, size_bytes, status)  -- written by the backup CronJob
 llm_calls(id, purpose, provider, model null, prompt_version, request_redacted jsonb null,
@@ -254,13 +261,17 @@ definitions; only `delphi.sim` and `delphi.evaluation` may import it (doc 04 §4
 
 `hash = SHA-256(prev_hash || canonical_json({at, actor_type, actor_id, action, entity_type,
 entity_id, payload}))`, and the genesis `prev_hash` is 32 zero bytes. Writes take a transaction
-advisory lock (`pg_advisory_xact_lock(42)`), so the chain is serial. Every advisory lock key
+advisory lock (`pg_advisory_xact_lock(42)`), so the chain is serial. A write is two statements:
+the lock, then one INSERT that reads the previous hash and computes the SHA-256 in PostgreSQL
+(`sha256`, the same bytes as above), so the lock is held for as few client round trips as
+possible (#285). Every advisory lock key
 lives in `delphi.platform.locks`, and a test checks that they are distinct (#78): 42 the audit
 chain, 43 outbox publishing (doc 04 §5.5), 44 the bootstrap admin, 45 dataset requests, 46
 dataset writes, 47 loading KB v1, 48 storing a sensing model artifact, 49 label delivery
 (#263), 50 the ACCOUNT_REVIEW sweep (doc 09 §1), 51 the demo reset, 54 `MULE_SWEEP` (doc 13
-§6). Verifying a window checks that its first entry links to the entry just before the window (or to the genesis hash), so a
-deleted or edited earlier entry is caught too. `GET
+§6); and class 52 for the two-key lien-account locks `(52, hashtext(account_id))` (doc 10 §5,
+FR-CHS-05). Verifying a window checks that its first entry links to the entry just before the
+window (or to the genesis hash), so a deleted or edited earlier entry is caught too. `GET
 /admin/audit/verify?from=&to=` recomputes the chain. The DD pack verifies the entries for its
 subject. Audited actions: every state transition of every aggregate, logins (success and
 failure), role changes, KB promotions, rollbacks, lien approvals, police-alert sends and demo

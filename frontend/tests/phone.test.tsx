@@ -239,6 +239,45 @@ describe('/phone', () => {
     expect(within(phone).getByLabelText('Amount')).toHaveValue('');
   });
 
+  it('keeps the next question when its event arrives before the answer’s response', async () => {
+    setMockSession('investigator');
+    mockApi();
+    const NEXT = '01930000-0000-7000-8000-0000000000ea';
+    let respond: () => void = () => undefined;
+    server.use(
+      http.post(`/api/v1/guardian/sessions/${SESSION}/probe-responses`, async () => {
+        await new Promise<void>((resolve) => {
+          respond = resolve;
+        });
+        return HttpResponse.json(view({ probe_runs: [] }));
+      }),
+    );
+    const { user } = renderApp('/phone');
+    const phone = await screen.findByRole('region', { name: 'Customer’s phone' });
+    await user.type(within(phone).getByLabelText('Amount'), '480000');
+    await user.click(within(phone).getByRole('button', { name: /Pay/ }));
+    await within(phone).findByText('Checking this payment');
+    act(() => {
+      phoneStream().emitData('probe.requested', QUESTION);
+    });
+    await user.click(await within(phone).findByRole('button', { name: 'No' }));
+    // The Guardian asks the next question while the answer's POST is still in flight.
+    act(() => {
+      phoneStream().emitData('probe.requested', {
+        ...QUESTION,
+        probe_run_id: NEXT,
+        text: 'What is this payment for?',
+      });
+    });
+    act(() => {
+      respond();
+    });
+    expect(
+      await within(phone).findByRole('heading', { name: 'What is this payment for?' }),
+    ).toBeVisible();
+    expect(within(phone).queryByText('Checking this payment')).toBeNull();
+  });
+
   it('sends what the presenter set around the customer as the telemetry', async () => {
     setMockSession('investigator');
     const sent = mockApi();
@@ -378,6 +417,7 @@ describe('/phone demo stories', () => {
           channel: 'IMPS',
           device_id: 'd-story',
           telemetry: STORY_TELEMETRY,
+          story_local_time: '23:40',
         },
       },
       error: null,
@@ -440,6 +480,7 @@ describe('/phone demo stories', () => {
         amount_paise: 4_80_000_00,
         channel: 'IMPS',
         device_id: 'd-story',
+        story_local_time: '23:40',
         telemetry: { on_call: true, call_counterparty_known: false },
       },
     });
