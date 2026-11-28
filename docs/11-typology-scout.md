@@ -173,6 +173,41 @@ A replay cannot run probes that were never run. The report states this limitatio
 There is no automatic pass/fail. The FDE engineer judges, and the report is attached to the
 draft.
 
+**Implementation** (#118, `delphi.scout.backtest`):
+- `POST /typology-drafts/{id}/backtest` queues `RUN_BACKTEST` for the draft's current revision:
+  404 for an unknown draft, 409 unless it is DRAFT or BACKTESTED, 422 with the issues while
+  ACTIVE + the draft breaks a KB rule. One live job per revision: asking again returns that job
+  (`created: false`, with its `status`) while it is queued, running or has written its report.
+  Once it FAILED, was cancelled or ended skipped (no report), asking again queues a new attempt
+  (job key `RUN_BACKTEST:{draft}:{revision}:{n}`), so a failed run never blocks its revision.
+- The replay covers the sessions decided in the last `scout.lookback_days` (30) and the cases
+  opened in them that stored their prior components (`p_model`, the anomaly percentile), the
+  newest `DELPHI_SCOUT_BACKTEST_MAX_ITEMS` (5,000) of each, in one transaction with `SET LOCAL`
+  limits (after #263). Sessions are read in two branches, the unexplained ones and the rest, so
+  each is served by one of `0020_scout`'s partial indexes on `decided_at`; cases without a stored
+  prior are filtered out in SQL. Probe runs, evidence, payments, labels and queue dismissals are
+  loaded through the Guardian and Navigator facades in chunks of 1,000 ids (`= ANY(:ids)`), never
+  one query per item. One backtest replays at a time (advisory lock 57): while another holds it,
+  the job raises and is retried with the platform's backoff, rather than skipping. It gets
+  `DELPHI_SCOUT_BACKTEST_MAX_ATTEMPTS` (6) attempts, not the platform's 3, so the retries wait
+  about 15 minutes in all (30 s doubling), longer than a bounded replay takes. If they run out
+  the job ends FAILED, and asking again starts a new one. Each is replayed twice, under ACTIVE and under ACTIVE + the draft, with
+  the live Guardian's own steps (`observe`, `final_decision`): comparing the two isolates the
+  draft's effect. A session's observations are its completed probe runs; a case's are its
+  session's probe runs (a payment case), then its current evidence records. An observation the
+  profile has no source or outcome for is skipped, and an item whose stored prior fits neither
+  profile is counted as `skipped`; any other error in a replay fails the job.
+- Labels are the bank's observed labels (`delphi.labels`) for the item's payment (or account),
+  chosen by doc 05 §8's precedence (INVESTIGATOR_DISPOSITION > OUTREACH_CONFIRMED >
+  CUSTOMER_COMPLAINT > REGISTRY_LISTING > NO_COMPLAINT_60D, the sensing config's
+  `label_precedence`), not by which became known last: an investigator's GENUINE outranks a later
+  registry listing. "Fraud" is any label but GENUINE. `attributed` counts queue items: flagged
+  unexplained and not dismissed from the Scout's queue (§1). The report also gives the numbers of sessions, cases and skipped items, the
+  revision and ACTIVE's version id, and the limitation above.
+- The job writes the report only if the draft is still at that revision (and DRAFT or
+  BACKTESTED): then `backtest_report`, `backtested_revision` and BACKTESTED, audited
+  (`scout.draft.backtested`). An edit since makes the report stale, so nothing is written.
+
 ## 5. Shadow (`IN_SHADOW`)
 
 - Creates a KB version (parent = ACTIVE + draft) with status `SHADOW`.

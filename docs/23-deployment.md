@@ -299,6 +299,8 @@ to start, exit code 2, naming the variable, if one is missing or invalid.
 | `DELPHI_DEMO_RESET_TIMEOUT_S` | `60` | worker | the demo reset's statement timeout (doc 14 §10, FR-SIM-08) |
 | `DELPHI_OUTBOX_RETENTION_H` / `DELPHI_IDEMPOTENCY_RETENTION_H` | `24` / `24` | worker | doc 17 §6 |
 | `DELPHI_SCOUT_MAX_ITEMS` / `DELPHI_SCOUT_FAILURE_BACKOFF_MIN` | `500` / `60` | worker | doc 11 §2: the most queue items (and reference sessions) one `RUN_SCOUT` loads, and how long the auto-trigger waits after a failed run |
+| `DELPHI_SCOUT_BACKTEST_MAX_ITEMS` | `5000` | worker | doc 11 §4: the most sessions (and as many cases) one `RUN_BACKTEST` replays, the newest of the lookback |
+| `DELPHI_SCOUT_BACKTEST_MAX_ATTEMPTS` | `6` | api | doc 11 §4: attempts a `RUN_BACKTEST` job gets; a busy lock (another backtest replaying) is a failed attempt, retried with the job backoff |
 | `DELPHI_REVIEW_SWEEP_BATCH` / `DELPHI_REVIEW_SWEEP_MAX_PER_RUN` / `DELPHI_REVIEW_COMPLAINT_LOOKBACK_DAYS` | `25` / `100` / `30` | worker | doc 09 §1: reviews opened per transaction and per run, and the oldest complaint that opens one |
 | `DELPHI_MULE_SWEEP_BATCH` / `DELPHI_MULE_SWEEP_MAX_PER_RUN` | `200` / `2000` | worker | doc 13 §6: accounts rescored per transaction and per `MULE_SWEEP` run |
 | `DELPHI_YIELD_RECENT_DAYS` / `DELPHI_YIELD_BASELINE_DAYS` / `DELPHI_YIELD_DRIFT_RATIO` / `DELPHI_YIELD_MIN_RECENT_COUNT` / `DELPHI_YIELD_MIN_BASELINE_COUNT` | `7` / `28` / `0.7` / `30` / `30` | worker | doc 12 §5 |

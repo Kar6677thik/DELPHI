@@ -27,7 +27,7 @@ from delphi.api.routers import API_PREFIX
 from delphi.api.security import Permission, Principal, require
 from delphi.kb.store import active_version
 from delphi.platform.errors import DelphiError, ProblemCode
-from delphi.platform.jobs import JobType, enqueue
+from delphi.platform.jobs import JobRecord, JobStatus, JobType, enqueue, job_by_key
 from delphi.platform.wiring import Platform
 from delphi.scout.api import (
     DraftInvalidError,
@@ -35,6 +35,7 @@ from delphi.scout.api import (
     DraftStatus,
     QueueCursor,
     QueueItem,
+    backtest_target,
     dismiss,
     edit_draft,
     get_draft,
@@ -159,6 +160,27 @@ def dismiss_item(
 class RunRequested(BaseModel):
     job_id: UUID
     created: bool
+
+
+class BacktestRequested(BaseModel):
+    job_id: UUID
+    created: bool
+    # The job's status: QUEUED for a new run; for an existing one, where it is, so the UI can
+    # tell a new run from one already queued, running or done.
+    status: JobStatus
+
+
+def _rerunnable(job: JobRecord) -> bool:
+    """A revision's backtest can run again once its job FAILED or was CANCELLED, or ended
+    without a report (``skipped``, e.g. no ACTIVE KB then)."""
+    if job.status in (JobStatus.FAILED.value, JobStatus.CANCELLED.value):
+        return True
+    return job.status == JobStatus.SUCCEEDED.value and "skipped" in (job.result or {})
+
+
+def backtest_key(draft_id: UUID, revision: int, attempt: int) -> str:
+    base = f"RUN_BACKTEST:{draft_id}:{revision}"
+    return base if attempt == 1 else f"{base}:{attempt}"
 
 
 class ClusterView(BaseModel):
@@ -393,3 +415,57 @@ def patch_draft(
             errors=[{"path": i.path, "code": i.code, "message": i.message} for i in err.issues],
         )
     return _with_etag(view)
+
+
+@router.post(
+    "/typology-drafts/{draft_id}/backtest", status_code=202, response_model=BacktestRequested
+)
+def request_backtest(
+    draft_id: UUID,
+    *,
+    principal: Annotated[Principal, Depends(require(Permission.FDE))],
+    raw: RawBody,
+    key: IdempotencyKey,
+    request: Request,
+) -> JSONResponse:
+    """docs/11 §4: backtest the draft's current revision as a `RUN_BACKTEST` job (docs/16
+    "→ job"). 404 for an unknown draft, 409 unless it is DRAFT or BACKTESTED, 422 with the
+    issues while ACTIVE + the draft breaks a KB rule. One live job per revision: asking again
+    returns that job (``created: false``, with its ``status``) while it is queued, running or has
+    written its report; once it FAILED, was cancelled or was skipped, a new attempt is queued."""
+    platform = _platform(request)
+
+    def run(session: Session) -> tuple[int, Any]:
+        row = backtest_target(session, _kb(session), draft_id)
+        attempt = 1
+        # Each lookup is the jobs' unique idempotency-key index; attempts only grow when an
+        # engineer asks again after a failed or skipped run.
+        while (earlier := job_by_key(session, backtest_key(draft_id, row.revision, attempt))) and (
+            _rerunnable(earlier)
+        ):
+            attempt += 1
+        job = enqueue(
+            session,
+            platform.clock,
+            JobType.RUN_BACKTEST,
+            idempotency_key=backtest_key(draft_id, row.revision, attempt),
+            params={"draft_id": str(draft_id), "revision": row.revision},
+            created_by=principal.user_id,
+            max_attempts=platform.settings.scout_backtest_max_attempts,
+        )
+        status = JobStatus.QUEUED.value if earlier is None else earlier.status
+        return HTTPStatus.ACCEPTED, {
+            "job_id": str(job.job_id),
+            "created": job.created,
+            "status": status,
+        }
+
+    try:
+        return run_idempotent(request, raw, principal, key, run)
+    except DraftInvalidError as err:
+        return problem(
+            request,
+            ProblemCode.VALIDATION_FAILED,
+            err.detail,
+            errors=[{"path": i.path, "code": i.code, "message": i.message} for i in err.issues],
+        )

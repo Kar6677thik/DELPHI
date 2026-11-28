@@ -139,6 +139,12 @@ class Settings(BaseSettings):
     scout_max_items: int = Field(default=500, ge=10, le=20_000)
     # How long SCOUT_AUTO_TRIGGER waits after a RUN_SCOUT FAILED before it enqueues another (#255).
     scout_failure_backoff_min: int = Field(default=60, ge=1, le=24 * 60)
+    # The most sessions (and as many cases) one RUN_BACKTEST replays, the newest of the lookback
+    # (docs/11 §4, bounded after #263).
+    scout_backtest_max_items: int = Field(default=5_000, ge=10, le=50_000)
+    # RUN_BACKTEST's attempts. One backtest replays at a time (lock 57), and a busy lock is a failed
+    # attempt, so this outlasts another replay: 6 attempts wait 30+60+120+240+480 s (#300).
+    scout_backtest_max_attempts: int = Field(default=6, ge=1, le=10)
     # CFCFRMS tickets CHASE_RETRACE settles per run, oldest sent first (docs/10 §5, #263).
     chase_tickets_per_run: int = Field(default=200, ge=1, le=10_000)
     # The ACCOUNT_REVIEW sweep (docs/09 §1, #109), bounded after #263: reviews opened per

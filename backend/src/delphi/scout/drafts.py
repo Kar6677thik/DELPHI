@@ -306,3 +306,63 @@ def edit_draft(
         payload={"revision": row.revision + 1, "fields": sorted(patch.model_fields_set)},
     )
     return _row(session, draft_id)
+
+
+BACKTESTABLE = frozenset({DraftStatus.DRAFT, DraftStatus.BACKTESTED})
+
+
+def backtest_target(session: Session, active: KnowledgeBase, draft_id: UUID) -> Any:
+    """The draft a backtest can run on (docs/11 §4): DRAFT or BACKTESTED (409 otherwise), and
+    valid as ACTIVE + the draft (422 with the issues otherwise). Returns the row."""
+    row = _row(session, draft_id)
+    if DraftStatus(row.status) not in BACKTESTABLE:
+        raise DelphiError(
+            f"A draft that is {row.status} cannot be backtested; save it as a DRAFT first.",
+            code=ProblemCode.INVALID_STATE_TRANSITION,
+        )
+    issues = validate_draft(active, stored_spec(row))
+    if issues:
+        raise DraftInvalidError(issues)
+    return row
+
+
+def record_backtest(
+    session: Session,
+    clock: Clock,
+    draft_id: UUID,
+    *,
+    revision: int,
+    report: Mapping[str, Any],
+) -> bool:
+    """Attach ``report`` to the draft and mark it BACKTESTED, only if it is still the revision
+    the backtest ran on (an edit since makes the report stale: nothing is written). Audited."""
+    t = typology_drafts.c
+    now = clock.now()
+    done = session.execute(
+        update(typology_drafts)
+        .where(
+            t.id == draft_id,
+            t.revision == revision,
+            t.status.in_([s.value for s in BACKTESTABLE]),
+        )
+        .returning(t.id)
+        .values(
+            backtest_report=dict(report),
+            backtested_revision=revision,
+            status=DraftStatus.BACKTESTED.value,
+            updated_at=now,
+            version=t.version + 1,
+        )
+    ).first()
+    if done is not None:
+        record(
+            session,
+            clock,
+            actor_type=ActorType.JOB,
+            actor_id="RUN_BACKTEST",
+            action="scout.draft.backtested",
+            entity_type="typology_draft",
+            entity_id=str(draft_id),
+            payload={"revision": revision, "attributed": report.get("attributed")},
+        )
+    return done is not None

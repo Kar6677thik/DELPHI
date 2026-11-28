@@ -23,8 +23,9 @@ MULE_SWEEP_LOCK_KEY = 54  # rescoring accounts into account_scores (docs/13 §6)
 # approvals or acknowledgements cannot both use the same headroom (FR-CHS-05). The class is a
 # separate namespace from the one-key locks above (their high half is 0).
 LIEN_ACCOUNT_LOCK_CLASS = 52
-# 53 is the campaign recompute's (#288), 54 MULE_SWEEP's (#252).
+# 53 is the campaign recompute's (#288), 54 MULE_SWEEP's (#252), 56 CHASE_RETRACE's (#258).
 SCOUT_RUN_LOCK_KEY = 55  # one RUN_SCOUT at a time (docs/11 §2)
+BACKTEST_LOCK_KEY = 57  # one RUN_BACKTEST replay at a time (docs/11 §4)
 
 ALL_LOCK_KEYS: dict[str, int] = {
     "audit": AUDIT_LOCK_KEY,
@@ -39,4 +40,5 @@ ALL_LOCK_KEYS: dict[str, int] = {
     "demo_reset": DEMO_RESET_LOCK_KEY,
     "mule_sweep": MULE_SWEEP_LOCK_KEY,
     "scout_run": SCOUT_RUN_LOCK_KEY,
+    "backtest": BACKTEST_LOCK_KEY,
 }

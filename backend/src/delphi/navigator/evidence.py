@@ -28,7 +28,9 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import any_, bindparam, select, update
+from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Session
 
 from delphi.engine.belief import kl_bits
@@ -110,6 +112,34 @@ def current_records(session: Session, case_id: UUID) -> list[EvidenceRecord]:
         .order_by(e.requested_at, e.id)
     )
     return [EvidenceRecord.of(r) for r in rows]
+
+
+# Cases per `= ANY(:ids)` statement when loading many cases' records (no 10k-id IN list).
+ID_CHUNK = 1_000
+
+
+def current_outcomes_by_case(
+    session: Session, case_ids: Sequence[UUID]
+) -> dict[UUID, list[tuple[str, str]]]:
+    """Each case's current records with an outcome, ``(source, outcome)`` in the order they
+    were fetched, as ``current_records`` orders them, in chunks of ``ID_CHUNK`` cases."""
+    e = evidence_records.c
+    found: dict[UUID, list[tuple[str, str]]] = {i: [] for i in case_ids}
+    ids = list(dict.fromkeys(case_ids))
+    for start in range(0, len(ids), ID_CHUNK):
+        chunk = ids[start : start + ID_CHUNK]
+        rows = session.execute(
+            select(e.case_id, e.source_key, e.outcome)
+            .where(
+                e.case_id == any_(bindparam("ids", chunk, type_=ARRAY(PG_UUID(as_uuid=True)))),
+                e.superseded_by.is_(None),
+                e.outcome.is_not(None),
+            )
+            .order_by(e.case_id, e.requested_at, e.id)
+        )
+        for r in rows:
+            found[r.case_id].append((r.source_key, r.outcome))
+    return found
 
 
 def observed_sources(session: Session, case_id: UUID) -> frozenset[str]:

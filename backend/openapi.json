@@ -2322,6 +2322,66 @@
         }
       }
     },
+    "/api/v1/typology-drafts/{draft_id}/backtest": {
+      "post": {
+        "tags": [
+          "scout"
+        ],
+        "summary": "Request Backtest",
+        "description": "docs/11 §4: backtest the draft's current revision as a `RUN_BACKTEST` job (docs/16\n\"→ job\"). 404 for an unknown draft, 409 unless it is DRAFT or BACKTESTED, 422 with the\nissues while ACTIVE + the draft breaks a KB rule. One live job per revision: asking again\nreturns that job (``created: false``, with its ``status``) while it is queued, running or has\nwritten its report; once it FAILED, was cancelled or was skipped, a new attempt is queued.",
+        "operationId": "request_backtest_api_v1_typology_drafts__draft_id__backtest_post",
+        "parameters": [
+          {
+            "name": "draft_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Draft Id"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BacktestRequested"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An RFC 9457 problem (docs/16 §1)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/guardian/sessions": {
       "get": {
         "tags": [
@@ -2974,6 +3034,29 @@
           "checked"
         ],
         "title": "AuditVerifyView"
+      },
+      "BacktestRequested": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Job Id"
+          },
+          "created": {
+            "type": "boolean",
+            "title": "Created"
+          },
+          "status": {
+            "$ref": "#/components/schemas/JobStatus"
+          }
+        },
+        "type": "object",
+        "required": [
+          "job_id",
+          "created",
+          "status"
+        ],
+        "title": "BacktestRequested"
       },
       "Baselines": {
         "properties": {

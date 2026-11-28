@@ -18,6 +18,8 @@ from sqlalchemy import (
     Select,
     Text,
     and_,
+    any_,
+    bindparam,
     cast,
     column,
     func,
@@ -27,6 +29,7 @@ from sqlalchemy import (
     select,
     true,
 )
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Session
 
@@ -211,9 +214,96 @@ def attributed_sessions_query(since: datetime | None = None) -> Select[Any]:
 
 
 def observed_outcomes(conn: Connection | Session, session_id: UUID) -> dict[str, str]:
-    """The session's completed probe outcomes, source → outcome (docs/11 §2)."""
+    """The session's completed probe outcomes, source → outcome, in the order they ran (docs/11
+    §2)."""
     pr = probe_runs.c
     rows = conn.execute(
-        select(pr.probe_key, pr.outcome).where(pr.session_id == session_id, pr.outcome.is_not(None))
+        select(pr.probe_key, pr.outcome)
+        .where(pr.session_id == session_id, pr.outcome.is_not(None))
+        .order_by(pr.seq)
     )
     return {r.probe_key: r.outcome for r in rows}
+
+
+# Ids per `= ANY(:ids)` statement when loading many sessions' rows (no 10k-id IN list).
+ID_CHUNK = 1_000
+
+
+def _chunks(ids: Sequence[UUID]) -> list[list[UUID]]:
+    return [list(ids[i : i + ID_CHUNK]) for i in range(0, len(ids), ID_CHUNK)]
+
+
+def _any(ids: Sequence[UUID]) -> Any:
+    return any_(bindparam("ids", list(ids), type_=ARRAY(PG_UUID(as_uuid=True))))
+
+
+@dataclass(frozen=True, slots=True)
+class DecidedSession:
+    """A decided session with the prior components it stored, for a replay (docs/11 §4)."""
+
+    id: UUID
+    payment_id: UUID
+    p_model: dict[str, float]
+    anomaly_percentile: float
+    unexplained: bool
+    decided_at: datetime
+
+
+def decided_sessions_with_prior(
+    conn: Connection | Session, *, since: datetime, limit: int
+) -> list[DecidedSession]:
+    """The newest ``limit`` sessions decided since ``since`` that stored ``p_model`` and the
+    anomaly percentile. Two branches, the unexplained ones and the rest, so each is served by
+    one of 0020_scout's partial indexes on ``decided_at``; the newest ``limit`` of both win."""
+    g = guardian_sessions.c
+    columns = (g.id, g.payment_id, g.p_model, g.anomaly_percentile, g.unexplained, g.decided_at)
+
+    def branch(where: Any) -> list[Any]:
+        query = (
+            select(*columns)
+            .where(
+                where,
+                g.decided_at >= since,
+                g.p_model.is_not(None),
+                g.anomaly_percentile.is_not(None),
+            )
+            .order_by(g.decided_at.desc(), g.id.desc())
+            .limit(limit)
+        )
+        return list(conn.execute(query))
+
+    rows = branch(g.unexplained) + branch(and_(~g.unexplained, g.decided_at.is_not(None)))
+    rows.sort(key=lambda r: (r.decided_at, r.id), reverse=True)
+    return [
+        DecidedSession(
+            r.id,
+            r.payment_id,
+            {str(h): float(v) for h, v in r.p_model.items()},
+            float(r.anomaly_percentile),
+            bool(r.unexplained),
+            r.decided_at,
+        )
+        for r in rows[:limit]
+    ]
+
+
+def outcomes_by_session(
+    conn: Connection | Session, session_ids: Sequence[UUID]
+) -> dict[UUID, list[tuple[str, str]]]:
+    """Each session's completed probe outcomes in the order they ran, ``(source, outcome)``, in
+    chunks of ``ID_CHUNK`` sessions. A probe that ran twice keeps its first outcome, as
+    ``observed_outcomes`` keeps one per source."""
+    pr = probe_runs.c
+    found: dict[UUID, list[tuple[str, str]]] = {i: [] for i in session_ids}
+    seen: set[tuple[UUID, str]] = set()
+    for chunk in _chunks(list(dict.fromkeys(session_ids))):
+        rows = conn.execute(
+            select(pr.session_id, pr.probe_key, pr.outcome)
+            .where(pr.session_id == _any(chunk), pr.outcome.is_not(None))
+            .order_by(pr.session_id, pr.seq)
+        )
+        for r in rows:
+            if (r.session_id, r.probe_key) not in seen:
+                seen.add((r.session_id, r.probe_key))
+                found[r.session_id].append((r.probe_key, r.outcome))
+    return found
