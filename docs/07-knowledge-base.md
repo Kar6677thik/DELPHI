@@ -402,6 +402,38 @@ KB v1 ships three approved English variants per probe.
   (doc 07 §1). Until then, the variants are never served. To keep them across demo resets,
   export the version and commit it to `kb/`.
 
+**Implementation (#110).** `delphi.kb.question_variants`, API in doc 16 "KB":
+- **Drafting.** `POST /question-bank/generate {probe_key, languages}` queues
+  `LLM_QUESTION_VARIANTS`. The job sends the ACTIVE KB's canonical English variant (the APPROVED
+  `en` variant with the lowest `variant_id`) and the languages to the model (`QUESTION_VARIANTS`,
+  doc 15). It stores the first variant for each language asked for as `PENDING_REVIEW`, linked to
+  its `llm_calls` row, and drops the rest. With no model (the kill switch, the budget, or output
+  that fails doc 15 §5) nothing is drafted. A retried job finds the variants its earlier attempt
+  stored (`job_id`).
+- **Review.** `POST /question-bank/variants/{id}/review`: APPROVE, optionally with
+  `edited_text` (the question only; the options stay the draft's), or REJECT. Only a
+  `PENDING_REVIEW` variant can be reviewed (else 409). An edit must pass doc 15 §5 rule 6 (no
+  link, no phone number, 1–300 characters), and a rejection takes no edit (422). Each review is
+  audited (`question_variant.reviewed`, with the original text when edited).
+- **Approve batch** appends every APPROVED variant not yet included to the ACTIVE KB's question
+  bank, APPROVED, with the next id in the probe's series (`PQ-te-1`, …), validates the result
+  as any KB version (doc 07 §3; `422 KB_VALIDATION_FAILED` otherwise), and stores it as a
+  CANDIDATE (parent = ACTIVE). The variants record the version (`included_in_kb_version`), so
+  the next batch has nothing to bundle until new ones are approved (409). Promotion is #119's.
+  There is no cap: each variant in a batch was approved one by one, and the version must hold
+  them all. `GET /question-bank/variants?status=APPROVED&included=false` lists what the next
+  batch would take.
+- **Known gap until #119.** A variant included in a CANDIDATE that is later rejected keeps its
+  `included_in_kb_version`, so no later batch takes it. That breaks §1's "never lost silently"
+  once versions can be rejected: #119's reject and rebase must clear the column for the
+  rejected version's variants (or re-include them in the rebase).
+- **Languages.** The job drafts English rewordings and the hi, te and ta translations: the API
+  accepts all four, as doc 15's output schema does.
+- `question_variants` is demo data: the demo reset deletes it, with the KB versions after v1.
+  A variant drafted before the seed is kept, and if a batch after the seed included it, the
+  reset clears its `included_in_kb_version` (that version is deleted), so it waits for the
+  next batch again (#307).
+
 Canonical English (variant 1) and option keys:
 
 | Probe | Text | Options |

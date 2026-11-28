@@ -1058,6 +1058,324 @@
         }
       }
     },
+    "/api/v1/question-bank/variants": {
+      "get": {
+        "tags": [
+          "kb"
+        ],
+        "summary": "Read Variants",
+        "description": "Drafted variants, oldest first, each with the ACTIVE KB's English original (docs/18 §2).\n``status=PENDING_REVIEW`` is the review queue; ``status=APPROVED&included=false`` is what\n\"Approve batch\" would take.",
+        "operationId": "read_variants_api_v1_question_bank_variants_get",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/VariantStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "probe_key",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 64
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Probe Key"
+            }
+          },
+          {
+            "name": "included",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Included"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VariantPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An RFC 9457 problem (docs/16 §1)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/question-bank/generate": {
+      "post": {
+        "tags": [
+          "kb"
+        ],
+        "summary": "Generate Variants",
+        "description": "Queue an ``LLM_QUESTION_VARIANTS`` job: one draft per language for the probe (docs/15\n§1). 404 when the ACTIVE KB's question bank has no such probe.",
+        "operationId": "generate_variants_api_v1_question_bank_generate_post",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GenerateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenerateQueued"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An RFC 9457 problem (docs/16 §1)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/question-bank/variants/{variant_id}/review": {
+      "post": {
+        "tags": [
+          "kb"
+        ],
+        "summary": "Review Variant",
+        "description": "APPROVE (optionally with ``edited_text``) or REJECT a PENDING_REVIEW variant, audited.\n404 for an unknown variant, 409 once it was reviewed, 422 for an edit on a rejection or an\nedit with a link or a phone number (docs/15 §5).",
+        "operationId": "review_variant_api_v1_question_bank_variants__variant_id__review_post",
+        "parameters": [
+          {
+            "name": "variant_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Variant Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VariantView"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An RFC 9457 problem (docs/16 §1)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/question-bank/approve-batch": {
+      "post": {
+        "tags": [
+          "kb"
+        ],
+        "summary": "Approve Variants",
+        "description": "docs/07 §9 \"Approve batch\": every APPROVED variant not yet included goes into one new\nCANDIDATE KB version (parent = ACTIVE), for the KB lifecycle to promote (docs/07 §1). 409\nwhen none is waiting; 422 ``KB_VALIDATION_FAILED`` when the result breaks a KB rule.",
+        "operationId": "approve_variants_api_v1_question_bank_approve_batch_post",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchView"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An RFC 9457 problem (docs/16 §1)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/question-bank/variants/{variant_id}": {
+      "get": {
+        "tags": [
+          "kb"
+        ],
+        "summary": "Read Variant",
+        "operationId": "read_variant_api_v1_question_bank_variants__variant_id__get",
+        "parameters": [
+          {
+            "name": "variant_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Variant Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VariantView"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An RFC 9457 problem (docs/16 §1)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/admin/sensing/train": {
       "post": {
         "tags": [
@@ -2812,6 +3130,28 @@
         "title": "Baselines",
         "description": "What B1 and B2 (docs/22 §2) would have done with this payment (docs/08 §6). B2's\n``OTP_STEP_UP`` releases only if the OTP passes."
       },
+      "BatchView": {
+        "properties": {
+          "kb_version_id": {
+            "type": "integer",
+            "title": "Kb Version Id"
+          },
+          "variant_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "title": "Variant Ids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kb_version_id",
+          "variant_ids"
+        ],
+        "title": "BatchView"
+      },
       "BiometricAnswer": {
         "properties": {
           "biometric": {
@@ -3964,6 +4304,14 @@
         ],
         "title": "DdPackFormat"
       },
+      "Decision": {
+        "type": "string",
+        "enum": [
+          "APPROVE",
+          "REJECT"
+        ],
+        "title": "Decision"
+      },
       "DiffOp": {
         "type": "string",
         "enum": [
@@ -4335,6 +4683,57 @@
         ],
         "title": "FlipView",
         "description": "docs/06 §12: the most likely single evidence outcome that would change the decision."
+      },
+      "GenerateQueued": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Job Id"
+          },
+          "created": {
+            "type": "boolean",
+            "title": "Created"
+          }
+        },
+        "type": "object",
+        "required": [
+          "job_id",
+          "created"
+        ],
+        "title": "GenerateQueued"
+      },
+      "GenerateRequest": {
+        "properties": {
+          "probe_key": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Probe Key"
+          },
+          "languages": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "en",
+                "hi",
+                "te",
+                "ta"
+              ]
+            },
+            "type": "array",
+            "maxItems": 4,
+            "minItems": 1,
+            "title": "Languages"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "probe_key",
+          "languages"
+        ],
+        "title": "GenerateRequest"
       },
       "GuardianSessionPage": {
         "properties": {
@@ -5475,6 +5874,51 @@
         ],
         "title": "OptionAnswer"
       },
+      "OptionView": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "text"
+        ],
+        "title": "OptionView"
+      },
+      "OriginalView": {
+        "properties": {
+          "variant_id": {
+            "type": "string",
+            "title": "Variant Id"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "options": {
+            "items": {
+              "$ref": "#/components/schemas/OptionView"
+            },
+            "type": "array",
+            "title": "Options"
+          }
+        },
+        "type": "object",
+        "required": [
+          "variant_id",
+          "text",
+          "options"
+        ],
+        "title": "OriginalView",
+        "description": "The ACTIVE KB's canonical English variant, shown beside a draft (docs/18 §2)."
+      },
       "OtpAnswer": {
         "properties": {
           "otp": {
@@ -6571,6 +7015,32 @@
         ],
         "title": "ReleaseLien"
       },
+      "ReviewRequest": {
+        "properties": {
+          "decision": {
+            "$ref": "#/components/schemas/Decision"
+          },
+          "edited_text": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 300
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Edited Text",
+            "description": "APPROVE only: the question text as approved, replacing the draft's"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "decision"
+        ],
+        "title": "ReviewRequest"
+      },
       "Role": {
         "type": "string",
         "enum": [
@@ -7044,6 +7514,164 @@
           "version"
         ],
         "title": "UserView"
+      },
+      "VariantPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/VariantView"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "VariantPage"
+      },
+      "VariantStatus": {
+        "type": "string",
+        "enum": [
+          "PENDING_REVIEW",
+          "APPROVED",
+          "REJECTED"
+        ],
+        "title": "VariantStatus"
+      },
+      "VariantView": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "probe_key": {
+            "type": "string",
+            "title": "Probe Key"
+          },
+          "language": {
+            "type": "string",
+            "enum": [
+              "en",
+              "hi",
+              "te",
+              "ta"
+            ],
+            "title": "Language"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "options": {
+            "items": {
+              "$ref": "#/components/schemas/OptionView"
+            },
+            "type": "array",
+            "title": "Options"
+          },
+          "status": {
+            "$ref": "#/components/schemas/VariantStatus"
+          },
+          "generated_by": {
+            "type": "string",
+            "title": "Generated By"
+          },
+          "llm_call_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm Call Id"
+          },
+          "reviewed_by": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewed By"
+          },
+          "reviewed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewed At"
+          },
+          "included_in_kb_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Included In Kb Version"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "original": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OriginalView"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "the ACTIVE KB's English variant 1 of the probe; null if it has none"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "probe_key",
+          "language",
+          "text",
+          "options",
+          "status",
+          "generated_by",
+          "llm_call_id",
+          "reviewed_by",
+          "reviewed_at",
+          "included_in_kb_version",
+          "created_at",
+          "original"
+        ],
+        "title": "VariantView"
       }
     }
   }

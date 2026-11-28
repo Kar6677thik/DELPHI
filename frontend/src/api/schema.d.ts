@@ -379,6 +379,110 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/question-bank/variants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Variants
+         * @description Drafted variants, oldest first, each with the ACTIVE KB's English original (docs/18 §2).
+         *     ``status=PENDING_REVIEW`` is the review queue; ``status=APPROVED&included=false`` is what
+         *     "Approve batch" would take.
+         */
+        get: operations["read_variants_api_v1_question_bank_variants_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/question-bank/generate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Generate Variants
+         * @description Queue an ``LLM_QUESTION_VARIANTS`` job: one draft per language for the probe (docs/15
+         *     §1). 404 when the ACTIVE KB's question bank has no such probe.
+         */
+        post: operations["generate_variants_api_v1_question_bank_generate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/question-bank/variants/{variant_id}/review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Review Variant
+         * @description APPROVE (optionally with ``edited_text``) or REJECT a PENDING_REVIEW variant, audited.
+         *     404 for an unknown variant, 409 once it was reviewed, 422 for an edit on a rejection or an
+         *     edit with a link or a phone number (docs/15 §5).
+         */
+        post: operations["review_variant_api_v1_question_bank_variants__variant_id__review_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/question-bank/approve-batch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve Variants
+         * @description docs/07 §9 "Approve batch": every APPROVED variant not yet included goes into one new
+         *     CANDIDATE KB version (parent = ACTIVE), for the KB lifecycle to promote (docs/07 §1). 409
+         *     when none is waiting; 422 ``KB_VALIDATION_FAILED`` when the result breaks a KB rule.
+         */
+        post: operations["approve_variants_api_v1_question_bank_approve_batch_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/question-bank/variants/{variant_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Variant */
+        get: operations["read_variant_api_v1_question_bank_variants__variant_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/sensing/train": {
         parameters: {
             query?: never;
@@ -952,6 +1056,13 @@ export interface components {
             /** B2 */
             B2: string;
         };
+        /** BatchView */
+        BatchView: {
+            /** Kb Version Id */
+            kb_version_id: number;
+            /** Variant Ids */
+            variant_ids: string[];
+        };
         /** BiometricAnswer */
         BiometricAnswer: {
             /**
@@ -1369,6 +1480,11 @@ export interface components {
          */
         DdPackFormat: "json" | "html";
         /**
+         * Decision
+         * @enum {string}
+         */
+        Decision: "APPROVE" | "REJECT";
+        /**
          * DiffOp
          * @enum {string}
          */
@@ -1502,6 +1618,23 @@ export interface components {
             new_decision: string;
             /** Risk Change Paise */
             risk_change_paise: number;
+        };
+        /** GenerateQueued */
+        GenerateQueued: {
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            /** Created */
+            created: boolean;
+        };
+        /** GenerateRequest */
+        GenerateRequest: {
+            /** Probe Key */
+            probe_key: string;
+            /** Languages */
+            languages: ("en" | "hi" | "te" | "ta")[];
         };
         /** GuardianSessionPage */
         GuardianSessionPage: {
@@ -1870,6 +2003,25 @@ export interface components {
         OptionAnswer: {
             /** Option Key */
             option_key: string;
+        };
+        /** OptionView */
+        OptionView: {
+            /** Key */
+            key: string;
+            /** Text */
+            text: string;
+        };
+        /**
+         * OriginalView
+         * @description The ACTIVE KB's canonical English variant, shown beside a draft (docs/18 §2).
+         */
+        OriginalView: {
+            /** Variant Id */
+            variant_id: string;
+            /** Text */
+            text: string;
+            /** Options */
+            options: components["schemas"]["OptionView"][];
         };
         /** OtpAnswer */
         OtpAnswer: {
@@ -2253,6 +2405,15 @@ export interface components {
             /** Reason */
             reason: string;
         };
+        /** ReviewRequest */
+        ReviewRequest: {
+            decision: components["schemas"]["Decision"];
+            /**
+             * Edited Text
+             * @description APPROVE only: the question text as approved, replacing the draft's
+             */
+            edited_text?: string | null;
+        };
         /**
          * Role
          * @enum {string}
@@ -2428,6 +2589,55 @@ export interface components {
             created_at: string;
             /** Version */
             version: number;
+        };
+        /** VariantPage */
+        VariantPage: {
+            /** Items */
+            items: components["schemas"]["VariantView"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
+        /**
+         * VariantStatus
+         * @enum {string}
+         */
+        VariantStatus: "PENDING_REVIEW" | "APPROVED" | "REJECTED";
+        /** VariantView */
+        VariantView: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Probe Key */
+            probe_key: string;
+            /**
+             * Language
+             * @enum {string}
+             */
+            language: "en" | "hi" | "te" | "ta";
+            /** Text */
+            text: string;
+            /** Options */
+            options: components["schemas"]["OptionView"][];
+            status: components["schemas"]["VariantStatus"];
+            /** Generated By */
+            generated_by: string;
+            /** Llm Call Id */
+            llm_call_id: string | null;
+            /** Reviewed By */
+            reviewed_by: string | null;
+            /** Reviewed At */
+            reviewed_at: string | null;
+            /** Included In Kb Version */
+            included_in_kb_version: number | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** @description the ACTIVE KB's English variant 1 of the probe; null if it has none */
+            original: components["schemas"]["OriginalView"] | null;
         };
     };
     responses: never;
@@ -3102,6 +3312,173 @@ export interface operations {
                 };
                 content: {
                     "application/zip": unknown;
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    read_variants_api_v1_question_bank_variants_get: {
+        parameters: {
+            query?: {
+                status?: components["schemas"]["VariantStatus"] | null;
+                probe_key?: string | null;
+                included?: boolean | null;
+                limit?: number;
+                cursor?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VariantPage"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    generate_variants_api_v1_question_bank_generate_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GenerateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GenerateQueued"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    review_variant_api_v1_question_bank_variants__variant_id__review_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                variant_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReviewRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VariantView"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    approve_variants_api_v1_question_bank_approve_batch_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchView"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    read_variant_api_v1_question_bank_variants__variant_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                variant_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VariantView"];
                 };
             };
             /** @description An RFC 9457 problem (docs/16 §1) */

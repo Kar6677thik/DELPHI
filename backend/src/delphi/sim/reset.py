@@ -62,6 +62,7 @@ RESET_TABLES: tuple[tuple[str, str], ...] = (
     ("delphi.cases", "created_at"),  # its sessions point back at it: DEFERRABLE (docs/17)
     ("delphi.guardian_sessions", "started_at"),  # probe_runs go with them (ON DELETE CASCADE)
     ("delphi.labels", "created_at"),
+    ("delphi.question_variants", "created_at"),  # points at kb_versions and llm_calls
     ("delphi.kb_versions", "created_at"),
     ("sim_truth.payment_truth", "created_at"),
     ("sim_truth.scenario_instances", "created_at"),
@@ -201,6 +202,23 @@ def _undeliver_labels(session: Session, marker: Marker) -> int:
 
 
 def _delete_after(session: Session, marker: datetime) -> dict[str, int]:
+    # A variant drafted before the seed but batched into a KB version after it is kept, while
+    # its version goes: it is approved but not yet in a version again (#307 review). The
+    # column has no ON DELETE, so without this the delete below would fail every time.
+    variants = table(
+        "question_variants", column("included_in_kb_version"), column("created_at"), schema="delphi"
+    )
+    versions = table("kb_versions", column("id"), column("created_at"), schema="delphi")
+    session.execute(
+        variants.update()
+        .where(
+            variants.c.created_at <= marker,
+            variants.c.included_in_kb_version.in_(
+                select(versions.c.id).where(versions.c.created_at > marker)
+            ),
+        )
+        .values(included_in_kb_version=None)
+    )
     deleted: dict[str, int] = {}
     for name, created in RESET_TABLES:
         schema, table_name = name.split(".")

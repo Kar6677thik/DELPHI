@@ -197,7 +197,11 @@ learning_contributions(subject_type, subject_id, source_key, learning_run_id,
 probe_yield_daily(source_key, day, n, mean_info_yield_bits, primary key(source_key, day))
 
 question_variants(id, probe_key, language, text, options jsonb, status, generated_by (HUMAN|LLM),
-                  llm_call_id null, reviewed_by null, reviewed_at null, included_in_kb_version null)
+                  llm_call_id null, job_id null, reviewed_by null, reviewed_at null,
+                  included_in_kb_version null, created_at)
+       -- migration 0022 (#110); reviewed ⇔ not PENDING_REVIEW; included only if APPROVED;
+       -- llm_call_id ⇔ LLM; text 1–300 chars; idx (status, created_at, id), (job_id),
+       -- (included_in_kb_version); reviewed_by has no FK (the audit chain names the reviewer)
 variant_exposures(customer_id, variant_id, last_shown_at, primary key(customer_id, variant_id))
 
 model_artifacts(id, kind (PRIOR|ANOMALY|MULE), version, status (ACTIVE|RETIRED|FAILED_GATE),

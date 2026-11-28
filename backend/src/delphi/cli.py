@@ -40,6 +40,7 @@ from delphi.kb.canonical import content_sha256
 from delphi.kb.issues import KbValidationError
 from delphi.kb.loader import load_and_validate
 from delphi.kb.model import KnowledgeBase
+from delphi.kb.question_variants import register_question_variant_jobs
 from delphi.kb.store import active_version, ensure_kb_v1
 from delphi.llm.evaluation import CASES_FILE, load_cases, render_report, run_eval
 from delphi.llm.service import LlmService, primary_provider
@@ -330,6 +331,9 @@ def worker_registry(
         clock=platform.clock,
         p_mule_fallback=load_sensing_config().features.mule_score_fallback,
         review_limits=SweepLimits.of(settings),
+    )
+    register_question_variant_jobs(
+        registry, sessions=platform.sessions, clock=platform.clock, llm=llm
     )
     register_scout_jobs(
         registry,
