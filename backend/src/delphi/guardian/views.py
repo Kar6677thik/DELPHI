@@ -12,7 +12,8 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import Connection, and_, or_, select
+from sqlalchemy import Connection, Select, and_, func, literal, null, or_, select
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Session
 
 from delphi.guardian.tables import guardian_sessions, probe_runs
@@ -138,3 +139,23 @@ def probe_run_rows(conn: Connection | Session, session_id: UUID) -> list[Any]:
     return list(
         conn.execute(select(probe_runs).where(pr.session_id == session_id).order_by(pr.seq))
     )
+
+
+def unexplained_sessions_query(since: datetime | None = None) -> Select[Any]:
+    """docs/11 §1, the Scout's queue source: decided sessions whose terminal posterior was
+    flagged unexplained, as ``(subject_type, subject_id, entered_at, p_unexplained,
+    payment_id, account_id)``. A query, so the Scout bounds and pages it in SQL; it uses the
+    partial index on ``decided_at WHERE unexplained`` (0020). The filter is the bare column, not
+    ``IS true``, which PostgreSQL can't match to that index condition (#254 review)."""
+    gs = guardian_sessions.c
+    query = select(
+        literal("GUARDIAN_SESSION").label("subject_type"),
+        gs.id.label("subject_id"),
+        gs.decided_at.label("entered_at"),
+        func.coalesce(gs.posterior["UNEXPLAINED"].as_float(), 0.0).label("p_unexplained"),
+        gs.payment_id.label("payment_id"),
+        null().cast(PG_UUID(as_uuid=True)).label("account_id"),
+    ).where(gs.unexplained, gs.decided_at.is_not(None))
+    if since is not None:
+        query = query.where(gs.decided_at >= since)
+    return query

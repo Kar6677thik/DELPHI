@@ -267,6 +267,9 @@ def test_approve_batch_makes_a_candidate_holding_the_approved_variants(env: Env)
     te, hi = env.pending()
     env.review(te["id"], decision="APPROVE")
     env.review(hi["id"], decision="REJECT")
+    waiting = {"status": "APPROVED", "included": "false"}
+    before = env.client.get(f"{URL}/variants", params=waiting).json()["items"]
+    assert [v["id"] for v in before] == [te["id"]]
     reply = env.approve_batch()
     assert reply.status_code == 201, reply.text
     version_id = reply.json()["kb_version_id"]
@@ -283,6 +286,9 @@ def test_approve_batch_makes_a_candidate_holding_the_approved_variants(env: Env)
     # Included once: the next batch has nothing to bundle.
     included = env.client.get(f"{URL}/variants/{te['id']}").json()
     assert included["included_in_kb_version"] == version_id
+    assert env.client.get(f"{URL}/variants", params=waiting).json()["items"] == []
+    done = env.client.get(f"{URL}/variants", params={"status": "APPROVED", "included": "true"})
+    assert [v["id"] for v in done.json()["items"]] == [te["id"]]
     assert env.approve_batch().status_code == 409
 
 

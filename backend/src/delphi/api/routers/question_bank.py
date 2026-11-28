@@ -172,15 +172,22 @@ def read_variants(
     _principal: Viewer,
     status: Annotated[VariantStatus | None, Query()] = None,
     probe_key: Annotated[str | None, Query(max_length=64)] = None,
+    included: Annotated[bool | None, Query()] = None,
     limit: Annotated[int, Query(ge=1, le=MAX_LIMIT)] = DEFAULT_LIMIT,
     cursor: Annotated[str | None, Query()] = None,
 ) -> VariantPage:
     """Drafted variants, oldest first, each with the ACTIVE KB's English original (docs/18 §2).
-    ``status=PENDING_REVIEW`` is the review queue."""
+    ``status=PENDING_REVIEW`` is the review queue; ``status=APPROVED&included=false`` is what
+    "Approve batch" would take."""
     after = _decode_cursor(cursor) if cursor else None
     with _platform(request).sessions() as session:
         records = list_variants(
-            session, status=status, probe_key=probe_key, limit=limit + 1, after=after
+            session,
+            status=status,
+            probe_key=probe_key,
+            included=included,
+            limit=limit + 1,
+            after=after,
         )
         page, more = records[:limit], len(records) > limit
         originals = _originals(session, {r.probe_key for r in page})

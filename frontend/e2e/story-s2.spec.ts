@@ -1,5 +1,7 @@
 import { expect, type Locator, test } from '@playwright/test';
 
+import { resetToSeed } from './demo';
+
 // E2E-S2 (docs/21 §4, #101): Arjun pays a hospital from a new phone with the real sensing
 // prior, answering as his persona script does, and the payment is sent within 30 s after at
 // most two active probes. Which step-up runs follows the live prior (R-01, #281): ENG-S2 pins
@@ -24,13 +26,15 @@ interface SessionView {
   probe_runs: { probe_key: string; mode: string; status: string; outcome: string | null }[];
 }
 
-test('E2E-S2: Arjun answers as scripted and the payment is sent', async ({ page }) => {
+test('E2E-S2: Arjun answers as scripted and the payment is sent', async ({ page, baseURL }) => {
   test.setTimeout(3 * 60_000);
   await page.goto('/');
   await page.getByLabel('Username').fill(USERNAME);
   await page.getByLabel('Password').fill(PASSWORD);
   await page.getByRole('button', { name: 'Sign in' }).click();
   await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible();
+  // From the seed, so Arjun's history (and the prior) is the script's (#291).
+  await resetToSeed(page, baseURL);
 
   await page.goto('/phone?story=S2');
   await expect(page.getByText(/S-2 Arjun is staged/)).toBeVisible({ timeout: STAGED_WITHIN_MS });

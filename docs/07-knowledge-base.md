@@ -319,6 +319,8 @@ scout:
   auto_trigger_new_items: 10
   shadow_min_sessions: 200
   shadow_min_sessions_demo: 10            # used when DELPHI_TIME_MODE=DEMO
+  # cluster_selection_epsilon: 1.0       # docs/11 §2; a model default (#117), so KB v1 omits it and
+                                          # keeps its hash; a later version may set it
 time:
   demo_time_scale: 0.0333333333           # 1/30: time-scaled durations shrink 30× when DELPHI_TIME_MODE=DEMO
 elicitation:
@@ -416,6 +418,15 @@ KB v1 ships three approved English variants per probe.
   as any KB version (doc 07 §3; `422 KB_VALIDATION_FAILED` otherwise), and stores it as a
   CANDIDATE (parent = ACTIVE). The variants record the version (`included_in_kb_version`), so
   the next batch has nothing to bundle until new ones are approved (409). Promotion is #119's.
+  There is no cap: each variant in a batch was approved one by one, and the version must hold
+  them all. `GET /question-bank/variants?status=APPROVED&included=false` lists what the next
+  batch would take.
+- **Known gap until #119.** A variant included in a CANDIDATE that is later rejected keeps its
+  `included_in_kb_version`, so no later batch takes it. That breaks §1's "never lost silently"
+  once versions can be rejected: #119's reject and rebase must clear the column for the
+  rejected version's variants (or re-include them in the rebase).
+- **Languages.** The job drafts English rewordings and the hi, te and ta translations: the API
+  accepts all four, as doc 15's output schema does.
 - `question_variants` is demo data: the demo reset deletes it, with the KB versions after v1.
 
 Canonical English (variant 1) and option keys:

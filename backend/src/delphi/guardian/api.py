@@ -37,6 +37,7 @@ from delphi.guardian.views import (
     get_session_row,
     list_sessions,
     probe_run_rows,
+    unexplained_sessions_query,
 )
 from delphi.sensing.api import PriorInputs
 
@@ -77,5 +78,6 @@ __all__ = [
     "session_prior",
     "stop_reason",
     "takes_fast_path",
+    "unexplained_sessions_query",
     "worker_guardian",
 ]

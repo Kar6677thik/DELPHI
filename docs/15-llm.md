@@ -9,7 +9,7 @@ fallback).
 |---|---|---|---|
 | `EVIDENCE_NARRATIVE` | online job, per evidence record | 1–3 sentence finding with citations, shown on the evidence card | template per source |
 | `CASE_SUMMARY` | online job, on DD pack request | A summary paragraph at the top of the DD pack | template |
-| `QUESTION_VARIANTS` | offline job, triggered by an FDE | Draft question variants and translations (hi/te/ta), status `PENDING_REVIEW` | none: no variants are created |
+| `QUESTION_VARIANTS` | offline job, triggered by an FDE | Draft question variants: English rewordings and translations (hi/te/ta), status `PENDING_REVIEW` | none: no variants are created |
 | `TYPOLOGY_DESCRIPTION` | Scout job | Suggested name and description of a candidate typology | template (doc 11 §2) |
 
 **Forbidden, and enforced by design:** choosing probes or evidence, setting probabilities or

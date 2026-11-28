@@ -125,8 +125,8 @@ is not built yet.
 
 | Method & path | Perm | Notes |
 |---|---|---|
-| GET `/scout/queue` | `view` | unexplained items |
-| POST `/scout/queue/{item_id}/dismiss` | `fde` | `{reason}`: removes the item from the queue (audited) |
+| GET `/scout/queue` | `view` | unexplained items, oldest first; keyset paging (`limit` ≤ 200, default 50, `cursor`) → `{items, next_cursor}` |
+| POST `/scout/queue/{item_id}/dismiss` | `fde` | `{reason}`: removes the item from the queue (audited). 404 if it is not in the queue; 409 if a concurrent dismissal of it won |
 | POST `/scout/runs` | `fde` | → job |
 | GET `/scout/clusters` | `view` | |
 | GET `/typology-drafts`, GET `/typology-drafts/{id}` | `view` | |
@@ -144,7 +144,7 @@ is not built yet.
 | POST `/kb/versions/{id}/rebase` | `fde` | "Recreate on current ACTIVE" → `KB_REBASE` job |
 | POST `/kb/versions/{id}/rollback` | `fde` | RETIRED→ACTIVE, `{reason}` |
 | POST `/kb/versions/{id}/reject` | `fde` | |
-| GET `/question-bank/variants?status=PENDING_REVIEW&probe_key=` | `view` | `{items, next_cursor}`, oldest first; each item carries `original`, the ACTIVE KB's English variant 1 of its probe |
+| GET `/question-bank/variants?status=PENDING_REVIEW&probe_key=&included=` | `view` | `{items, next_cursor}`, oldest first; each item carries `original`, the ACTIVE KB's English variant 1 of its probe. `status=APPROVED&included=false` lists what the next batch would take |
 | GET `/question-bank/variants/{id}` | `view` | one variant, as in the list |
 | POST `/question-bank/generate` | `fde` | `{probe_key, languages[]}` → 202 `{job_id, created}` (`LLM_QUESTION_VARIANTS`); 404 for a probe the ACTIVE question bank lacks; `Idempotency-Key` |
 | POST `/question-bank/variants/{id}/review` | `fde` | `{decision: APPROVE\|REJECT, edited_text?}`; audited; 409 unless `PENDING_REVIEW`; 422 for an edit on a rejection or one with a link or a phone number |
