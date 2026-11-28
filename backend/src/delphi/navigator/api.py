@@ -49,6 +49,7 @@ from delphi.navigator.store import (
     open_case,
     open_case_for_payment,
     sort_value,
+    unexplained_reviews_query,
 )
 from delphi.navigator.traces import (
     CLIENT_TYPES,
@@ -106,5 +107,6 @@ __all__ = [
     "request_evidence",
     "request_simulated_outreach",
     "sort_value",
+    "unexplained_reviews_query",
     "vulnerable_payer",
 ]
