@@ -114,7 +114,14 @@ class NewPersonPayeeConfig(_Frozen):
     # #166: a share is saved days before the first payment (added one evening, paid when the
     # bill or the rent falls due), as some fraud victims' payees are.
     early_share: Probability = 0.0
-    early_lead_days: Range = Range(min=1, max=10)
+    early_lead_days: Range
+
+    @property
+    def sessions_per_day(self) -> float:
+        """Expected genuine sessions a day from this stream: a first payment and its follow-ups
+        (uniform over the whole numbers in the range) every ``mean_days``."""
+        more = self.follow_up_payments
+        return (1.0 + (int(more.min) + int(more.max)) / 2.0) / self.mean_days
 
 
 class NewMerchantPayeeConfig(NewPersonPayeeConfig):
@@ -263,7 +270,7 @@ class AtoConfig(_Frozen):
     channel: dict[str, float]
     # #166: a share of takeovers save the mule hours before the drain (the staged attack).
     staged_share: Probability = 0.0
-    staged_lead_hours: Range = Range(min=4, max=48)
+    staged_lead_hours: Range
 
     @model_validator(mode="after")
     def _weights(self) -> AtoConfig:

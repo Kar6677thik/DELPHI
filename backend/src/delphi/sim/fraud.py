@@ -126,6 +126,9 @@ class _Planner:
         person payee like any family one; the history numbers it ("Family N") with the
         customer's other payees in the order they were saved (#64), so nothing in
         `bank.payees` marks a mule out."""
+        # Intended: a save is clamped to the start of the stream it belongs to. An early save
+        # (#166) near the start of the window stream so keeps only part of its lead; the
+        # history before the window already has the customer's real payees.
         at = max(at, self.start)
         if (customer.id, account) in self.saved_before:
             return  # saved during the history already

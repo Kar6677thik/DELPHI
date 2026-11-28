@@ -123,6 +123,14 @@ def test_the_stats_report(long_window: Dataset, config: GeneratorConfig) -> None
     assert report.history_sessions > 2_000 and report.window_sessions > 3_000
     routine = report.rate(ScenarioType.GENUINE_ROUTINE)
     assert routine.window_per_10k == pytest.approx(9_700, rel=0.02)
+    # v17: unusual events are a share of all genuine sessions, new payees' included. Over
+    # history and window together, so v16's ~30% shortfall (107 per 10k on eval) fails here.
+    unusual = report.rate(ScenarioType.GENUINE_UNUSUAL)
+    combined = (
+        unusual.history_per_10k * report.history_sessions
+        + (unusual.window_per_10k or 0) * report.window_sessions
+    ) / (report.history_sessions + report.window_sessions)
+    assert combined == pytest.approx(unusual.configured_per_10k, rel=0.2)
     assert report.rate(ScenarioType.MULE_FORWARDING).window_per_10k == 0
     assert 0 < report.held_share < 0.1 and 0.9 < report.label_coverage <= 1
     text = format_report(report)
