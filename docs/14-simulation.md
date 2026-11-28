@@ -683,7 +683,9 @@ Details where the scripts are silent:
   - **One transaction, bounded.** The deletes are set-based (`DELETE … WHERE created_at >
     :marker`), so no rows or key lists pass through Python (the #263 lesson). They run with a
     statement timeout (`DELPHI_DEMO_RESET_TIMEOUT_S`, 60 s), under advisory lock 51 (a second
-    reset at once skips) and the label-delivery lock (no delivery interleaves). Every table the
+    reset at once skips), the label-delivery lock (no delivery interleaves) and the campaign
+    recompute's lock 53 (it writes `case_entities` then `campaigns`, the reverse of the reset's
+    order, so a recompute in flight finishes first, #288). Every table the
     reset writes is then locked `IN EXCLUSIVE MODE`, in a fixed order: reads go on, but a
     payment, session or case being written waits for the reset, so none lands between its
     steps.

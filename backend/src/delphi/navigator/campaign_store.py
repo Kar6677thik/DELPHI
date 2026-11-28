@@ -327,6 +327,12 @@ def regroup(
         for f in facts
         if assignment.campaign_of.get(f.case_id) != f.campaign_id
     ]
+    # A member list that changed is a change, even when every aggregate stays equal (a swap):
+    # both the campaign a case left and the one it joined publish (#288 review).
+    for f in facts:
+        joined = assignment.campaign_of.get(f.case_id)
+        if joined != f.campaign_id:
+            changed.update(x for x in (f.campaign_id, joined) if x is not None)
     if moves:
         target = values_list(
             column("case_id", PG_UUID(as_uuid=True)),

@@ -17,9 +17,11 @@ times) serve that scan. The list index matches `GET /campaigns`' filter and orde
 an index range with no sort, and merged or dissolved rows stay out of it.
 
 0001's default privileges give both application roles DML on the table. Expand/contract
-(docs/17 §1): this migration only adds tables, indexes and a foreign key. The foreign key is added
-`NOT VALID` and validated separately, so checking the existing rows does not block writes to
-`cases`.
+(docs/17 §1): this migration only adds tables, indexes and a foreign key. It runs in one
+transaction (`transaction_per_migration`), so the `NOT VALID` add, the `VALIDATE` and the index
+builds hold their locks until it commits: writes to `cases` and `evidence_records` wait for the
+index builds, seconds at this data size. `campaign_id` is NULL on every existing row, so the
+`VALIDATE` itself is cheap (#288 review).
 """
 
 from __future__ import annotations
