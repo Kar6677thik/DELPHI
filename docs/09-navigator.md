@@ -9,7 +9,7 @@ Research §9.5. Module `delphi.navigator`. Decision profiles `CASE_PAYMENT_HOLD`
 |---|---|---|---|
 | Guardian decides `HOLD_FOR_REVIEW` | PAYMENT_HOLD | Guardian final posterior | STANDARD |
 | Guardian decides `PROTECTIVE_HOLD` | PAYMENT_HOLD | Guardian final posterior | COERCION |
-| Mule-scorer sweep: an account in the home bank with p_mule ≥ 0.70 and credits in the last 24 h, run as a worker job every 15 minutes (scaled in demo) | ACCOUNT_REVIEW | prior from the mule scorer (doc 06 §11) | STANDARD |
+| Mule-scorer sweep: an account in the home bank with p_mule ≥ 0.70 and credits in the last 24 h (`mule_credit_window_h`), checked by the `ACCOUNT_REVIEW_SWEEP` worker job every 60 s | ACCOUNT_REVIEW | prior from the mule scorer (doc 06 §11) | STANDARD |
 | A complaint names a home-bank counterparty account with no open review | ACCOUNT_REVIEW | mule-scorer prior, updated with `LINKED_COMPLAINTS = ONE_OR_MORE` | STANDARD |
 | Manual: `POST /cases` by an INVESTIGATOR | ACCOUNT_REVIEW only (PAYMENT_HOLD cases come only from Guardian holds) | mule-scorer prior | STANDARD |
 
@@ -26,6 +26,53 @@ transaction. Guardian passes plain values, so the Navigator never imports Guardi
 the session to the case (#94). A retried call for the same session returns the case it opened;
 an open case from another session is refused (`409 INVALID_STATE_TRANSITION`). The account-review
 triggers and the console come with M5 (#103, #109).
+
+**Implementation (complaints trigger, #109).** `ACCOUNT_REVIEW_SWEEP` (every minute, doc 04 §5.4) runs
+`delphi.navigator.reviews.open_complaint_reviews` under the ACTIVE KB:
+- It finds the home-bank (`DLPH`) accounts named in `counterparty_account_ids` by complaints
+  reported in the last `DELPHI_REVIEW_COMPLAINT_LOOKBACK_DAYS` (30; an older complaint
+  opens no review), in SQL, oldest complaint first, with `NOT EXISTS` against the account's
+  reviews and a `LIMIT`.
+- It is bounded, as `LABEL_DELIVERY` is (#263): one transaction per batch of
+  `DELPHI_REVIEW_SWEEP_BATCH` reviews (25), each under a 30 s statement timeout and 16 MB
+  `work_mem`, and at most `DELPHI_REVIEW_SWEEP_MAX_PER_RUN` reviews (100) per run; the next run
+  carries on. A run that finds another one sweeping (advisory lock 50) skips.
+- It opens an ACCOUNT_REVIEW case (STANDARD, `account_review_sla_minutes`) for each, unless the
+  account has an open review or a review opened after its latest complaint. So it is idempotent
+  per account, and a disposed review reopens only for a newer complaint.
+- The prior is doc 06 §11's, with p_model(MULE) = p_mule from `account_scores`. Without a score
+  (no mule scorer yet, #91) it uses doc 13 §6's fallback (`features.mule_score_fallback`, 0.10),
+  logged as a WARNING and stored in `prior_components.p_mule_source`.
+- An account review has no anomaly model, so q = 0 and the open mass is the profile's base.
+- `LINKED_COMPLAINTS = ONE_OR_MORE` is then stored as the case's first evidence record, through
+  the evidence fetch, so it shows in the timeline and is not planned again. The case stays OPEN,
+  since this is not an investigator action.
+- The amount at stake is the account's executed credits over the last 7 days (doc 02).
+
+**The mule-scorer trigger (#109 PR 2)** runs in the same sweep, which is now
+`ACCOUNT_REVIEW_SWEEP`. It opens an ACCOUNT_REVIEW case for each home-bank account whose stored
+score (`account_scores`, written by `MULE_SWEEP`, doc 13 §6) is ≥ `mule_sweep_threshold` (0.70)
+and that had an executed credit in the last `navigator.mule_credit_window_h` (24 h). The prior is
+the mule-scorer prior alone.
+- It skips an account with an open review, or one whose latest review opened after its latest
+  credit, so only new money reopens a disposed review.
+- The candidates are chosen in SQL, oldest credit first, with `NOT EXISTS` against the account's
+  reviews and a `LIMIT`; the credit filter uses the partial index `payments (payee_account_id,
+  executed_at) WHERE status = 'EXECUTED'` (migration 0017).
+- Complaints run first, so an account that is both complained about and a suspect gets the
+  complaint's update. Both triggers share each batch and the per-run cap.
+- `mule_sweep_interval_min` (15) is the interval at which `MULE_SWEEP` rescores accounts (doc 13
+  §6); this sweep only reads the stored scores, every 60 s.
+- `mule_credit_window_h` is a KB model default (24), left out of KB v1's canonical content so its
+  hash stays the same.
+
+**The stored recommendation (#208).** The case row keeps `recommended_decision` and
+`risk_by_decision` current from the start, not only at disposition. Opening stores them for the
+initial posterior. Each evidence record stores them for the new posterior, in the same
+transaction as the posterior update. The disposition stores them as before. They are computed as
+the console computes them: the Bayes decision under the case profile's losses, with the
+vulnerable-payer weighting (doc 06 §4). The queue shows the recommended decision's risk as the
+expected loss and can sort by it (doc 16).
 
 ## 2. Case console behaviour (per refresh / after each evidence fetch)
 
@@ -158,6 +205,21 @@ Every interaction appends a `trace_events` row: `CASE_OPENED`, `CASE_VIEWED`,
 time since opened), `DD_PACK_VIEWED`. The frontend sends view events through
 `POST /cases/{id}/trace-events` (batched, at most 1 request per 5 s).
 
+**Implementation** (#108): `delphi.navigator.traces`, table `trace_events` (migration 0015). The
+server writes the actions in the action's own transaction:
+- `CASE_OPENED` (`open_case`; no user, `{protocol, decision}`);
+- `EVIDENCE_REQUESTED` (`request_evidence`, a new record only, not an idempotent replay;
+  `{source_key, evidence_record_id, rank_shown, net_value_shown_paise, settle_pct_shown,
+  refresh}`, ranked as the console showed it);
+- `DISPOSITION` (`dispose`; `{decision, typology, confidence, is_override,
+  seconds_since_opened}`).
+
+`DD_PACK_VIEWED` is recorded when `GET /cases/{id}/dd-pack` is read, for the viewer, with
+`{format, complete}`. The console may send only the four view
+events. `EVIDENCE_VIEWED` and `NARRATIVE_EXPANDED` name an evidence record of the case, and no
+other field is stored from a browser. A batch with one bad event is refused whole, and times are
+kept between the case's opening and now, since a browser's clock may be off.
+
 Trace analytics shown on the Learning page (doc 12 §6):
 
 - **Agreement rate**: share of evidence requests where the investigator chose the top-ranked
@@ -234,8 +296,53 @@ leaves it false and never blocks the decision. The last planning step (the one t
 has no probe run: its candidates are kept in the `guardian.session.decided` audit entry and
 appear in sections 3 and 4.
 
+**Implementation, case pack** (#108): `delphi.navigator.ddpack`, served by
+`GET /cases/{id}/dd-pack`. The pack's shape (sections, the completeness rule, the printable page)
+is `delphi.platform.ddpack`, shared with the Guardian session's pack. The Navigator may not import
+Guardian, so a case's inherited trail (the session pack's sections 2, 3, 4 and 8) is passed in by
+the api and the worker from `guardian.api.case_trail`.
+
+The case's sections:
+1. Header: the case, its subject, amount, channel, the customer's pseudonym, vulnerability and
+   the KB version with its hash.
+2. Prior: the session's prior section, or for a case without a session what `prior_components`
+   stored (no feature contributions).
+3. Timeline: the session's steps (origin `GUARDIAN`), then the case's current evidence records
+   (origin `NAVIGATOR`), with rank and net value at request, facts, outcome and posterior before
+   and after.
+4. Guardrails: the session's, required only when the case has Guardian-originated steps.
+5. Decisions: the engine's recommendation and risks, and the disposition with user, time,
+   confidence, typology and any override rationale. It is empty until the case is DISPOSED.
+6. Narratives: every current record's narrative, labelled "AI-written summary" or "Template
+   summary", with its citations resolved to the cited records' sources. It is empty while any
+   narrative is still being written. A case decided without evidence says "No evidence was
+   fetched for this case."
+7. Liens and tickets: not applicable until the chase (M6).
+8. Audit: the case's chain check, plus the session's.
+9. Method note.
+
+`cases.dd_pack_complete` is recomputed after a disposition (in its transaction) and whenever a
+narrative is written, which can complete section 6 after the decision. Both recomputations take the case row lock first (the narrative job before it writes, in the
+fetch's order: case, then evidence), so a disposition racing the last narrative is serialised
+with it and the later of the two stores the complete flag (#229). The recomputation runs in
+a savepoint: a failure is logged, leaves the flag as it was and never blocks the change. The flag
+is derived, so it does not bump the case's version. Reading it records `DD_PACK_VIEWED`
+(§5).
+
 ## 8. Campaigns
 
 Rules are in doc 05 §5. The campaign list is sorted by `rank_score` and shows the
 F3 stage strip, case count, total expected loss, and victims who are vulnerable. Campaign
 detail lists the cases and the shared infrastructure entities.
+
+**Implementation (#107 PR 1).** The merge rule and the stable ids are pure functions in
+`delphi.navigator.campaigns`, and the window is the KB's `navigator.campaign_window_days`.
+- `groups` links cases with the same leading hypothesis that share an entity and opened within the
+  window, and closes the links with union-find. Cases led by GENUINE or UNEXPLAINED, and cases
+  with no link, form no campaign.
+- `assign_ids` keeps the ids members already had, by doc 05 §5's anchor rule: only the group
+  holding a campaign's anchor (its oldest member still in a group) may claim it, so in a split
+  the group with the oldest case keeps the id. In a merge the oldest campaign survives and the
+  others are `merged_into` it; a group with no campaign to claim gets a new one.
+- The `campaigns` table, `recompute()` after each disposition and new case, `GET /campaigns` and
+  the pages follow.

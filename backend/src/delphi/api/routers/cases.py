@@ -19,19 +19,19 @@ from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Query, Request, Response
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from fastapi.responses import HTMLResponse, JSONResponse
+from pydantic import AwareDatetime, BaseModel, Field
 from sqlalchemy.orm import Session
 
 from delphi.api.idempotency import IdempotencyKey, RawBody, run_idempotent
 from delphi.api.routers import API_PREFIX
+from delphi.api.routers.guardian import DdPackFormat
 from delphi.api.security import Permission, Principal, require
+from delphi.guardian.api import case_trail
 from delphi.kb.model import UNEXPLAINED
 from delphi.kb.store import get_version
 from delphi.navigator.api import (
-    OUTREACH as OUTREACH_SOURCE,
-)
-from delphi.navigator.api import (
+    MAX_TRACE_BATCH,
     AlertAction,
     AlertStatus,
     CaseCursor,
@@ -40,10 +40,13 @@ from delphi.navigator.api import (
     CaseSort,
     CaseStatus,
     CaseType,
+    ClientTrace,
     ConsoleView,
     Disposition,
     EvidenceRecord,
+    TraceType,
     act_on_alert,
+    build_case_dd_pack,
     case_profile,
     console,
     current_records,
@@ -51,10 +54,18 @@ from delphi.navigator.api import (
     get_alert,
     get_case,
     list_cases,
+    record_client_traces,
+    record_trace,
+    refresh_dd_pack_complete,
     request_evidence,
     request_simulated_outreach,
+    sort_value,
     vulnerable_payer,
 )
+from delphi.navigator.api import (
+    OUTREACH as OUTREACH_SOURCE,
+)
+from delphi.platform.ddpack import render_html as render_dd_pack_html
 from delphi.platform.errors import DelphiError, NotFoundError, ProblemCode
 from delphi.platform.wiring import Platform
 
@@ -157,8 +168,9 @@ def _platform(request: Request) -> Platform:
 
 
 def _encode_cursor(sort: CaseSort, record: CaseRecord) -> str:
-    at = record.sla_due_at if sort is CaseSort.SLA_DUE_AT else record.opened_at
-    raw = json.dumps({"s": sort.value, "at": at.isoformat(), "id": str(record.id)})
+    value = sort_value(sort, record)
+    at = value.isoformat() if isinstance(value, datetime) else value
+    raw = json.dumps({"s": sort.value, "at": at, "id": str(record.id)})
     return base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
 
 
@@ -167,6 +179,11 @@ def _decode_cursor(cursor: str, sort: CaseSort) -> CaseCursor:
         raw = json.loads(base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)))
         if raw["s"] != sort.value:
             raise ValueError("the cursor belongs to another sort order")
+        if sort is CaseSort.EXPECTED_LOSS:  # a number (#208)
+            value = raw["at"]
+            if isinstance(value, bool) or not isinstance(value, int | float):
+                raise ValueError("the cursor's expected loss is not a number")
+            return CaseCursor(float(value), UUID(raw["id"]))
         at = datetime.fromisoformat(raw["at"])
         if at.tzinfo is None:
             raise ValueError("the cursor's time has no zone")
@@ -187,7 +204,8 @@ def read_cases(
     limit: Annotated[int, Query(ge=1, le=MAX_LIMIT)] = DEFAULT_LIMIT,
     cursor: Annotated[str | None, Query()] = None,
 ) -> CasePage:
-    """The case queue: soonest SLA first (``sort=sla_due_at``), or newest first."""
+    """The case queue: soonest SLA first (``sort=sla_due_at``), the largest expected loss first
+    (``expected_loss``, #208), or newest first (``opened_at``)."""
     after = _decode_cursor(cursor, sort) if cursor else None
     platform = _platform(request)
     with platform.sessions() as session:
@@ -394,11 +412,16 @@ def read_case(
     return detail
 
 
+# A KB key (a decision, typology, source or outcome): bounded, so a request cannot carry an
+# arbitrarily long string into the audit log and the problem detail (#127).
+KbKey = Annotated[str, Field(min_length=1, max_length=64)]
+
+
 class DispositionRequest(BaseModel):
     """docs/16: `{decision, typology?, confidence (1–5), note?, override_rationale?}`."""
 
-    decision: str
-    typology: str | None = None
+    decision: KbKey
+    typology: KbKey | None = None
     confidence: int = Field(ge=1, le=5)
     note: str | None = Field(default=None, max_length=2000)
     override_rationale: str | None = Field(default=None, max_length=2000)
@@ -451,6 +474,8 @@ def dispose_case(
             expected_version=expected,
             user_id=principal.user_id,
         )
+        refresh_dd_pack_complete(session, case_id, case_trail)  # docs/09 §7: on every change
+        record = get_case(session, case_id) or record
         return HTTPStatus.OK, _detail(session, record, platform.clock.now()).model_dump(mode="json")
 
     reply = run_idempotent(request, raw, principal, key, run)
@@ -463,9 +488,9 @@ class EvidenceRequest(BaseModel):
     """docs/16: `{source_key, refresh?}`; `CUSTOMER_OUTREACH_CALL` also takes the investigator's
     recorded `outcome` and a `note` (docs/09 §3)."""
 
-    source_key: str
+    source_key: KbKey
     refresh: bool = False
-    outcome: str | None = None
+    outcome: KbKey | None = None
     note: str | None = Field(default=None, max_length=2000)
     # docs/09 §3: in simulation/autoplay the worker places the outreach call (202).
     simulate: bool = False
@@ -558,3 +583,90 @@ def act_on_police_alert(
         assert acted is not None
         response.headers["ETag"] = f'"{acted.version}"'  # a mutable aggregate carries its ETag
         return _detail(session, acted, platform.clock.now())
+
+
+class TracePayload(BaseModel):
+    """What a view event may carry: the evidence record it is about, for EVIDENCE_VIEWED and
+    NARRATIVE_EXPANDED. Nothing else is stored from a browser."""
+
+    model_config = {"extra": "forbid"}
+
+    evidence_record_id: UUID | None = None
+
+
+class TraceEventIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    type: TraceType
+    payload: TracePayload = Field(default_factory=TracePayload)
+    at: AwareDatetime  # docs/16: times are UTC (ADR-0014); a zone-less time is a 422
+
+
+class TraceBatch(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    events: list[TraceEventIn] = Field(min_length=1, max_length=MAX_TRACE_BATCH)
+
+
+class TraceBatchResult(BaseModel):
+    recorded: int
+
+
+@router.post("/cases/{case_id}/trace-events", response_model=TraceBatchResult)
+def post_trace_events(
+    case_id: UUID,
+    body: TraceBatch,
+    *,
+    principal: Annotated[Principal, Depends(require(Permission.VIEW))],
+    request: Request,
+) -> TraceBatchResult:
+    """The console's view events, batched (docs/09 §5, FR-NAV-08): CASE_VIEWED,
+    EVIDENCE_VIEWED, NARRATIVE_EXPANDED and WCMM_VIEWED. The server records the actions itself,
+    so any other type is 422, as is an evidence-record event naming a record of another case;
+    the whole batch is then refused. 404 for an unknown case."""
+    platform = _platform(request)
+    events = [
+        ClientTrace(type=e.type, at=e.at, evidence_record_id=e.payload.evidence_record_id)
+        for e in body.events
+    ]
+    with platform.sessions.begin() as session:
+        recorded = record_client_traces(session, platform.clock, case_id, principal.user_id, events)
+    return TraceBatchResult(recorded=recorded)
+
+
+@router.get(
+    "/cases/{case_id}/dd-pack",
+    response_model=None,
+    responses={200: {"content": {"text/html": {}}}},
+)
+def read_case_dd_pack(
+    case_id: UUID,
+    request: Request,
+    principal: Annotated[Principal, Depends(require(Permission.VIEW))],
+    format: Annotated[DdPackFormat, Query()] = DdPackFormat.JSON,
+) -> Any:
+    """The case's due-diligence pack (docs/09 §7, FR-NAV-11): JSON, or a printable HTML page.
+    Computed on read, so it is authoritative over the stored ``dd_pack_complete``. Reading it
+    records a ``DD_PACK_VIEWED`` trace event for the viewer (docs/09 §5)."""
+    platform = _platform(request)
+    with platform.sessions.begin() as session:
+        record = get_case(session, case_id)
+        if record is None:
+            raise NotFoundError("No case with this id.")
+        inherited = (
+            case_trail(session, record.guardian_session_id)
+            if record.guardian_session_id is not None
+            else None
+        )
+        pack = build_case_dd_pack(session, case_id, inherited)
+        record_trace(
+            session,
+            case_id=case_id,
+            user_id=principal.user_id,
+            type=TraceType.DD_PACK_VIEWED,
+            at=platform.clock.now(),
+            payload={"format": format.value, "complete": pack.complete},
+        )
+    if format is DdPackFormat.HTML:
+        return HTMLResponse(render_dd_pack_html(pack))
+    return pack.as_json()

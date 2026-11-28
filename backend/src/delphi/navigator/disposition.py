@@ -26,12 +26,18 @@ from uuid import UUID
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from delphi.engine.risk import decide, loss_matrix, risk_by_decision
 from delphi.kb.model import UNEXPLAINED
 from delphi.kb.store import get_version
-from delphi.navigator.console import belief_vector, case_profile
-from delphi.navigator.store import CaseRecord, CaseStatus, CaseType, get_case
+from delphi.navigator.console import case_profile, recommend
+from delphi.navigator.store import (
+    CaseRecord,
+    CaseStatus,
+    CaseType,
+    get_case,
+    payer_is_vulnerable,
+)
 from delphi.navigator.tables import cases
+from delphi.navigator.traces import TraceType, record_trace
 from delphi.platform.audit import ActorType, record
 from delphi.platform.clock import Clock
 from delphi.platform.errors import DelphiError, NotFoundError, ProblemCode
@@ -63,18 +69,7 @@ def _invalid(message: str) -> DelphiError:
 
 def vulnerable_payer(session: Session, case: CaseRecord) -> bool:
     """The loss weighting of doc 06 §4: whether the payment's payer is a vulnerable customer."""
-    if case.subject_payment_id is None:
-        return False
-    payment = bank.get_payment(session, case.subject_payment_id)
-    if payment is None or payment.payer_customer_id is None:
-        return False
-    return bool(
-        session.execute(
-            select(bank.customers.c.is_vulnerable).where(
-                bank.customers.c.id == payment.payer_customer_id
-            )
-        ).scalar_one_or_none()
-    )
+    return payer_is_vulnerable(session, case.subject_payment_id)
 
 
 def dispose(
@@ -122,14 +117,13 @@ def dispose(
     elif typology is not None:
         raise _invalid("Only CONFIRM_FRAUD names a typology.")
 
-    belief = belief_vector(profile, case.posterior)
-    vulnerable = vulnerable_payer(session, case)
-    losses = loss_matrix(profile, float(case.amount_at_stake_paise), vulnerable)
-    recommended = profile.decisions[decide(belief, losses)[0]]
-    risks = {
-        d: float(r)
-        for d, r in zip(profile.decisions, risk_by_decision(belief, losses), strict=True)
-    }
+    advice = recommend(
+        profile,
+        case.posterior,
+        amount_paise=case.amount_at_stake_paise,
+        vulnerable=vulnerable_payer(session, case),
+    )
+    recommended, risks = advice.decision, dict(advice.risk_by_decision)
     is_override = decision != recommended
     rationale = (disposition.override_rationale or "").strip()
     if is_override and len(rationale) < MIN_OVERRIDE_RATIONALE:
@@ -186,6 +180,21 @@ def dispose(
         entity_type="case",
         entity_id=str(case_id),
         payload=payload,
+    )
+    record_trace(  # docs/09 §5
+        session,
+        case_id=case_id,
+        user_id=user_id,
+        type=TraceType.DISPOSITION,
+        at=now,
+        payload={
+            "decision": decision,
+            "typology": typology,
+            "confidence": disposition.confidence,
+            "is_override": is_override,
+            # whole seconds keep the analytics payload stable (docs/09 §5)
+            "seconds_since_opened": round((now - case.opened_at).total_seconds()),
+        },
     )
     publish(
         session,

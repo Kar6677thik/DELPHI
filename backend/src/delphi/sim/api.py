@@ -1,6 +1,7 @@
 """The simulator's facade for the api, the CLI and the feature modules (docs/04 §4.1 rule 3):
 asking the worker for a dataset (docs/16 §2 `POST /admin/datasets`, docs/23 §4 `delphi seed`,
-#19), and the `bank` schema's table definitions.
+#19) or a demo story (`POST /admin/demo/scenarios/{story}/run`, #101), the mock phone's
+payments and personas (#98), and the `bank` schema's table definitions.
 
 Feature modules read the simulated bank through these re-exported `bank` tables (the probes'
 sim adapters, sensing, the Navigator evidence rules), so the schema is defined once, in
@@ -56,18 +57,39 @@ from delphi.sim.payments import (
     get_payment,
     get_payments,
 )
+from delphi.sim.phone import (
+    PHONE_CHANNELS,
+    PayChannel,
+    PaymentRequest,
+    Persona,
+    PhoneTelemetry,
+    customer_exists,
+    initiate_payment,
+    phone_personas,
+)
+from delphi.sim.population import HOME_BANK
 
 # The read-only `bank` tables re-exported for feature modules, and this facade's own API.
 __all__ = [
     "DATASET_REQUEST_LOCK_KEY",
+    "HOME_BANK",
+    "PHONE_CHANNELS",
     "PROFILES",
+    "RUNNABLE_STORIES",
     "STATUS_FOR_DECISION",
+    "STORIES",
     "Baseline",
     "DatasetInfo",
     "DatasetProfile",
     "HistoryWindow",
+    "PayChannel",
+    "PaymentRequest",
     "PaymentStatus",
     "PaymentView",
+    "Persona",
+    "PhoneTelemetry",
+    "StoryMode",
+    "StoryName",
     "account_scores",
     "accounts",
     "apply_case_disposition",
@@ -77,18 +99,24 @@ __all__ = [
     "complaints",
     "crm_events",
     "current_dataset",
+    "customer_exists",
     "customers",
     "dataset_exists",
     "devices",
     "get_payment",
     "get_payments",
     "history_window",
+    "initiate_payment",
     "labels",
     "ledger_entries",
     "login_events",
     "payees",
     "payments",
+    "phone_personas",
+    "refuse_during_reset",
     "request_dataset",
+    "request_reset",
+    "request_story",
     "session_telemetry",
     "sim_phone_risk",
     "sim_registry_listings",
@@ -98,6 +126,12 @@ __all__ = [
 DatasetProfile = Literal["test", "demo", "eval"]
 PROFILES: tuple[str, ...] = get_args(DatasetProfile)
 _ACTIVE = (JobStatus.QUEUED.value, JobStatus.RUNNING.value)
+
+# The demo stories (docs/14 §6, §10) and how each is played; S-3 and S-4 run in a later release.
+StoryName = Literal["S1", "S2", "S3", "S4"]
+STORIES: tuple[str, ...] = get_args(StoryName)
+RUNNABLE_STORIES: tuple[str, ...] = ("S1", "S2")
+StoryMode = Literal["interactive", "autoplay"]
 
 
 def dataset_exists(session: Session) -> bool:
@@ -205,3 +239,82 @@ def _refuse_a_second_dataset(session: Session) -> None:
             f"A dataset is already being generated (job {running}).",
             code=ProblemCode.JOB_ALREADY_RUNNING,
         )
+
+
+def refuse_during_reset(session: Session) -> None:
+    """409 INVALID_STATE_TRANSITION while a `DEMO_RESET` is queued or running: a payment or a
+    story started now would race the reset's deletes (docs/14 §10)."""
+    pending = session.execute(
+        select(jobs.c.id)
+        .where(jobs.c.type == JobType.DEMO_RESET.value, jobs.c.status.in_(_ACTIVE))
+        .limit(1)
+    ).scalar_one_or_none()
+    if pending is not None:
+        raise InvalidStateTransitionError(
+            f"A demo reset is in progress (job {pending}); try again when it has finished."
+        )
+
+
+def request_story(
+    session: Session,
+    clock: Clock,
+    *,
+    story: str,
+    mode: StoryMode,
+    idempotency_key: str,
+    created_by: UUID | None = None,
+) -> Enqueued:
+    """Queue a `DEMO_STORY` job for the worker, which holds the persona manifest (docs/14
+    §10). The caller checks the story is one of ``RUNNABLE_STORIES`` (the job refuses the
+    others). A key already used returns its job; otherwise 409 INVALID_STATE_TRANSITION while
+    a demo reset is queued or running."""
+    known = session.execute(
+        select(jobs.c.id).where(jobs.c.idempotency_key == idempotency_key)
+    ).scalar_one_or_none()
+    if known is not None:
+        return Enqueued(known, created=False)
+    refuse_during_reset(session)
+    return enqueue(
+        session,
+        clock,
+        JobType.DEMO_STORY,
+        idempotency_key=idempotency_key,
+        params={"story": story, "mode": mode},
+        created_by=created_by,
+    )
+
+
+def request_reset(
+    session: Session,
+    clock: Clock,
+    *,
+    idempotency_key: str,
+    created_by: UUID | None = None,
+) -> Enqueued:
+    """Queue a `DEMO_RESET` job (docs/14 §10): the worker deletes what the demo did since the
+    seed. A key already used returns its job. Otherwise 409 INVALID_STATE_TRANSITION while the
+    bank holds no dataset, and 409 JOB_ALREADY_RUNNING while a reset is queued or running."""
+    known = session.execute(
+        select(jobs.c.id).where(jobs.c.idempotency_key == idempotency_key)
+    ).scalar_one_or_none()
+    if known is not None:
+        return Enqueued(known, created=False)
+    if not dataset_exists(session):
+        raise InvalidStateTransitionError("The bank holds no dataset: there is nothing to reset.")
+    running = session.execute(
+        select(jobs.c.id)
+        .where(jobs.c.type == JobType.DEMO_RESET.value, jobs.c.status.in_(_ACTIVE))
+        .limit(1)
+    ).scalar_one_or_none()
+    if running is not None:
+        raise DelphiError(
+            f"A demo reset is already under way (job {running}).",
+            code=ProblemCode.JOB_ALREADY_RUNNING,
+        )
+    return enqueue(
+        session,
+        clock,
+        JobType.DEMO_RESET,
+        idempotency_key=idempotency_key,
+        created_by=created_by,
+    )

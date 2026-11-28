@@ -255,6 +255,53 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/demo/scenarios/{story}/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run Story
+         * @description Queue a `DEMO_STORY` job for S1 or S2 (202 with the job). Its result names the story's
+         *     customer and, in `autoplay`, the payment and its WORKER session; in `interactive`, the
+         *     `payment` to pay from the mock phone. 422 for S3 and S4 (a later release) or an unknown
+         *     mode; 503 NOT_INITIALISED until the dataset and models are ready, while the simulation is
+         *     off, or (interactive) while this process has no Guardian runner.
+         */
+        post: operations["run_story_api_v1_admin_demo_scenarios__story__run_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/demo/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reset Demo
+         * @description Queue a `DEMO_RESET` job (202 with the job): back to the state right after the seed
+         *     (docs/14 §10). The LIVE sessions this process drives are dropped first. 409
+         *     INVALID_STATE_TRANSITION without a dataset, 409 JOB_ALREADY_RUNNING while a reset is under
+         *     way; 503 NOT_INITIALISED while `DELPHI_SIMULATION_ENABLED` is off.
+         */
+        post: operations["reset_demo_api_v1_admin_demo_reset_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/kb/versions": {
         parameters: {
             query?: never;
@@ -363,7 +410,8 @@ export interface paths {
         };
         /**
          * Read Cases
-         * @description The case queue: soonest SLA first (``sort=sla_due_at``), or newest first.
+         * @description The case queue: soonest SLA first (``sort=sla_due_at``), the largest expected loss first
+         *     (``expected_loss``, #208), or newest first (``opened_at``).
          */
         get: operations["read_cases_api_v1_cases_get"];
         put?: never;
@@ -458,6 +506,110 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/cases/{case_id}/trace-events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Trace Events
+         * @description The console's view events, batched (docs/09 §5, FR-NAV-08): CASE_VIEWED,
+         *     EVIDENCE_VIEWED, NARRATIVE_EXPANDED and WCMM_VIEWED. The server records the actions itself,
+         *     so any other type is 422, as is an evidence-record event naming a record of another case;
+         *     the whole batch is then refused. 404 for an unknown case.
+         */
+        post: operations["post_trace_events_api_v1_cases__case_id__trace_events_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/cases/{case_id}/dd-pack": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Case Dd Pack
+         * @description The case's due-diligence pack (docs/09 §7, FR-NAV-11): JSON, or a printable HTML page.
+         *     Computed on read, so it is authoritative over the stored ``dd_pack_complete``. Reading it
+         *     records a ``DD_PACK_VIEWED`` trace event for the viewer (docs/09 §5).
+         */
+        get: operations["read_case_dd_pack_api_v1_cases__case_id__dd_pack_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/chase/operations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start Chase
+         * @description docs/10 §1: trace a complaint's (or the payments') money; 422 if nothing executed.
+         */
+        post: operations["start_chase_api_v1_chase_operations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/chase/operations/{operation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Chase */
+        get: operations["read_chase_api_v1_chase_operations__operation_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/chase/operations/{operation_id}/liens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve
+         * @description FR-CHS-04: the investigator approves candidates; each lien is the taint still traced to
+         *     the account, at most its balance now (FR-CHS-05). 409 for a closed operation or a
+         *     candidate already liened; 422 for more than `max_liens_per_round`.
+         */
+        post: operations["approve_api_v1_chase_operations__operation_id__liens_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/guardian/sessions": {
         parameters: {
             query?: never;
@@ -472,7 +624,15 @@ export interface paths {
          */
         get: operations["read_sessions_api_v1_guardian_sessions_get"];
         put?: never;
-        post?: never;
+        /**
+         * Start Session
+         * @description The customer pressed Pay on the mock phone (docs/08 §1): the payment is created
+         *     PENDING_GUARDIAN and its LIVE session starts. The session comes back as it stands after
+         *     steps 1–3 (decided already on the fast path); the rest reaches the phone over
+         *     `/phone/stream` and the monitor over `/events/stream`. 503 NOT_INITIALISED while the
+         *     Guardian does not run in this process, or no KB is ACTIVE.
+         */
+        post: operations["start_session_api_v1_guardian_sessions_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -516,6 +676,109 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/guardian/sessions/{session_id}/probe-responses": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Respond To Probe
+         * @description The phone's answer (docs/08 §4). 404 for a run that is not this session's, 409
+         *     PROBE_NOT_AWAITING for one that no longer waits, 409 INVALID_STATE_TRANSITION past its
+         *     deadline or for a session the simulation drives, 400 INVALID_CLIENT_SIGNALS for
+         *     implausible timings, 422 for an answer the screen could not give.
+         */
+        post: operations["respond_to_probe_api_v1_guardian_sessions__session_id__probe_responses_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/guardian/sessions/{session_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel Session
+         * @description The customer cancelled the payment (FR-GDN-07): the session ends CANCELLED_BY_CUSTOMER
+         *     and the payment is CANCELLED. 409 for a finished session or one the simulation drives.
+         */
+        post: operations["cancel_session_api_v1_guardian_sessions__session_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/phone/personas": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Personas
+         * @description The persona customers (docs/14 §6), by persona key; empty until a dataset with personas
+         *     is seeded. Accounts are the customer's own at this bank; devices newest first.
+         */
+        get: operations["read_personas_api_v1_phone_personas_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/phone/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Stream
+         * @description The customer's phone channel. 404 for an unknown customer; 503 NOT_INITIALISED while the
+         *     Guardian does not run in this process.
+         */
+        get: operations["stream_api_v1_phone_stream_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/metrics/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Summary */
+        get: operations["read_summary_api_v1_metrics_summary_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -530,6 +793,20 @@ export interface components {
          * @enum {string}
          */
         AlertStatus: "DRAFT" | "SENT_SIMULATED" | "DISCARDED";
+        /** AlertView */
+        AlertView: {
+            /** Code */
+            code: string;
+            /** Message */
+            message: string;
+            /** Count */
+            count: number;
+        };
+        /** ApproveLiens */
+        ApproveLiens: {
+            /** Candidate Ids */
+            candidate_ids: string[];
+        };
         /**
          * ArtifactKind
          * @description The sensing models (docs/13 §1).
@@ -555,6 +832,47 @@ export interface components {
             B1: string;
             /** B2 */
             B2: string;
+        };
+        /** BiometricAnswer */
+        BiometricAnswer: {
+            /**
+             * Biometric
+             * @enum {string}
+             */
+            biometric: "MATCH" | "NO_MATCH" | "CANCEL";
+        };
+        /** CandidateView */
+        CandidateView: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Account Id
+             * Format: uuid
+             */
+            account_id: string;
+            /** Hop */
+            hop: number;
+            /** Taint Paise */
+            taint_paise: number;
+            /** Balance Paise */
+            balance_paise: number;
+            /** P Present */
+            p_present: number | null;
+            /** P Mule */
+            p_mule: number | null;
+            /** Erv Paise */
+            erv_paise: number | null;
+            /** Wrongful Cost Paise */
+            wrongful_cost_paise: number | null;
+            /** Net Paise */
+            net_paise: number | null;
+            /** Rank */
+            rank: number | null;
+            /** Recommended */
+            recommended: boolean | null;
         };
         /**
          * CaseDetail
@@ -655,15 +973,31 @@ export interface components {
         CaseProtocol: "STANDARD" | "COERCION";
         /**
          * CaseSort
-         * @description The case queue's orders (docs/16): soonest SLA first, or newest first.
+         * @description The case queue's orders (docs/16): soonest SLA first, the largest expected loss first, or
+         *     newest first.
          * @enum {string}
          */
-        CaseSort: "sla_due_at" | "opened_at";
+        CaseSort: "sla_due_at" | "expected_loss" | "opened_at";
         /**
          * CaseStatus
          * @enum {string}
          */
         CaseStatus: "OPEN" | "IN_PROGRESS" | "DISPOSED";
+        /** CaseSummary */
+        CaseSummary: {
+            /** Open Cases */
+            open_cases: number;
+            /** Open By Protocol */
+            open_by_protocol: {
+                [key: string]: number;
+            };
+            /** Sla Breaches */
+            sla_breaches: number;
+            /** Disposed */
+            disposed: number;
+            /** Median Hold Resolution Minutes */
+            median_hold_resolution_minutes: number | null;
+        };
         /**
          * CaseType
          * @enum {string}
@@ -744,6 +1078,48 @@ export interface components {
             version: number;
         };
         /**
+         * ChaseView
+         * @description docs/16 `ChaseView` (the graph and metrics come with #114's Chase screen work).
+         */
+        ChaseView: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Complaint Id */
+            complaint_id: string | null;
+            /** Source Payment Ids */
+            source_payment_ids: string[];
+            /** Status */
+            status: string;
+            /**
+             * Reported At
+             * Format: date-time
+             */
+            reported_at: string;
+            /** Reported Loss Paise */
+            reported_loss_paise: number;
+            /**
+             * Golden Hour Ends At
+             * Format: date-time
+             */
+            golden_hour_ends_at: string;
+            /**
+             * Last Traced At
+             * Format: date-time
+             */
+            last_traced_at: string;
+            /** Candidates */
+            candidates: components["schemas"]["CandidateView"][];
+            /** Liens */
+            liens: components["schemas"]["LienView"][];
+            /** Tickets */
+            tickets: components["schemas"]["TicketView"][];
+            /** Version */
+            version: number;
+        };
+        /**
          * CheckStatus
          * @enum {string}
          */
@@ -753,6 +1129,47 @@ export interface components {
             status: components["schemas"]["CheckStatus"];
             /** Detail */
             detail?: string | null;
+        };
+        /** ClientSignalsIn */
+        ClientSignalsIn: {
+            /** Shown At Ms */
+            shown_at_ms: number;
+            /** Answered At Ms */
+            answered_at_ms: number;
+            /**
+             * Visibility Hidden Count
+             * @default 0
+             */
+            visibility_hidden_count: number;
+            /**
+             * Paste Count
+             * @default 0
+             */
+            paste_count: number;
+        };
+        /** CoolingOffAnswer */
+        CoolingOffAnswer: {
+            cooling_off: components["schemas"]["CoolingOffIn"];
+        };
+        /** CoolingOffIn */
+        CoolingOffIn: {
+            /** Cancelled */
+            cancelled: boolean;
+            /**
+             * Other Channel Attempts
+             * @default 0
+             */
+            other_channel_attempts: number;
+            /**
+             * Limit Increase Requests
+             * @default 0
+             */
+            limit_increase_requests: number;
+            /**
+             * Send Now Presses
+             * @default 0
+             */
+            send_now_presses: number;
         };
         /** CreateUser */
         CreateUser: {
@@ -776,6 +1193,11 @@ export interface components {
              * @description default: the profile's
              */
             seed?: number | null;
+            /**
+             * Personas
+             * @description add the demo personas (docs/14 §6); default: the profiles personas.yaml lists (`demo`). The E2E stack seeds `test` with them (docs/21 §1).
+             */
+            personas?: boolean | null;
         };
         /**
          * DdPackFormat
@@ -1010,6 +1432,29 @@ export interface components {
             /** Probe Runs */
             probe_runs: components["schemas"]["ProbeRunView"][];
         };
+        /** GuardianSummary */
+        GuardianSummary: {
+            /** Decided */
+            decided: number;
+            /** Decisions */
+            decisions: {
+                [key: string]: number;
+            };
+            /** Median Session Seconds */
+            median_session_seconds: number | null;
+            /** Active Probes Per Session */
+            active_probes_per_session: number | null;
+            /** Info Yield Bits */
+            info_yield_bits: {
+                [key: string]: number;
+            };
+            /** Held */
+            held: number;
+            /** Label Coverage Held */
+            label_coverage_held: number | null;
+            /** Dd Pack Completeness */
+            dd_pack_completeness: number | null;
+        };
         /** HealthView */
         HealthView: {
             /**
@@ -1042,7 +1487,7 @@ export interface components {
          * @description Every job type in docs/04 §5.4. A type is only claimed once a handler is registered.
          * @enum {string}
          */
-        JobType: "GENERATE_DATASET" | "TRAIN_SENSING" | "RUN_EVALUATION" | "RUN_SCOUT" | "RUN_LEARNING" | "RUN_BACKTEST" | "KB_REBASE" | "LLM_NARRATIVE" | "LLM_CASE_SUMMARY" | "LLM_QUESTION_VARIANTS" | "LLM_TYPOLOGY_DESCRIPTION" | "SIM_OUTREACH_CALL" | "DEMO_STORY" | "DEMO_RESET" | "SIM_TICK" | "CHASE_RETRACE" | "MULE_SWEEP" | "SESSION_TIMEOUT_SWEEP" | "SCOUT_AUTO_TRIGGER" | "LABEL_DELIVERY" | "PROBE_YIELD_DAILY" | "RETENTION_SWEEP" | "AUDIT_VERIFY";
+        JobType: "GENERATE_DATASET" | "TRAIN_SENSING" | "RUN_EVALUATION" | "RUN_SCOUT" | "RUN_LEARNING" | "RUN_BACKTEST" | "KB_REBASE" | "LLM_NARRATIVE" | "LLM_CASE_SUMMARY" | "LLM_QUESTION_VARIANTS" | "LLM_TYPOLOGY_DESCRIPTION" | "SIM_OUTREACH_CALL" | "DEMO_STORY" | "DEMO_RESET" | "SIM_TICK" | "CHASE_RETRACE" | "MULE_SWEEP" | "SESSION_TIMEOUT_SWEEP" | "SCOUT_AUTO_TRIGGER" | "LABEL_DELIVERY" | "ACCOUNT_REVIEW_SWEEP" | "PROBE_YIELD_DAILY" | "RETENTION_SWEEP" | "AUDIT_VERIFY";
         /** JobView */
         JobView: {
             /**
@@ -1154,6 +1599,48 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /** LienView */
+        LienView: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Candidate Id
+             * Format: uuid
+             */
+            candidate_id: string;
+            /**
+             * Account Id
+             * Format: uuid
+             */
+            account_id: string;
+            /** Bank Code */
+            bank_code: string;
+            /** Amount Paise */
+            amount_paise: number;
+            /** Status */
+            status: string;
+            /** Recorded Reasons */
+            recorded_reasons: string;
+            /** Evidence Refs */
+            evidence_refs: string[];
+            /**
+             * Approved By
+             * Format: uuid
+             */
+            approved_by: string;
+            /**
+             * Approved At
+             * Format: date-time
+             */
+            approved_at: string;
+            /** Placed At */
+            placed_at: string | null;
+            /** Review Due At */
+            review_due_at: string | null;
+        };
         /** LoginRequest */
         LoginRequest: {
             /** Username */
@@ -1176,12 +1663,71 @@ export interface components {
             /** Permissions */
             permissions: components["schemas"]["Permission"][];
         };
+        /** MetricsSummary */
+        MetricsSummary: {
+            /** Window Hours */
+            window_hours: number;
+            /** As Of */
+            as_of: string;
+            guardian: components["schemas"]["GuardianSummary"];
+            cases: components["schemas"]["CaseSummary"];
+            /** Golden Hour Ratio */
+            golden_hour_ratio: number | null;
+            /** Alerts */
+            alerts: components["schemas"]["AlertView"][];
+            /** Alerts Not Tracked */
+            alerts_not_tracked: string[];
+        };
         /** ModelStatus */
         ModelStatus: {
             /** Version */
             version: number;
             /** Gate Passed */
             gate_passed: boolean;
+        };
+        /**
+         * NewPayeeIn
+         * @description A payee the customer typed in: the bank resolves the VPA to its account.
+         */
+        NewPayeeIn: {
+            /** Vpa */
+            vpa: string;
+        };
+        /** OptionAnswer */
+        OptionAnswer: {
+            /** Option Key */
+            option_key: string;
+        };
+        /** OtpAnswer */
+        OtpAnswer: {
+            /** Otp */
+            otp: string;
+        };
+        /** PaymentIn */
+        PaymentIn: {
+            /**
+             * Payer Account Id
+             * Format: uuid
+             */
+            payer_account_id: string;
+            /** Payee Account Id */
+            payee_account_id?: string | null;
+            new_payee?: components["schemas"]["NewPayeeIn"] | null;
+            /** Amount Paise */
+            amount_paise: number;
+            /**
+             * Channel
+             * @enum {string}
+             */
+            channel: "UPI_PUSH" | "UPI_COLLECT_APPROVAL" | "IMPS" | "NEFT";
+            /**
+             * Device Id
+             * Format: uuid
+             */
+            device_id: string;
+            telemetry?: components["schemas"]["TelemetryIn"] | null;
+            /** Story Local Time */
+            story_local_time?: string | null;
         };
         /** PaymentSummary */
         PaymentSummary: {
@@ -1220,6 +1766,79 @@ export interface components {
          * @enum {string}
          */
         Permission: "view" | "demo:drive" | "case:write" | "chase:write" | "fde" | "admin";
+        /** PersonaAccountView */
+        PersonaAccountView: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Label */
+            label: string;
+            /** Vpa */
+            vpa: string | null;
+            /** Balance Paise */
+            balance_paise: number;
+        };
+        /** PersonaDeviceView */
+        PersonaDeviceView: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Label */
+            label: string;
+            /** Os */
+            os: string;
+            /**
+             * First Seen At
+             * Format: date-time
+             */
+            first_seen_at: string;
+        };
+        /** PersonaPayeeView */
+        PersonaPayeeView: {
+            /**
+             * Account Id
+             * Format: uuid
+             */
+            account_id: string;
+            /** Label */
+            label: string;
+            /** Vpa */
+            vpa: string | null;
+            /**
+             * Added At
+             * Format: date-time
+             */
+            added_at: string;
+        };
+        /**
+         * PersonaView
+         * @description A demo customer (docs/14 §6) as the phone's picker shows them.
+         */
+        PersonaView: {
+            /**
+             * Customer Id
+             * Format: uuid
+             */
+            customer_id: string;
+            /** Persona Key */
+            persona_key: string;
+            /** Name */
+            name: string;
+            /** Language */
+            language: string;
+            /** Vulnerable */
+            vulnerable: boolean;
+            /** Accounts */
+            accounts: components["schemas"]["PersonaAccountView"][];
+            /** Payees */
+            payees: components["schemas"]["PersonaPayeeView"][];
+            /** Devices */
+            devices: components["schemas"]["PersonaDeviceView"][];
+        };
         /**
          * PoliceAlertView
          * @description docs/09 §6: the coercion case's police alert draft and what a human did with it.
@@ -1258,6 +1877,72 @@ export interface components {
             top_features: {
                 [key: string]: unknown;
             }[];
+        };
+        /**
+         * ProbeResponseRequest
+         * @description docs/08 §4: one answer to the probe on the phone's screen.
+         */
+        ProbeResponseRequest: {
+            /**
+             * Probe Run Id
+             * Format: uuid
+             */
+            probe_run_id: string;
+            /** Answer */
+            answer: components["schemas"]["OptionAnswer"] | components["schemas"]["OtpAnswer"] | components["schemas"]["BiometricAnswer"] | components["schemas"]["CoolingOffAnswer"];
+            client_signals: components["schemas"]["ClientSignalsIn"];
+        };
+        /**
+         * ProbeResponseView
+         * @description The session after the answer. ``attempts_remaining`` is set only for a wrong OTP with
+         *     attempts left: the run still waits (docs/08 §4 OTP protocol step 3).
+         */
+        ProbeResponseView: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            payment: components["schemas"]["PaymentSummary"];
+            /** Status */
+            status: string;
+            /** Decision */
+            decision: string | null;
+            /** Terminal Reason */
+            terminal_reason: string | null;
+            /** Kb Version Id */
+            kb_version_id: number;
+            /** Leading Hypothesis */
+            leading_hypothesis: string | null;
+            /** Posterior */
+            posterior: {
+                [key: string]: number;
+            } | null;
+            /** Unexplained */
+            unexplained: boolean;
+            baselines: components["schemas"]["Baselines"] | null;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /** Decided At */
+            decided_at: string | null;
+            /** Case Id */
+            case_id: string | null;
+            /** Dd Pack Complete */
+            dd_pack_complete: boolean;
+            /** Version */
+            version: number;
+            prior: components["schemas"]["PriorView"];
+            /** Risk By Decision */
+            risk_by_decision: {
+                [key: string]: number;
+            } | null;
+            /** Probe Runs */
+            probe_runs: components["schemas"]["ProbeRunView"][];
+            /** Attempts Remaining */
+            attempts_remaining?: number | null;
         };
         /** ProbeRunView */
         ProbeRunView: {
@@ -1370,6 +2055,20 @@ export interface components {
          * @enum {string}
          */
         SessionStatus: "CREATED" | "PASSIVE_PROBING" | "PLANNING" | "AWAITING_CUSTOMER" | "DECIDED" | "CANCELLED_BY_CUSTOMER";
+        /** StartChase */
+        StartChase: {
+            /** Complaint Id */
+            complaint_id?: string | null;
+            /** Payment Ids */
+            payment_ids?: string[];
+        };
+        /**
+         * StartSessionRequest
+         * @description docs/16: `POST /guardian/sessions`.
+         */
+        StartSessionRequest: {
+            payment: components["schemas"]["PaymentIn"];
+        };
         /** StatusView */
         StatusView: {
             /** Dataset Ready */
@@ -1387,6 +2086,91 @@ export interface components {
             /** Models Below Gate */
             models_below_gate: components["schemas"]["ArtifactKind"][];
         };
+        /** StoryRunRequest */
+        StoryRunRequest: {
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "interactive" | "autoplay";
+        };
+        /**
+         * TelemetryIn
+         * @description The app session's signals, as the mobile SDK reports them (docs/08 §5).
+         */
+        TelemetryIn: {
+            /** Typing Cadence Z */
+            typing_cadence_z: number;
+            /** Paste On Account Field */
+            paste_on_account_field: boolean;
+            /** Max Field Dwell S */
+            max_field_dwell_s: number;
+            /** Remote Access Active */
+            remote_access_active: boolean;
+            /** Screen Share Active */
+            screen_share_active: boolean;
+            /** On Call */
+            on_call: boolean;
+            /** Call Counterparty Known */
+            call_counterparty_known?: boolean | null;
+            /** Session Duration S */
+            session_duration_s: number;
+        };
+        /** TicketView */
+        TicketView: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Lien Id
+             * Format: uuid
+             */
+            lien_id: string;
+            /** Target Bank */
+            target_bank: string;
+            /** Status */
+            status: string;
+            /** Sent At */
+            sent_at: string | null;
+            /** Acknowledged At */
+            acknowledged_at: string | null;
+        };
+        /** TraceBatch */
+        TraceBatch: {
+            /** Events */
+            events: components["schemas"]["TraceEventIn"][];
+        };
+        /** TraceBatchResult */
+        TraceBatchResult: {
+            /** Recorded */
+            recorded: number;
+        };
+        /** TraceEventIn */
+        TraceEventIn: {
+            type: components["schemas"]["TraceType"];
+            payload?: components["schemas"]["TracePayload"];
+            /**
+             * At
+             * Format: date-time
+             */
+            at: string;
+        };
+        /**
+         * TracePayload
+         * @description What a view event may carry: the evidence record it is about, for EVIDENCE_VIEWED and
+         *     NARRATIVE_EXPANDED. Nothing else is stored from a browser.
+         */
+        TracePayload: {
+            /** Evidence Record Id */
+            evidence_record_id?: string | null;
+        };
+        /**
+         * TraceType
+         * @enum {string}
+         */
+        TraceType: "CASE_OPENED" | "CASE_VIEWED" | "EVIDENCE_REQUESTED" | "EVIDENCE_VIEWED" | "NARRATIVE_EXPANDED" | "WCMM_VIEWED" | "DISPOSITION" | "DD_PACK_VIEWED";
         /**
          * UpdateUser
          * @description Only the fields present change.
@@ -1912,6 +2696,74 @@ export interface operations {
             };
         };
     };
+    run_story_api_v1_admin_demo_scenarios__story__run_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                story: "S1" | "S2" | "S3" | "S4";
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StoryRunRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobView"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    reset_demo_api_v1_admin_demo_reset_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobView"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     read_kb_versions_api_v1_kb_versions_get: {
         parameters: {
             query?: {
@@ -2245,6 +3097,178 @@ export interface operations {
             };
         };
     };
+    post_trace_events_api_v1_cases__case_id__trace_events_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TraceBatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TraceBatchResult"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    read_case_dd_pack_api_v1_cases__case_id__dd_pack_get: {
+        parameters: {
+            query?: {
+                format?: components["schemas"]["DdPackFormat"];
+            };
+            header?: never;
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                    "text/html": unknown;
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    start_chase_api_v1_chase_operations_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartChase"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChaseView"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    read_chase_api_v1_chase_operations__operation_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                operation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChaseView"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    approve_api_v1_chase_operations__operation_id__liens_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                operation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApproveLiens"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChaseView"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     read_sessions_api_v1_guardian_sessions_get: {
         parameters: {
             query?: {
@@ -2271,6 +3295,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GuardianSessionPage"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    start_session_api_v1_guardian_sessions_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartSessionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GuardianSessionView"];
                 };
             };
             /** @description An RFC 9457 problem (docs/16 §1) */
@@ -2336,6 +3395,165 @@ export interface operations {
                 content: {
                     "application/json": unknown;
                     "text/html": unknown;
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    respond_to_probe_api_v1_guardian_sessions__session_id__probe_responses_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProbeResponseRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProbeResponseView"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    cancel_session_api_v1_guardian_sessions__session_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GuardianSessionView"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    read_personas_api_v1_phone_personas_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonaView"][];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    stream_api_v1_phone_stream_get: {
+        parameters: {
+            query: {
+                customer_id: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description An SSE stream */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": unknown;
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    read_summary_api_v1_metrics_summary_get: {
+        parameters: {
+            query?: {
+                hours?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MetricsSummary"];
                 };
             };
             /** @description An RFC 9457 problem (docs/16 §1) */

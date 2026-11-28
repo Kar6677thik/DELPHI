@@ -71,6 +71,10 @@ Where the table is silent (gap fills, #87):
 
 - Windows count the customer's earlier payments from any of their accounts, whatever their
   status, never the payment being scored. Local time is IST (UTC+05:30, no daylight saving).
+- A demo story payment's scripted `story_local_time` (doc 14 §10) replaces the payment's own
+  local hour in `hour_sin`, `hour_cos` and `hour_deviation`; nothing else changes. It is NULL
+  on every other payment, and the offline features (training, evaluation, replay) never read
+  it, so normal traffic is scored on `initiated_at` as before.
 - With no earlier payment, `amount_z_30d` and `hour_deviation` are 0 and
   `amount_ratio_max_lifetime` is 1. The z-score uses the population std of the 30-day window.
 - `hour_deviation` is the circular distance from the *circular* median local hour of the earlier
@@ -217,8 +221,44 @@ the artifact belong to `TRAIN_SENSING` (#88). Gaps the text above leaves open, f
   and cached in `account_scores(account_id, p_mule, computed_at, model_artifact_id)`.
 - An account with no score yet (e.g. just opened) is scored on demand. If scoring fails, the
   fallback is p_mule = 0.10, logged as a WARNING.
+- **Serving** (`delphi.sensing.mule_scores`, #91 part 2):
+  - `MULE_SWEEP` (every minute, doc 04 §5.4) rescores, as of the clock and with the ACTIVE
+    `MULE` artifact, the accounts whose score is missing or older than
+    `mule_sweep_interval_min` (KB, time-scaled), each from its online snapshot, and upserts one
+    row each. It is bounded as `LABEL_DELIVERY` is (#263): the accounts are chosen in SQL in
+    key order with a `LIMIT`; each batch (`DELPHI_MULE_SWEEP_BATCH`, 200) is one transaction
+    with `SET LOCAL statement_timeout`/`work_mem` and `pg_try_advisory_xact_lock(54)`, and a run
+    skips while another holds it; a run scores at most `DELPHI_MULE_SWEEP_MAX_PER_RUN` (2,000)
+    accounts and the next carries on. With no ACTIVE `MULE` artifact it scores nothing and
+    says so in its result.
+  - `MuleScores.p_mule(account, as_of)` (the probes' `MuleScorePort`, and the payer's score
+    for `with_payer_mule`) uses a cached score **only if it was computed before `as_of`**; a
+    score the bank did not have yet must not leak into an earlier decision. Otherwise it scores
+    the account as of `as_of` from its online snapshot, and caches that score if the account
+    had none (`computed_at = as_of`). No model, or any failure: the 0.10 fallback.
+  - `payee_p_mule` (§3) follows the same rule online (`history.payee_mule_score`) and offline
+    (`OfflineHistories`): the payee's cached score if computed before the payment, else 0.10.
+    So the parity test still holds, and history from before the first sweep keeps the fallback.
 - Training split: accounts are assigned to train, validation or test by the date of their
   first activity, using the same 2/3, 1/6, 1/6 proportions over the matured window as §4.
+- **Implementation** (`delphi.sensing.mule`, `delphi.sensing.trainers.load_mule_data` and
+  `train_mule_artifact`, #91). Where the bullets above are silent:
+  - **Label events.** An account is a mule if, by the training cutoff, the bank had an ACCOUNT
+    label with the MULE key (a registry listing; investigator dispositions from M5) or a
+    complaint naming it as a counterparty. Its label time is the first such event.
+  - **Each account's `as_of`.** A mule's features are taken 1 µs before its label time, so the
+    model never learns "a complaint (or a listing) means mule": `complaints_linked` is 0 for
+    every training mule (#142 review). A non-mule's features are taken at the end of the
+    matured window (cutoff − maturity), when the bank had seen no fraud label for it for at
+    least the maturity period.
+  - **"≥ 30 days of activity"** is read as: opened at least `negative_min_age_days` (30) before
+    its `as_of`. Both classes also need an executed payment before their `as_of`, and "first
+    activity" is the first such payment's execution time. The 21-day `test` history cannot hold
+    30 days of payments.
+  - The learning rate (0.1) is not in the bullets above; it lives in `sensing/config.yaml`. The
+    gate is enforced on `eval` only, as the bullet says; elsewhere it is reported.
+  - With no validation split holding both classes, the scores are left uncalibrated (the report
+    says `calibrated: false`).
 
 ## 7. Model artifacts and lifecycle
 
@@ -254,6 +294,22 @@ the artifact belong to `TRAIN_SENSING` (#88). Gaps the text above leaves open, f
   On `test`, seed plus training take about 5 s.
 - The model is loaded at api/worker start and on an `artifact.activated` event. Inference
   p95 ≤ 20 ms per payment (NFR-03).
+- **Implementation** (#92): `delphi.sensing.api.SensingInference` is the Guardian's
+  `PriorPort` (`prior_inputs(payment) → PriorInputs`: `p_payment`, `q`, the payer's `p_mule`,
+  the top 5 `pred_contrib` entries `{feature, value, contribution}` for the most probable
+  class) and serves `p_mule(account, as_of)` (`MuleScores`, §6) to its other consumers. It
+  builds the features with `build_payment_features` on the `delphi.sensing.history` snapshot
+  as of the payment's initiation (§2), as `delphi_app`. Loaded models are cached by artifact
+  id; each call reads the ACTIVE ids (one small query) and loads a blob only when an id
+  changed, so an activation by any process, which publishes `artifact.activated`, is served
+  from the next call without a restart; `refresh()` loads them at start. Without an ACTIVE
+  PRIOR or ANOMALY artifact it raises `NOT_INITIALISED` (503); without an ACTIVE MULE
+  artifact the payer's `p_mule` is left out (doc 06 §11). The payer's score is the sweep's
+  cached one when the bank had it before the payment (§6), else scored on demand. `q` is
+  computed by `FlatForest`, which walks the isolation forest's trees as flat arrays and gives
+  `score_samples`' value (a unit test checks it): `score_samples` on one row takes ~20 ms for
+  200 trees. The p95 is measured by the benchmark-marked `test_inference_p95` on `test`; the
+  largest parts are the snapshot's ~8 PostgreSQL round trips and `pred_contrib` (~8 ms).
 - **Retraining with a promoted typology:** if the ACTIVE KB has typologies that are not model
   classes and have ≥ 50 labels, the retrain adds them as classes. The KB does not change: class
   membership is read from the active artifact (doc 06 §11).

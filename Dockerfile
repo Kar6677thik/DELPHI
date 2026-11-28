@@ -3,7 +3,7 @@
 # frontend at the same relative paths as in a checkout. Base images are pinned by digest.
 
 # ---------------------------------------------------------------------------- frontend build
-FROM node:22-alpine@sha256:0e1754758c2df4cfa3e68d59e2e1b7374bb7fd9ea6328eaaacf15cc934af8202 AS frontend
+FROM node:22-alpine@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a AS frontend
 WORKDIR /src/frontend
 RUN corepack enable
 COPY frontend/package.json frontend/pnpm-lock.yaml ./
@@ -17,8 +17,10 @@ RUN pnpm build
 FROM python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b AS runtime
 COPY --from=ghcr.io/astral-sh/uv:0.13.6@sha256:af22a52f5eafef3d78e551599d405c02df61919d18028f0cea8eda93bc9986d0 /uv /usr/local/bin/uv
 
-# libgomp1: LightGBM's OpenMP runtime (sensing, M3).
+# libgomp1: LightGBM's OpenMP runtime (sensing, M3). The upgrade takes Debian's security fixes
+# that the pinned base image predates (the image scan in ci.yml, #127).
 RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends libgomp1 \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 delphi \
@@ -28,6 +30,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
+    UV_NO_CACHE=1 \
     UV_PYTHON_DOWNLOADS=never \
     PATH=/app/backend/.venv/bin:$PATH
 

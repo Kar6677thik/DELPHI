@@ -26,8 +26,91 @@ and the numbers for the pitch.
    `docs/reports/evaluation-<date>.md` (committed by the owner).
 
 Runtime target: ≤ 30 minutes for `eval` on the home server (4 cores), ≤ 2 minutes for `test`.
-Engine work is parallelised across customers with `multiprocessing` (4 workers). Results must
-not depend on the number of workers (per-customer RNG streams).
+Engine work is parallelised with `multiprocessing` (4 workers). Results must not depend on the
+number of workers (per-customer RNG streams). The harness splits the work **by policy**
+(`delphi.evaluation.harness.run_policies`, #123), not by customer: within one policy, customers
+share the bank (payees receive from many customers, balances move), so splitting a policy's
+stream would change what it sees. Five policies on 4 workers. The pool's initializer hands each
+worker the dataset and the trained sensing: inherited under `fork` (Linux, macOS), pickled under
+`spawn` where `fork` does not exist (Windows). Both give the same outcomes. CPython's reference
+counts still copy the pages a forked worker reads.
+
+**Measured (#261, 4 cores, 15 GiB).** RSS and PSS are summed over the parent and its workers,
+sampled every 0.2 s during the replay.
+
+| Profile, workers | Generate | Train sensing, score the stream | Replay | Peak RSS (PSS) in the replay |
+|---|---|---|---|---|
+| `test`, 1 | 1 s | 2 s | 1 s | 0.25 GiB (0.24) |
+| `test`, 4 | 1 s | 2 s | < 1 s | 1.04 GiB (0.36) |
+| `eval`, 1 | 537 s | 652 s | 1,739 s | 6.13 GiB (6.12) |
+| `eval`, 4 | | | not run | estimated about 9 GiB PSS |
+
+- **Training peaks higher than the replay.** An earlier `eval` run peaked at 9.17 GiB during
+  training (the in-memory bank frames, built from the dataset's records); the parent is back to
+  6.13 GiB when the replay starts.
+- **4 workers on `eval`** were not run here: an earlier attempt was killed (exit 137). On `test`,
+  4 forked workers cost 1.5× the PSS of one (CPython's reference counts copy the pages a worker
+  reads), so `eval` would need about 9 GiB in the replay. Five policies on 4 workers take two
+  rounds, about 2/5 of the 1-worker replay (12 minutes), if the policies cost about the same.
+- **The budget is not met yet:** `eval` takes about 49 minutes on 1 worker (about 32 estimated on
+  4) against ≤ 30, and peaks at 9.17 GiB against 4.5 GiB. Building the frames column-wise and
+  freeing them before the replay, and having the workers touch less of the history, is the
+  follow-up.
+- **Where evaluation runs.** The cluster's worker pod is limited to 1536Mi
+  (`deploy/k8s/base/worker.yaml`), so evaluation never runs in it: it runs off-cluster or as its
+  own Job sized for it (about 10 GiB for `eval` today). `DELPHI_EVAL_WORKERS` (default 4) sets the
+  worker count; 1 trades time for memory.
+
+Before batching, scoring the stream row by row took about 106 minutes. The CLI and job entry
+point that writes the report comes with #124.
+
+**Implementation (#123).**
+- **Stream** (`delphi.evaluation.stream`): the window's sessions in initiation order (ties by
+  payment id), each with its session telemetry. Every customer draw comes from
+  `keyed_rng(seed, "eval", payment_id, what…)`, including "would the OTP pass"
+  (`otp_would_pass`, the same draw for B2, DELPHI and the coercion-catch metric).
+- **Replay** (`delphi.evaluation.replay`): a discrete-event loop over the stream's payments and
+  the window's scheduled transfers (salaries, mule forwarding), in time order. Its `VirtualClock`
+  keeps the replay's time; a policy reads the time from the view's `initiated_at`.
+  - Mule forwarding covers only the transfers already scheduled when the history ends. A payment
+    a policy releases into a mule account in the window starts no new forwarding.
+  - The registry listings are fixed when the dataset is generated, whatever each policy decides:
+    a hold does not delay a listing, and a release does not bring one forward.
+  - A transfer at the same instant as a payment is booked first.
+  - Each policy has its own `BankState`, starting from the history's end: balances, pairs already
+    paid, saved payees, devices first seen and registry listings.
+  - A policy is shown a `PolicyView` of bank-visible fields only, and returns its decision.
+  - A release executes when the payer can fund it. An unfunded release moves no money but still
+    counts as not stopped.
+  - A hold is HELD from the decision time until the queue (§3, #124) settles it.
+- **Output:** one `PaymentOutcome` per stream payment (`delphi.evaluation.outcomes`).
+- **Sensing** (`delphi.evaluation.sensing`, step 2): the prior and anomaly models are trained
+  in memory through `TRAIN_SENSING`'s own `prior_data` core.
+  - Labels: the history's labels due by its end, mapped as delivered (doc 14 §7).
+  - Frames: the dataset's rows (`sensing.offline.frames_from_records`).
+  - Every stream payment is scored once, as of its initiation; the scores are the same for every
+    policy. There is no mule scorer, so MULE is KB-only (doc 06 §11).
+- **Asking the customer:** a policy asks through the replay's `ask(probe)`. The outcome comes from
+  the payment's own stream, `customer_rng(seed, payment, probe)`, so an OTP asked by B2 is the
+  same draw as `otp_would_pass`.
+- **B2:** `r = 1 − p0(GENUINE)` from the Guardian's `session_prior`, with `score_policy`'s bands.
+  The OTP band records one OTP_STEP_UP probe (friction = the KB source's cost).
+- **DELPHI** (`delphi.evaluation.delphi_policy`) runs the Guardian's own `run_session` (doc 08
+  §2). The prior comes from the harness's sensing outputs.
+  - **Passive probes:** classified by the live classifiers from the view's bank-visible facts:
+    telemetry, device, registry, the payee's earlier released or executed payments, and the payee's
+    phone FRI category. The mule score is doc 13 §6's fallback (`features.mule_score_fallback`).
+    As in the live service, a probe the planner finds statically ineligible (CALL_STATUS without
+    its consent) does not run and leaves no record, and a payment with no known device gets no
+    DEVICE_POSTURE update (the live adapter fails).
+  - **Active probes:** answered through `ask`.
+  - **Guardrails:** channel, call-status consent, servable questions (customer's language or
+    English), and the fairness cap counted per run, over the service's 30-day window. A
+    `Delphi` instance replays one run.
+  - **Variants:** `DELPHI-myopic` plans with lookahead depth 1; `DELPHI-no-active` stops after
+    the passive probes.
+  - **Probe records:** passive friction is 0, active friction is the source's cost, and the yield
+    is the KL in bits.
 
 ## 2. Policies
 
@@ -57,6 +140,32 @@ monitor (doc 08 §6) and the harness use alike.
 - `CUSTOMER_OUTREACH_CALL` answers come from the response model. They yield `OUTREACH_CONFIRMED`
   labels in every policy that runs it.
 
+How the queue is run (`delphi.evaluation.queue`, #124). These settle gaps above; the numbers are
+in `evaluation/config.yaml`:
+
+- **What enters the queue:** HOLD_FOR_REVIEW and PROTECTIVE_HOLD, at the decision time. A
+  DECLINE is final.
+- **Working time:** a case runs only on shift. Work left at 17:00 continues at 09:00 the next day.
+- **DELPHI's order:**
+  - first `sla_due_at`: the hold time plus `case_sla` (protective 30 min, standard 240 min);
+  - then the larger expected loss: the case's Bayes risk at the hold under `CASE_PAYMENT_HOLD`;
+  - then FIFO.
+  In the COERCION protocol the outreach call comes first, as the console pins it (doc 09 §2).
+- **Where cases start, and where evidence comes from:**
+  - every case opens with the posterior the harness hands it: the session's final posterior for
+    DELPHI, the sensing prior for B1/B2;
+  - evidence outcomes come from the harness's bank and response models, so they are the same
+    under every policy (common random numbers).
+- **The investigator's decision:** DELPHI's investigator overrules the recommendation from the
+  payment's own stream, `keyed_rng(seed, "eval", payment_id, "investigator")`.
+- **Outcomes:**
+  - a RELEASE disposition executes the payment;
+  - CONFIRM_FRAUD declines it;
+  - a case not finished when the run ends stays HELD and unresolved.
+- **Labels:** every disposition gives an `INVESTIGATOR_DISPOSITION` label, and a coercion or
+  denial answer gives an `OUTREACH_CONFIRMED` label. Both are known when the case is disposed,
+  in every policy: the baselines' coverage is limited by their backlog.
+
 ## 4. Metrics (definitions are normative)
 
 Let F be the fraud payments in the eval stream (sim truth; the `UPI_COLLECT_REFUND` scenario,
@@ -80,6 +189,22 @@ ground truth `APP_COLLECT_REFUND`, counts as fraud), G the genuine ones. "Stoppe
 | Golden-hour recovery ratio, tracing delay | Chase run on every *executed* fraud with a complaint, with automatic approval of recommended liens after 2 sim-minutes (DELPHI) vs a manual baseline: liens on first-hop accounts only, for the full reported amount, after 30 sim-minutes |
 | Wrongful liens | liens on accounts with `is_mule = false` |
 | Typology attribution accuracy | argmax hypothesis = true hypothesis, among stopped F (KB v1 hypotheses only) |
+
+How the definitions are computed (`delphi.evaluation.metrics`, #124). These settle gaps the table
+leaves open; they don't change any definition:
+
+- **F and G.** F is every payment whose scenario enacts a hypothesis other than GENUINE (doc 14
+  §4). G is the rest. "Any hold/decline" means any decision but RELEASE.
+- **Held payments** (resolution time) are the ones that entered the investigation queue (§3).
+  A hold the run ends on is still unresolved, so it counts as +∞: the conservative reading.
+  Medians and percentiles use the inverted CDF (no interpolation), which stays defined with +∞.
+- **An empty denominator** makes the metric undefined (shown as "n/a"), never 0.
+- **DD completeness** counts only the decisions that build a DD pack (DELPHI's).
+- **CIs:** each replicate draws customers with replacement, and a customer drawn k times weighs
+  each of their payments k. The point estimate uses weight 1. The 95% interval is the
+  inverted-CDF 2.5th and 97.5th percentile of the replicates. Every policy uses the same
+  bootstrap seed, so replicate b resamples the same customers under each policy. The replicate
+  count, level and seed are in `evaluation/config.yaml`.
 
 ## 5. Pre-registered targets (DELPHI vs best baseline)
 

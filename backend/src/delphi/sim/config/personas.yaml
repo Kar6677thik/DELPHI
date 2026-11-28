@@ -78,6 +78,8 @@ stories:
     amount_inr: 480000
     channel: IMPS               # gap
     local_time: "23:40"
+    scenario: APP_DIGITAL_ARREST   # the story payment's truth (docs/14 §10)
+    coached: true                  # "coached purpose answer"
     telemetry:                  # on a call with an unknown number, typing normally
       typing_cadence_z: 0.3     # gap
       paste_on_account_field: false
@@ -96,6 +98,7 @@ stories:
     amount_inr: 180000
     channel: UPI_PUSH           # gap
     new_device_os: ANDROID      # "new phone today" (gap: OS)
+    scenario: GENUINE_UNUSUAL   # genuine, on a new phone (docs/14 §10)
     telemetry:                  # not on a call, typing normally (ARJUN_PASSIVE)
       typing_cadence_z: 0.2     # gap
       paste_on_account_field: false

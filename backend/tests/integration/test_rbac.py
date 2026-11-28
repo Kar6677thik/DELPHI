@@ -29,6 +29,7 @@ ACCESS: dict[tuple[str, str], str | Permission] = {
     ("GET", "/api/v1/health"): PUBLIC,
     ("GET", "/api/v1/ready"): PUBLIC,
     ("GET", "/api/v1/status"): Permission.VIEW,
+    ("GET", "/api/v1/metrics/summary"): Permission.VIEW,
     ("POST", "/api/v1/auth/login"): PUBLIC,
     ("POST", "/api/v1/auth/logout"): SIGNED_IN,
     ("GET", "/api/v1/auth/me"): SIGNED_IN,
@@ -41,6 +42,8 @@ ACCESS: dict[tuple[str, str], str | Permission] = {
     ("PATCH", "/api/v1/admin/users/{user_id}"): Permission.ADMIN,
     ("GET", "/api/v1/admin/audit/verify"): Permission.ADMIN,
     ("POST", "/api/v1/admin/datasets"): Permission.ADMIN,
+    ("POST", "/api/v1/admin/demo/reset"): Permission.ADMIN,
+    ("POST", "/api/v1/admin/demo/scenarios/{story}/run"): Permission.DEMO_DRIVE,
     ("POST", "/api/v1/admin/sensing/train"): Permission.ADMIN,
     ("GET", "/api/v1/kb/versions"): Permission.VIEW,
     ("GET", "/api/v1/kb/versions/{version_id}"): Permission.VIEW,
@@ -48,12 +51,22 @@ ACCESS: dict[tuple[str, str], str | Permission] = {
     ("GET", "/api/v1/kb/versions/{version_id}/export"): Permission.VIEW,
     ("GET", "/api/v1/cases"): Permission.VIEW,
     ("GET", "/api/v1/cases/{case_id}"): Permission.VIEW,
+    ("GET", "/api/v1/cases/{case_id}/dd-pack"): Permission.VIEW,
     ("POST", "/api/v1/cases/{case_id}/disposition"): Permission.CASE_WRITE,
     ("POST", "/api/v1/cases/{case_id}/evidence-requests"): Permission.CASE_WRITE,
     ("POST", "/api/v1/cases/{case_id}/police-alert/{action}"): Permission.CASE_WRITE,
+    ("POST", "/api/v1/cases/{case_id}/trace-events"): Permission.VIEW,
     ("GET", "/api/v1/guardian/sessions"): Permission.VIEW,
     ("GET", "/api/v1/guardian/sessions/{session_id}"): Permission.VIEW,
     ("GET", "/api/v1/guardian/sessions/{session_id}/dd-pack"): Permission.VIEW,
+    ("POST", "/api/v1/chase/operations"): Permission.CHASE_WRITE,
+    ("GET", "/api/v1/chase/operations/{operation_id}"): Permission.VIEW,
+    ("POST", "/api/v1/chase/operations/{operation_id}/liens"): Permission.CHASE_WRITE,
+    ("POST", "/api/v1/guardian/sessions"): Permission.DEMO_DRIVE,
+    ("POST", "/api/v1/guardian/sessions/{session_id}/probe-responses"): Permission.DEMO_DRIVE,
+    ("POST", "/api/v1/guardian/sessions/{session_id}/cancel"): Permission.DEMO_DRIVE,
+    ("GET", "/api/v1/phone/personas"): Permission.DEMO_DRIVE,
+    ("GET", "/api/v1/phone/stream"): Permission.DEMO_DRIVE,
 }
 PASSWORD = "correct horse battery"
 BROWSER = {"X-Delphi-Csrf": "1", "Origin": "https://testserver"}
@@ -67,7 +80,15 @@ def clients(create_database: Callable[[], str]) -> Iterator[dict[Role | None, Te
     engine = engine_as(url, "delphi_app")
     clock = FixedClock(datetime(2026, 11, 7, tzinfo=UTC))
     platform = Platform(
-        settings=Settings(database_url=url, migrations_dir=MIGRATIONS_DIR),
+        # Every request below comes from one address on a fixed clock, so no bucket refills:
+        # lift the rate limits, which test_rate_limit.py covers (#127).
+        settings=Settings(
+            database_url=url,
+            migrations_dir=MIGRATIONS_DIR,
+            rate_limit_burst=100_000,
+            rate_limit_address_burst=100_000,
+            login_rate_burst=10_000,
+        ),
         engine=engine,
         sessions=make_session_factory(engine),
         clock=clock,
@@ -122,8 +143,10 @@ def test_access(
         .replace("{user_id}", str(uuid4()))
         .replace("{version_id}", "999")
         .replace("{case_id}", str(uuid4()))
+        .replace("{operation_id}", str(uuid4()))
         .replace("{action}", "send")
         .replace("{session_id}", str(uuid4()))
+        .replace("{story}", "S1")
     )
     if (method, path) in {("POST", "/api/v1/auth/logout")}:
         # Signing out would end this module's shared session; check access with a probe

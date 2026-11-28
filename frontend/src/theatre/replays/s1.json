@@ -1,0 +1,334 @@
+{
+  "story": "S-1",
+  "title": "Kamala, 68, on a call with “the CBI” at 23:40",
+  "persona": {
+    "name": "Kamala Devi",
+    "age": 68,
+    "language": "te",
+    "vulnerable": true
+  },
+  "payment": {
+    "amount_paise": 48000000,
+    "channel": "UPI_PUSH",
+    "payee": "Vikram S. (new payee)",
+    "payee_note": "Added 6 min ago",
+    "time": "23:40"
+  },
+  "hypotheses": [
+    {
+      "key": "GENUINE",
+      "name": "Genuine",
+      "color": "#15803D"
+    },
+    {
+      "key": "ATO",
+      "name": "Account takeover",
+      "color": "#7C3AED"
+    },
+    {
+      "key": "APP_DIGITAL_ARREST",
+      "name": "Coerced victim — digital arrest",
+      "color": "#C2410C"
+    },
+    {
+      "key": "APP_INVESTMENT",
+      "name": "Coerced victim — investment scam",
+      "color": "#B45309"
+    },
+    {
+      "key": "MULE",
+      "name": "Mule account",
+      "color": "#1D4ED8"
+    },
+    {
+      "key": "UNEXPLAINED",
+      "name": "Unexplained",
+      "color": "#8A8C92"
+    }
+  ],
+  "source": "tests/golden/test_story_behaviour.py (ENG-S1 fixtures)",
+  "steps": [
+    {
+      "kind": "prior",
+      "posterior": {
+        "GENUINE": 0.54,
+        "ATO": 0.08,
+        "APP_DIGITAL_ARREST": 0.3,
+        "APP_INVESTMENT": 0.05,
+        "MULE": 0.01,
+        "UNEXPLAINED": 0.02
+      },
+      "entropy_bits": 1.6880533551795278
+    },
+    {
+      "kind": "passive",
+      "probe_key": "BENEFICIARY_INTEL",
+      "outcome": "CLEAN_UNKNOWN",
+      "posterior": {
+        "GENUINE": 0.55479,
+        "ATO": 0.09785,
+        "APP_DIGITAL_ARREST": 0.27886,
+        "APP_INVESTMENT": 0.04892,
+        "MULE": 0.00734,
+        "UNEXPLAINED": 0.01223
+      },
+      "entropy_bits": 1.656165132769764,
+      "info_bits": 0.031888222409763856
+    },
+    {
+      "kind": "passive",
+      "probe_key": "COUNTERPARTY_PHONE_RISK",
+      "outcome": "LOW_OR_UNKNOWN",
+      "posterior": {
+        "GENUINE": 0.71528,
+        "ATO": 0.09295,
+        "APP_DIGITAL_ARREST": 0.15138,
+        "APP_INVESTMENT": 0.02988,
+        "MULE": 0.00498,
+        "UNEXPLAINED": 0.00553
+      },
+      "entropy_bits": 1.3075937849240258,
+      "info_bits": 0.3485713478457382
+    },
+    {
+      "kind": "passive",
+      "probe_key": "DEVICE_POSTURE",
+      "outcome": "KNOWN_DEVICE",
+      "posterior": {
+        "GENUINE": 0.82828,
+        "ATO": 0.0117,
+        "APP_DIGITAL_ARREST": 0.12385,
+        "APP_INVESTMENT": 0.03009,
+        "MULE": 0.00376,
+        "UNEXPLAINED": 0.00232
+      },
+      "entropy_bits": 0.8761003908536906,
+      "info_bits": 0.43149339407033516
+    },
+    {
+      "kind": "passive",
+      "probe_key": "SESSION_BEHAVIOUR",
+      "outcome": "NORMAL",
+      "posterior": {
+        "GENUINE": 0.9125,
+        "ATO": 0.00358,
+        "APP_DIGITAL_ARREST": 0.06064,
+        "APP_INVESTMENT": 0.02026,
+        "MULE": 0.00207,
+        "UNEXPLAINED": 0.00095
+      },
+      "entropy_bits": 0.5367701894127844,
+      "info_bits": 0.3393302014409062
+    },
+    {
+      "kind": "passive",
+      "probe_key": "CALL_STATUS",
+      "outcome": "ON_CALL_UNKNOWN_NUMBER",
+      "posterior": {
+        "GENUINE": 0.54217,
+        "ATO": 0.00266,
+        "APP_DIGITAL_ARREST": 0.38283,
+        "APP_INVESTMENT": 0.06769,
+        "MULE": 0.00231,
+        "UNEXPLAINED": 0.00234
+      },
+      "entropy_bits": 1.3355724030663718,
+      "info_bits": -0.7988022136535874
+    },
+    {
+      "kind": "active",
+      "probe_key": "PURPOSE_QUESTION",
+      "outcome": "PLAUSIBLE_NORMAL_TIMING",
+      "text": "What is this payment for?",
+      "options": [
+        {
+          "key": "FAMILY_OR_FRIEND",
+          "text": "Family or a friend"
+        },
+        {
+          "key": "BILLS_OR_SHOPPING",
+          "text": "Bills or shopping"
+        },
+        {
+          "key": "MEDICAL",
+          "text": "Medical / hospital"
+        },
+        {
+          "key": "EDUCATION",
+          "text": "Education"
+        },
+        {
+          "key": "PROPERTY_OR_LOAN",
+          "text": "Property or loan"
+        },
+        {
+          "key": "INVESTMENT",
+          "text": "Investment or trading"
+        },
+        {
+          "key": "GOVT_POLICE_OR_COURT_FEE",
+          "text": "Government, police or court fee"
+        },
+        {
+          "key": "SAFE_ACCOUNT_TRANSFER",
+          "text": "Moving money to a 'safe' account"
+        },
+        {
+          "key": "CUSTOMS_OR_PARCEL",
+          "text": "Customs or parcel charges"
+        },
+        {
+          "key": "RECEIVING_REFUND_OR_PRIZE",
+          "text": "I am receiving a refund or prize"
+        },
+        {
+          "key": "OTHER",
+          "text": "Something else"
+        }
+      ],
+      "tap": "FAMILY_OR_FRIEND",
+      "candidates": [
+        {
+          "source_key": "PURPOSE_QUESTION",
+          "net_value_paise": 163059,
+          "voi_paise": 0,
+          "cost_paise": 2600,
+          "settle_pct": 18.539868032039116
+        },
+        {
+          "source_key": "SPELL_BREAKER_DIGITAL_ARREST",
+          "net_value_paise": 158352,
+          "voi_paise": 0,
+          "cost_paise": 15750,
+          "settle_pct": 28.216790613065516
+        },
+        {
+          "source_key": "COOLING_OFF",
+          "net_value_paise": 144922,
+          "voi_paise": 0,
+          "cost_paise": 45000,
+          "settle_pct": 22.507982799499292
+        },
+        {
+          "source_key": "SPELL_BREAKER_INVESTMENT",
+          "net_value_paise": 118329,
+          "voi_paise": 0,
+          "cost_paise": 15750,
+          "settle_pct": 11.059048912664096
+        },
+        {
+          "source_key": "BIOMETRIC_STEP_UP",
+          "net_value_paise": 63199,
+          "voi_paise": 0,
+          "cost_paise": 2400,
+          "settle_pct": 0.9854925892638834
+        }
+      ],
+      "posterior": {
+        "GENUINE": 0.75201,
+        "ATO": 0.00168,
+        "APP_DIGITAL_ARREST": 0.21119,
+        "APP_INVESTMENT": 0.03201,
+        "MULE": 0.00218,
+        "UNEXPLAINED": 0.00092
+      },
+      "entropy_bits": 0.9859941155896319,
+      "info_bits": 0.3495782874767399,
+      "risk_by_decision": {
+        "RELEASE": 16836068,
+        "HOLD_FOR_REVIEW": 2523018,
+        "PROTECTIVE_HOLD": 1809490,
+        "DECLINE": 5348297
+      }
+    },
+    {
+      "kind": "active",
+      "probe_key": "SPELL_BREAKER_DIGITAL_ARREST",
+      "outcome": "HESITATION_OR_APP_SWITCH",
+      "text": "Has anyone claiming to be from the police, CBI, customs, a court or the RBI told you that you are under investigation, asked you to stay on a call or video call, or told you to keep this payment secret?",
+      "options": [
+        {
+          "key": "YES",
+          "text": "Yes"
+        },
+        {
+          "key": "NO",
+          "text": "No"
+        }
+      ],
+      "tap": "NO",
+      "candidates": [
+        {
+          "source_key": "SPELL_BREAKER_DIGITAL_ARREST",
+          "net_value_paise": 260123,
+          "voi_paise": 122795,
+          "cost_paise": 15750,
+          "settle_pct": 30.552077918271838
+        },
+        {
+          "source_key": "COOLING_OFF",
+          "net_value_paise": 255162,
+          "voi_paise": 117689,
+          "cost_paise": 45000,
+          "settle_pct": 24.669999034785835
+        },
+        {
+          "source_key": "SPELL_BREAKER_INVESTMENT",
+          "net_value_paise": 198908,
+          "voi_paise": 0,
+          "cost_paise": 15750,
+          "settle_pct": 10.266882978164748
+        },
+        {
+          "source_key": "BIOMETRIC_STEP_UP",
+          "net_value_paise": 104645,
+          "voi_paise": 0,
+          "cost_paise": 2400,
+          "settle_pct": 0.7850363110565372
+        },
+        {
+          "source_key": "OTP_STEP_UP",
+          "net_value_paise": 104498,
+          "voi_paise": 0,
+          "cost_paise": 3250,
+          "settle_pct": 0.7173453055372788
+        }
+      ],
+      "posterior": {
+        "GENUINE": 0.21698,
+        "ATO": 0.00193,
+        "APP_DIGITAL_ARREST": 0.73124,
+        "APP_INVESTMENT": 0.04618,
+        "MULE": 0.00189,
+        "UNEXPLAINED": 0.00178
+      },
+      "entropy_bits": 1.0641750977913147,
+      "info_bits": -0.07818098220168279,
+      "risk_by_decision": {
+        "RELEASE": 53422860,
+        "HOLD_FOR_REVIEW": 4772606,
+        "PROTECTIVE_HOLD": 896451,
+        "DECLINE": 11604662
+      }
+    },
+    {
+      "kind": "decision",
+      "decision": "PROTECTIVE_HOLD",
+      "risk_by_decision": {
+        "RELEASE": 53422860,
+        "HOLD_FOR_REVIEW": 4772606,
+        "PROTECTIVE_HOLD": 896451,
+        "DECLINE": 11604662
+      },
+      "posterior": {
+        "GENUINE": 0.21698,
+        "ATO": 0.00193,
+        "APP_DIGITAL_ARREST": 0.73124,
+        "APP_INVESTMENT": 0.04618,
+        "MULE": 0.00189,
+        "UNEXPLAINED": 0.00178
+      },
+      "entropy_bits": 1.0641750977913147
+    }
+  ]
+}

@@ -60,7 +60,36 @@ runner registers (`expect`s) a run before asking, so a fast answer is never lost
 nobody expects are dropped. The
 synchronous service steps run in threads, so the event loop never blocks on the database. An
 unexpected error in a task ends the session through the fail-safe. A cancelled task (shutdown)
-just stops, and its session is resumed next time.
+just stops, and its session is resumed next time. The runner's optional `on_finished` hears about
+every session that ends in it (decided, cancelled, fail-safe, or the fast path at `submit`); a
+failure there is logged and never changes the session.
+
+**The api's runner slot** (`delphi.guardian.phone.LiveGuardian`, #98) is
+`app.state.guardian_runner`: the service, an API `SessionRunner`, its `AnswerBoard`, and the
+mock phone's channel (`PhoneChannel` over an in-process `PhoneHub`). `ask` sends
+`probe.requested` (and `otp.sms`) to the payer's phone stream and `on_finished` sends
+`session.decided` (doc 16 §3). The phone's probe-responses handler calls `respond`, then
+signals the board; a wrong OTP goes to the phone as `probe.attempt_result`. A cancel signals the
+waiting run, so the task stops at once. The phone answers and cancels only sessions with
+`runner` API. While the slot is empty the write endpoints answer 503 `NOT_INITIALISED`.
+`delphi api` fills it at start-up (`cli.live_guardian_for`, #95): the prior is the sensing
+inference (`SensingInference`, #92), the passive probes use the simulated adapters over the bank
+(§5), with a `statement_timeout` of the KB's `passive_adapter_timeout_ms` plus
+`passive_statement_margin_ms`, and the passive pool has `passive_probe_threads` threads. The
+app's lifespan runs `resume_all` before it serves the first request (FR-GDN-14), and its
+shutdown stops the slot's tasks. Time runs REAL until `DELPHI_TIME_MODE` (doc 07) is a setting.
+**The worker's runner slot** (`delphi.guardian.autoplay.WorkerGuardian`, #95, #101) drives the
+AUTOPLAY sessions that simulated customers answer. It exists only in a worker with the simulator's
+`delphi_sim` pool (`DELPHI_SIM_DATABASE_URL`), because the simulated customer reads ground truth.
+`delphi worker` builds it in `cli.worker_registry` from the same service as the api's (the sensing
+prior and the simulated passive adapters), with a WORKER `SessionRunner` whose channel is
+`SimCustomerChannel` over `delphi.sim.customer.LiveCustomer`: a `SimulatedCustomer` that takes its
+seed and history start from the dataset in the bank when it answers, since the worker starts
+before the first seed. The runner has an event loop on its own thread; jobs (the worker's slots
+are threads) submit to it with `submit`, which returns the payment's existing session if it has
+one, so a retried job never starts a second. The worker runs `resume_all` before its job slots
+start (FR-GDN-14) and stops the tasks when asked to stop. The first user is `DEMO_STORY` (doc 14
+§10); the background autoplay traffic (`SIM_TICK`, doc 14 §8) follows.
 
 **Implementation** (`delphi.guardian.service.GuardianService`, #94). One method per step, each in
 its own transaction:
@@ -97,7 +126,7 @@ its own transaction:
   caller error (409), not an engine error.
 - **Active probes** (step 7). `issue` turns a PENDING run into AWAITING_CUSTOMER and returns
   what the channel shows: the question variant (doc 07 §9, rotated over the payer's earlier
-  sessions), or a fresh OTP code (the run stores `sha256(probe_run_id:code)` and never the code;
+  sessions), or a fresh OTP code (the run stores `HMAC-SHA256(DELPHI_SECRET_KEY, probe_run_id:code)` and never the code;
   a wrong attempt is masked too). `respond` checks the client signals (§4), classifies (§5),
   updates and returns to PLANNING; a COOLING_OFF cancel ends the session. The run stores its
   `deadline_at` (issue time + `timeout_s`): an answer after it is refused (409), and `timeout`
@@ -113,6 +142,15 @@ its own transaction:
   HOLD_FOR_REVIEW / ENGINE_ERROR, with the payment and the case left to an operator and an
   audit entry `guardian.session.fail_safe_failed`.
   Planning a session that isn't PLANNING is a caller error (409), not an engine error.
+
+**One procedure for the live Guardian and the evaluation harness (#123).** The engine steps above
+are pure functions in `delphi.guardian.procedure`, exported by `guardian.api`: `session_prior`
+and `takes_fast_path` (steps 2–3), `observe` (every update), `plan_step` (step 6, with the
+session's per-step exploration stream), `stop_reason` and `final_decision` (steps 8–9). The live
+service calls each one at its persistence point. `run_session` composes the same functions into a
+whole session for a caller that has every answer to hand (the harness, doc 22). It does no I/O and
+reads no clock, so the session's maximum duration is the caller's to enforce. A test replays a
+live session through `run_session` and gets the same probes, decision and posterior.
 
 ## 3. Fast path
 
@@ -155,7 +193,9 @@ Response: `POST /api/v1/guardian/sessions/{id}/probe-responses`
 **OTP protocol.**
 
 1. When `OTP_STEP_UP` is issued, the server generates a 6-digit code (CSPRNG) and stores its
-   hash on the probe run.
+   HMAC-SHA256 on the probe run, keyed with the api's server secret `DELPHI_SECRET_KEY`. A
+   6-digit code has only 10⁶ values, so a plain hash would hand anyone who can read
+   `probe_runs` the live code (#171).
 2. It "sends" the code as an `otp.sms` SSE event to the phone, which shows it as a mock SMS
    notification. Simulated customers receive it internally.
 3. Each attempt is one POST with `{ "otp": "123456" }`. A wrong code returns 200 with

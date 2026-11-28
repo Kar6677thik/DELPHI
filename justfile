@@ -30,6 +30,27 @@ test:
     uv run coverage report --include="src/delphi/engine/*" --fail-under=95
     uv run coverage report --fail-under=80
 
+# NFR-02 smoke load (docs/21 §5): 20 Guardian sessions/s for 2 minutes against a running stack,
+# never in CI. Needs DELPHI_LOAD_URL, DELPHI_LOAD_USERNAME and DELPHI_LOAD_PASSWORD (an ADMIN).
+# It writes about 2,400 payments: use a disposable stack, or demo-reset afterwards
+[working-directory: 'backend']
+smoke-load:
+    uv run pytest -m load -s -p no:cacheprovider tests/load
+
+# The M9 load test (docs/21 §5, #130): 20 Guardian sessions/s and 5 investigators for 10
+# minutes, with Locust, against a running stack. Same variables as smoke-load, plus
+# DELPHI_LOAD_METRICS_URL (the api's /metrics) for the memory check. Writes about 12,000
+# payments: use a disposable stack, or demo-reset afterwards.
+[working-directory: 'backend']
+load:
+    uv run locust -f tests/load/locustfile.py --headless -u 25 -r 25 -t 10m --host "$DELPHI_LOAD_URL" --only-summary
+
+# The LLM path against the real model (docs/15 §8): costs money, never in CI. Needs
+# DELPHI_LLM_PROVIDER=anthropic and ANTHROPIC_API_KEY; writes docs/reports/llm-eval-<date>.md
+[working-directory: 'backend']
+llm-eval:
+    uv run delphi llm-eval
+
 # Install frontend dependencies from the lockfile
 [working-directory: 'frontend']
 fe-sync:

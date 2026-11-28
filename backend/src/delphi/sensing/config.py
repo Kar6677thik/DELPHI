@@ -101,11 +101,35 @@ class PriorConfig(BaseModel):
         return self
 
 
+class MuleGate(BaseModel):
+    """docs/13 §6: the mule scorer's gate, AUC on the test split, enforced on these profiles."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    min_auc: float = Field(ge=0, le=1)
+    enforced_profiles: tuple[str, ...]
+
+
+class MuleConfig(BaseModel):
+    """The LightGBM binary mule scorer (docs/13 §6)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    num_leaves: int = Field(gt=1)
+    learning_rate: float = Field(gt=0)
+    n_estimators: int = Field(gt=0)
+    seed: int
+    negative_min_age_days: float = Field(gt=0)
+    label_hypothesis: str
+    gate: MuleGate
+
+
 class SensingConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     anomaly: AnomalyConfig
     prior: PriorConfig
+    mule: MuleConfig
     features: FeatureConfig
     accounts: AccountFeatureConfig
 

@@ -18,6 +18,7 @@ payer's mule score (``with_payer_mule``, docs/06 §11). The LLM is never consult
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Mapping
 from concurrent.futures import Executor
 from dataclasses import asdict, dataclass, field
@@ -30,18 +31,14 @@ from sqlalchemy import Connection, distinct, func, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from delphi.engine.belief import kl_bits
-from delphi.engine.belief import update as bayes_update
 from delphi.engine.compile import compile_profile
 from delphi.engine.exploration import session_seed
 from delphi.engine.planner import (
     SessionFacts,
-    initial_budgets,
-    plan_next,
     static_ineligibility,
 )
-from delphi.engine.prior import build_prior, is_fast_path, open_mass
-from delphi.engine.risk import decide, loss_matrix, risk_by_decision, voi_myopic
-from delphi.engine.types import CompiledProfile, Phase, PlanResult, StopReason
+from delphi.engine.risk import loss_matrix, risk_by_decision, voi_myopic
+from delphi.engine.types import CompiledProfile, Phase, PlanResult
 from delphi.guardian import ddpack
 from delphi.guardian.active import (
     STEP_UPS,
@@ -58,6 +55,14 @@ from delphi.guardian.active import (
     timed_out_observation,
     ui_for,
 )
+from delphi.guardian.procedure import (
+    final_decision,
+    observe,
+    plan_step,
+    session_prior,
+    stop_reason,
+    takes_fast_path,
+)
 from delphi.guardian.store import (
     GuardianSessionRecord,
     ProbeMode,
@@ -73,7 +78,7 @@ from delphi.guardian.store import (
     list_probe_runs,
 )
 from delphi.guardian.tables import guardian_sessions, probe_runs
-from delphi.kb.model import UNEXPLAINED
+from delphi.kb.model import UNEXPLAINED, KnowledgeBase
 from delphi.kb.store import StoredVersion, active_version, get_version
 from delphi.navigator import api as navigator
 from delphi.platform.audit import ActorType, record
@@ -92,7 +97,7 @@ from delphi.probes.api import (
     run_passive_probes,
     serve_question,
 )
-from delphi.sensing.api import with_payer_mule
+from delphi.sensing.api import PriorInputs
 from delphi.sim import api as bank
 
 PROFILE = "GUARDIAN_PAYMENT"
@@ -105,18 +110,9 @@ GENUINE = "GENUINE"
 log = get_logger(__name__)
 
 
-@dataclass(frozen=True, slots=True)
-class PriorInputs:
-    """What the sensing layer says about a payment (docs/13 §1)."""
-
-    p_payment: Mapping[str, float]  # the payment model's classes (no MULE, docs/13 §4)
-    anomaly_percentile: float  # q
-    p_mule_payer: float | None  # the payer account's mule score; None without a scorer
-    top_features: tuple[Mapping[str, Any], ...] = ()
-
-
 class PriorPort(Protocol):
-    """The sensing inference (#92). Reads only data from before the payment's initiation."""
+    """The sensing inference (``delphi.sensing.api.SensingInference``, #92). Reads only data
+    from before the payment's initiation."""
 
     def prior_inputs(self, payment: bank.PaymentView) -> PriorInputs: ...
 
@@ -175,6 +171,11 @@ class Responded:
     attempts_remaining: int | None = None
 
 
+# A session claimed for its passive phase: the claimed record, the probes to run, their
+# request and the session's KB.
+_PassiveClaim = tuple[GuardianSessionRecord, list[str], PassiveRequest, KnowledgeBase]
+
+
 @dataclass(slots=True)
 class _Context:
     """Everything a step needs, loaded fresh in its transaction."""
@@ -206,6 +207,7 @@ class GuardianService:
         fetchers: Mapping[str, Fetcher],
         executor: Executor,
         *,
+        otp_key: bytes,
         demo_time: bool = False,
         explore: bool = True,
     ) -> None:
@@ -214,6 +216,7 @@ class GuardianService:
         self._prior = prior
         self._fetchers = fetchers
         self._executor = executor
+        self._otp_key = otp_key  # Settings.otp_key: keys the OTP digest (#171)
         self._demo_time = demo_time
         self._explore = explore  # False: greedy only (evaluation ablations, replays)
         self._profiles: dict[int, CompiledProfile] = {}
@@ -252,17 +255,18 @@ class GuardianService:
                 payload={"payment_id": str(payment_id), "kb_version_id": created.kb_version_id},
             )
             publish(s, EventType.GUARDIAN_SESSION_UPDATED, str(created.id), _event(created))
-        return self._guarded(created.id, self._build_prior)
+        # The sensing inference reads the bank on connections of its own, so it runs between
+        # the two transactions: holding one while it takes more starves the pool (#284).
+        try:
+            inputs = self._prior.prior_inputs(payment)
+        except Exception as exc:
+            return self._failed(created.id, exc)
+        return self._guarded(created.id, lambda s, ctx: self._build_prior(s, ctx, inputs))
 
-    def _build_prior(self, s: Session, ctx: _Context) -> GuardianSessionRecord:
-        inputs = self._prior.prior_inputs(ctx.payment)
-        p_model = with_payer_mule(inputs.p_payment, inputs.p_mule_payer)
-        q = float(inputs.anomaly_percentile)
+    def _build_prior(self, s: Session, ctx: _Context, inputs: PriorInputs) -> GuardianSessionRecord:
         profile = ctx.profile
-        prior = build_prior(profile, p_model, q)
-        u = open_mass(q, profile.open_mass_base, profile.open_mass_slope)
-        kb_only = [h for h in profile.hypotheses if h not in p_model and h != UNEXPLAINED]
-        shares = {h: profile.open_mass_shares.get(h, 0.0) for h in kb_only}
+        built = session_prior(profile, inputs)
+        prior = built.prior
         risks = risk_by_decision(prior, ctx.losses())
         prior_probs = ctx.as_dict(prior)
         # B1/B2's verdicts for the monitor (docs/08 §6, FR-GDN-12): B2 from this same prior.
@@ -277,33 +281,26 @@ class GuardianService:
             ctx.record,
             baseline_decisions=baselines,
             prior=prior_probs,
-            p_model=dict(p_model),
-            anomaly_percentile=q,
-            open_mass=u,
-            open_mass_shares=shares,
+            p_model=built.p_model,
+            anomaly_percentile=built.anomaly_percentile,
+            open_mass=built.open_mass,
+            open_mass_shares=built.open_mass_shares,
             top_features=[dict(f) for f in inputs.top_features],
             posterior=ctx.as_dict(prior),
             risk_by_decision=_risks(profile, risks),
         )
-        fast = ctx.version.kb.config.engine.fast_path
-        if is_fast_path(
-            float(p_model.get(GENUINE, 0.0)),
-            float(ctx.payment.amount_paise),
-            q,
-            min_p_genuine=fast.min_p_genuine,
-            max_amount_inr=fast.max_amount_inr,
-            max_anomaly_percentile=fast.max_anomaly_percentile,
-        ):
+        if takes_fast_path(ctx.version.kb, built, ctx.payment.amount_paise):
             return self._decide(s, self._load(s, ctx.record.id), prior, TerminalReason.FAST_PATH)
         return _reload(s, ctx.record.id)
 
-    async def passive(self, session_id: UUID) -> GuardianSessionRecord:
-        """Step 4: every eligible passive probe in parallel, each with the KB's adapter timeout.
-        A timeout or adapter error is an ERROR run with no update (FR-GDN-03); updates apply in
-        KB source order. A CREATED session is probed; so is one left in PASSIVE_PROBING by a
-        crash (its probe runs are written in the same transaction as the move to PLANNING, so
-        it has none). The results apply only if the session is still the one this call moved:
-        a cancel in the meantime wins (docs/08 §2)."""
+    def _claim_passive(
+        self, session_id: UUID
+    ) -> (
+        GuardianSessionRecord
+        | tuple[GuardianSessionRecord, list[str], PassiveRequest, KnowledgeBase]
+    ):
+        """Move a CREATED session to PASSIVE_PROBING (or re-claim one a crash left there) and
+        say which passive probes to run; a session past the phase comes back as it is."""
         with self._sessions.begin() as s:
             ctx = self._load(s, session_id)
             if ctx.record.status is SessionStatus.CREATED:
@@ -328,7 +325,23 @@ class GuardianService:
                 ctx.payment.device_id,
                 ctx.payment.initiated_at,
             )
-            kb = ctx.version.kb
+            return probing, keys, request, ctx.version.kb
+
+    async def passive(self, session_id: UUID) -> GuardianSessionRecord:
+        """Step 4: every eligible passive probe in parallel, each with the KB's adapter timeout.
+        A timeout or adapter error is an ERROR run with no update (FR-GDN-03); updates apply in
+        KB source order. A CREATED session is probed; so is one left in PASSIVE_PROBING by a
+        crash (its probe runs are written in the same transaction as the move to PLANNING, so
+        it has none). The results apply only if the session is still the one this call moved:
+        a cancel in the meantime wins (docs/08 §2).
+
+        Its database steps (the claim, the apply, the fail-safe) run off the event loop, like
+        every other step: run on it, they blocked every request and session in the process
+        while they waited on the database (#285)."""
+        claimed = await asyncio.to_thread(self._claim_passive, session_id)
+        if isinstance(claimed, GuardianSessionRecord):
+            return claimed  # past the passive phase already
+        probing, keys, request, kb = claimed
         try:
             results = await run_passive_probes(
                 keys,
@@ -339,7 +352,7 @@ class GuardianService:
                 executor=self._executor,
             )
         except Exception as exc:  # the runner never raises; anything here is a bug
-            return self.fail_safe(session_id, exc)
+            return await asyncio.to_thread(self.fail_safe, session_id, exc)
 
         def apply(s: Session, ctx: _Context) -> GuardianSessionRecord:
             if (
@@ -364,7 +377,7 @@ class GuardianService:
                     "completed_at": self._clock.now(),
                 }
                 if result.status is PassiveStatus.OK and result.outcome is not None:
-                    after = bayes_update(belief, src.likelihood[src.outcomes.index(result.outcome)])
+                    after = observe(ctx.profile, belief, src.key, result.outcome)
                     values |= {
                         "status": ProbeRunStatus.COMPLETED.value,
                         "outcome": result.outcome,
@@ -389,7 +402,7 @@ class GuardianService:
             publish(s, EventType.GUARDIAN_SESSION_UPDATED, str(session_id), _event(updated))
             return updated
 
-        return self._guarded(session_id, apply)
+        return await asyncio.to_thread(self._guarded, session_id, apply)
 
     def plan(self, session_id: UUID) -> PlanOutcome:
         """Steps 5, 6 and 8: plan the next active probe, or decide. A chosen probe becomes a
@@ -429,28 +442,19 @@ class GuardianService:
             runs = list_probe_runs(s, session_id)
             ran = tuple(r.probe_key for r in runs)
             active = sum(1 for r in runs if r.mode is ProbeMode.ACTIVE)
-            plan = plan_next(
+            plan = plan_step(
                 ctx.profile,
                 ctx.belief,
-                amount_paise=float(ctx.payment.amount_paise),
+                amount_paise=ctx.payment.amount_paise,
                 vulnerable=ctx.vulnerable,
-                phase=Phase.GUARDIAN_ACTIVE,
-                observed=frozenset(ran),
                 facts=self._facts(s, ctx),
-                budgets=initial_budgets(ctx.profile, ran),
-                # One stream per planning step, derived from the session's seed (docs/06 §10),
-                # so a resumed or replayed session draws the same numbers.
-                rng=(
-                    np.random.default_rng([ctx.record.rng_seed, active]) if self._explore else None
-                ),
+                ran=ran,
+                active=active,
+                rng_seed=ctx.record.rng_seed,
+                explore=self._explore,
             )
             if plan.is_stop:
-                reason = (
-                    TerminalReason.STOP
-                    if plan.stop_reason is StopReason.NO_POSITIVE_VALUE
-                    else TerminalReason.BUDGET_EXHAUSTED
-                )
-                decided = self._decide(s, ctx, ctx.belief, reason, plan=plan)
+                decided = self._decide(s, ctx, ctx.belief, stop_reason(plan), plan=plan)
                 outcome.append(Decided(decided))
                 return decided
             src = ctx.profile.sources[plan.action]
@@ -571,7 +575,10 @@ class GuardianService:
                 raw["options"] = [o.key for o in question.options]
             elif ui is Ui.OTP:
                 code = new_otp()
-                raw |= {"otp_sha256": otp_digest(str(probe_run_id), code), "otp_attempts": 0}
+                raw |= {
+                    "otp_sha256": otp_digest(self._otp_key, str(probe_run_id), code),
+                    "otp_attempts": 0,
+                }
             s.execute(
                 update(probe_runs)
                 .where(probe_runs.c.id == probe_run_id)
@@ -617,7 +624,7 @@ class GuardianService:
             else:
                 code = otp_code(answer)
                 attempts = int(raw["otp_attempts"]) + 1
-                correct = otp_matches(str(probe_run_id), code, raw["otp_sha256"])
+                correct = otp_matches(self._otp_key, str(probe_run_id), code, raw["otp_sha256"])
                 raw["otp_attempts"] = attempts
                 raw["answer"] = {"otp": "******"}  # never keep a code, right or wrong
                 left = thresholds.otp_max_attempts - attempts
@@ -702,9 +709,8 @@ class GuardianService:
         raw: Mapping[str, Any],
         outcome: str,
     ) -> GuardianSessionRecord:
-        src = ctx.profile.sources[_run_key(s, probe_run_id)]
         before = ctx.belief
-        after = bayes_update(before, src.likelihood[src.outcomes.index(outcome)])
+        after = observe(ctx.profile, before, _run_key(s, probe_run_id), outcome)
         s.execute(
             update(probe_runs)
             .where(probe_runs.c.id == probe_run_id)
@@ -774,11 +780,13 @@ class GuardianService:
         """Step 9: d*(posterior) (or the fail-safe's decision), the payment's status, a case for
         a hold, the Scout flag, the audit entry and the event."""
         kb = ctx.version.kb
+        risks: dict[str, float] | None
         if decision is None:
-            idx, _ = decide(belief, ctx.losses())
-            decision = ctx.profile.decisions[idx]
-            risks: dict[str, float] | None = _risks(
-                ctx.profile, risk_by_decision(belief, ctx.losses())
+            decision, risks = final_decision(
+                ctx.profile,
+                belief,
+                amount_paise=ctx.payment.amount_paise,
+                vulnerable=ctx.vulnerable,
             )
         else:
             risks = ctx.stored_risks
@@ -861,12 +869,15 @@ class GuardianService:
         try:
             with self._sessions.begin() as s:
                 return step(s, self._load(s, session_id))
-        except DelphiError as exc:
-            if exc.code in CALLER_ERRORS:
-                raise  # a caller's mistake (a bad answer, a wrong state), not an engine error
-            return self.fail_safe(session_id, exc)
         except Exception as exc:
-            return self.fail_safe(session_id, exc)
+            return self._failed(session_id, exc)
+
+    def _failed(self, session_id: UUID, exc: Exception) -> GuardianSessionRecord:
+        """A step's error: a caller's mistake (a bad answer, a wrong state) is raised to the
+        caller; anything else is an engine error, and the session takes the fail-safe."""
+        if isinstance(exc, DelphiError) and exc.code in CALLER_ERRORS:
+            raise exc
+        return self.fail_safe(session_id, exc)
 
     def _profile(self, version: StoredVersion) -> CompiledProfile:
         compiled = self._profiles.get(version.id)

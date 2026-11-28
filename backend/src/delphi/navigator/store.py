@@ -17,18 +17,21 @@ from enum import StrEnum
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import Connection, and_, or_, select
+from sqlalchemy import Connection, Float, and_, cast, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from delphi.kb.store import get_version
+from delphi.navigator.console import case_profile, recommend
 from delphi.navigator.police_alert import draft_alert
 from delphi.navigator.tables import cases
+from delphi.navigator.traces import TraceType, record_trace
 from delphi.platform.audit import ActorType, record
 from delphi.platform.clock import Clock
 from delphi.platform.errors import DelphiError, ProblemCode
 from delphi.platform.events import EventType, publish
 from delphi.platform.ids import uuid7
+from delphi.sim import api as bank
 
 
 class CaseType(StrEnum):
@@ -48,9 +51,11 @@ class CaseStatus(StrEnum):
 
 
 class CaseSort(StrEnum):
-    """The case queue's orders (docs/16): soonest SLA first, or newest first."""
+    """The case queue's orders (docs/16): soonest SLA first, the largest expected loss first, or
+    newest first."""
 
     SLA_DUE_AT = "sla_due_at"
+    EXPECTED_LOSS = "expected_loss"
     OPENED_AT = "opened_at"
 
 
@@ -130,6 +135,14 @@ class CaseRecord:
             disposed_by=row.disposed_by,
         )
 
+    @property
+    def expected_loss_paise(self) -> float | None:
+        """The recommended decision's risk (#208); None for a case stored without one."""
+        if self.recommended_decision is None or not self.risk_by_decision:
+            return None
+        risk = self.risk_by_decision.get(self.recommended_decision)
+        return None if risk is None else float(risk)
+
 
 def _leading(posterior: Mapping[str, float], order: Sequence[str]) -> str:
     """The most probable hypothesis; ties go to the KB's hypothesis order."""
@@ -191,6 +204,12 @@ def open_case(
     case_id = uuid7(unix_ms=int(now.timestamp() * 1000))
     sla_due_at = now + timedelta(minutes=minutes * scale)
     leading = _leading(posterior, version.kb.hypothesis_order)
+    advice = recommend(  # #208: stored while open, so the queue can show and sort by it
+        case_profile(version.kb, CaseType.PAYMENT_HOLD.value),
+        posterior,
+        amount_paise=amount_at_stake_paise,
+        vulnerable=payer_is_vulnerable(session, payment_id),
+    )
     try:
         with session.begin_nested():
             session.execute(
@@ -205,6 +224,8 @@ def open_case(
                     prior_components=dict(prior_components),
                     posterior=dict(posterior),
                     leading_hypothesis=leading,
+                    recommended_decision=advice.decision,
+                    risk_by_decision=dict(advice.risk_by_decision),
                     amount_at_stake_paise=amount_at_stake_paise,
                     opened_at=now,
                     sla_due_at=sla_due_at,
@@ -237,6 +258,14 @@ def open_case(
         entity_id=str(case_id),
         payload=payload,
     )
+    record_trace(  # docs/09 §5: the engine opened it, so no user
+        session,
+        case_id=case_id,
+        user_id=None,
+        type=TraceType.CASE_OPENED,
+        at=now,
+        payload={"protocol": protocol.value, "decision": decision},
+    )
     if protocol is CaseProtocol.COERCION:  # docs/09 §6 item 2: drafted, never sent by itself
         draft_alert(session, clock, case_id=case_id, payment_id=payment_id)
     publish(session, EventType.CASE_OPENED, str(case_id), payload)
@@ -262,10 +291,46 @@ def open_case_for_payment(conn: Connection | Session, payment_id: UUID) -> CaseR
 
 @dataclass(frozen=True, slots=True)
 class CaseCursor:
-    """Where a page ended: the sort value and the id of its last case."""
+    """Where a page ended: the sort value (a time, or an expected loss) and the id of its last
+    case."""
 
-    at: datetime
+    at: datetime | float
     id: UUID
+
+
+# The expected-loss sort key: the recommended decision's risk from `risk_by_decision` (#208).
+# A case stored before #208 has none, so it sorts last (risks are never negative).
+_NO_EXPECTED_LOSS = -1.0
+EXPECTED_LOSS = func.coalesce(
+    cast(cases.c.risk_by_decision.op("->>")(cases.c.recommended_decision), Float),
+    _NO_EXPECTED_LOSS,
+)
+
+
+def sort_value(sort: CaseSort, record: CaseRecord) -> datetime | float:
+    """The record's value for a sort order, as ``list_cases`` orders by it (for cursors)."""
+    if sort is CaseSort.SLA_DUE_AT:
+        return record.sla_due_at
+    if sort is CaseSort.OPENED_AT:
+        return record.opened_at
+    loss = record.expected_loss_paise
+    return _NO_EXPECTED_LOSS if loss is None else loss
+
+
+def payer_is_vulnerable(session: Session, payment_id: UUID | None) -> bool:
+    """The loss weighting of doc 06 §4: whether the payment's payer is a vulnerable customer."""
+    if payment_id is None:
+        return False
+    payment = bank.get_payment(session, payment_id)
+    if payment is None or payment.payer_customer_id is None:
+        return False
+    return bool(
+        session.execute(
+            select(bank.customers.c.is_vulnerable).where(
+                bank.customers.c.id == payment.payer_customer_id
+            )
+        ).scalar_one_or_none()
+    )
 
 
 def list_cases(
@@ -278,9 +343,13 @@ def list_cases(
     case_type: CaseType | None = None,
     protocol: CaseProtocol | None = None,
 ) -> list[CaseRecord]:
-    """The case queue, keyset-paged: soonest SLA first, or newest first (docs/16 §1)."""
+    """The case queue, keyset-paged: soonest SLA first, the largest expected loss first, or
+    newest first (docs/16 §1)."""
+    key: Any
     if sort is CaseSort.SLA_DUE_AT:
         key, ascending = cases.c.sla_due_at, True
+    elif sort is CaseSort.EXPECTED_LOSS:
+        key, ascending = EXPECTED_LOSS, False
     else:
         key, ascending = cases.c.opened_at, False
     query = select(cases)

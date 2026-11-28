@@ -33,6 +33,7 @@ from delphi.sensing.artifacts import (
 )
 from delphi.sensing.features import PROBE_INPUT_FEATURES
 from delphi.sensing.jobs import register_sensing_jobs
+from delphi.sensing.mule_scores import MuleSweepLimits
 from delphi.sensing.prior import PriorModel
 from delphi.sim.generator_config import history_end, load_generator_config
 from delphi.sim.jobs import register_sim_jobs
@@ -43,6 +44,9 @@ T0 = datetime(2026, 11, 8, 6, 0, tzinfo=UTC)
 WORKER = "worker-1"
 SECONDS = 60.0  # #88: `test` trains end to end in 60 s or less
 END = history_end(load_generator_config(), "test")
+
+
+EVERY_ACCOUNT = MuleSweepLimits(batch=500, max_per_run=10**9)  # one run scores them all
 
 
 @dataclass
@@ -87,7 +91,9 @@ def worker(create_database: Callable[[], str], kb: KnowledgeBase) -> Iterator[Wo
     sessions = make_session_factory(app)
     registry = JobRegistry()
     register_sim_jobs(registry, sim_engine=sim, clock=clock, kb=kb)
-    register_sensing_jobs(registry, engine=app, sessions=sessions, clock=clock)
+    register_sensing_jobs(
+        registry, engine=app, sessions=sessions, clock=clock, mule_sweep=EVERY_ACCOUNT
+    )
     yield Worker(app, sessions, clock, JobQueue(sessions, clock, QueueConfig()), registry)
     app.dispose()
     sim.dispose()
@@ -105,8 +111,8 @@ def test_the_seed_trains_an_active_prior_from_delivered_labels(worker: Worker) -
     seeded, trained, elapsed = _seed_and_train(worker)
     assert seeded["rows"]["labels"] > 0
     assert trained["dataset_id"] == seeded["dataset_id"]
-    assert [a["kind"] for a in trained["artifacts"]] == ["PRIOR", "ANOMALY"]
-    assert set(trained["skipped"]) == {"MULE"}  # #91 registers its trainer
+    assert [a["kind"] for a in trained["artifacts"]] == ["PRIOR", "ANOMALY", "MULE"]
+    assert trained["skipped"] == []  # every sensing kind has its trainer (#90, #91)
     assert trained["cutoff"] == END.isoformat()  # the seed trains on what its history knew
     prior, model = worker.prior()
     assert prior.status is ArtifactStatus.ACTIVE

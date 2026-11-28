@@ -574,6 +574,12 @@ payment.
 golden hour, SLA timers) is multiplied by `demo_time_scale` = 1/30. The UI shows durations in
 "sim minutes" = real seconds × 30 / 60.
 
+
+**Bounded delivery** (2026-11-22 incident): `LABEL_DELIVERY` delivers at most 50 batches of 1,000
+labels per run, one transaction per batch, with `statement_timeout` 30 s and `work_mem` 16 MB. A
+run that finds another holding the delivery lock skips. A backlog (a fresh seed, or labels due
+while the worker was down) is cleared over several runs.
+
 ## 9. Simulated external systems
 
 | System | Behaviour |
@@ -602,10 +608,80 @@ golden hour, SLA timers) is multiplied by `demo_time_scale` = 1/30. The UI shows
 ## 10. Demo control
 
 - `POST /admin/demo/scenarios/{story}/run {mode: "interactive"|"autoplay"}` for stories S-1 to
-  S-4.
-- `POST /admin/demo/reset`: deletes every row created after the `seed_completed_at` marker
-  (in dependency order, in one transaction), re-activates KB v1, and resets the persona state.
-  Must finish in ≤ 60 s.
-  Labels (#159): it also deletes the `delphi.labels` rows known after the marker, sets
+  S-4. It queues a `DEMO_STORY` job (doc 16), because the story's ids are in the persona
+  manifest (`sim_truth`), which only the worker reads. S-1 and S-2 run now (#101); S-3 and S-4
+  answer 422 until their runners land.
+
+**The S-1/S-2 runner** (`delphi.sim.stories`, #101) stages the story's scripted payment from
+`personas.yaml` with the manifest's ids: the persona's home account, the story payee, the
+amount, the channel, the story's session telemetry and the persona's device. Then:
+
+- **autoplay:** it creates the payment (`DEMO`, `PENDING_GUARDIAN`) with its ground truth (the
+  story's `scenario` and `coached` in `personas.yaml`: S-1 a coached `APP_DIGITAL_ARREST`, S-2
+  `GENUINE_UNUSUAL`), registers the story's scripted answers for it with the simulated customer
+  (§5.2; `after_s` and `app_switches` become the answer's latency and switches), and submits it to
+  the worker's Guardian runner (runner `WORKER`, mode `AUTOPLAY`, doc 08 §2). Probes the script
+  leaves out are answered from the scenario's response model. The job's result names the
+  customer, the payment and the session.
+- **interactive:** the presenter is the customer, and only the api's runner drives sessions the
+  phone can answer (doc 08 §2). So the job creates no payment: its result is the
+  `POST /guardian/sessions` `payment` body (and the customer id for `/phone/stream`), which the
+  mock phone pays with. The session then runs on the api's runner like any phone payment.
+
+Details where the scripts are silent:
+
+- **Arjun's new phone** (S-2) is a device of his first seen at the story's T, written by the job
+  (both modes). Its id is keyed by the dataset, so running S-2 again before a reset reuses it,
+  still NEW_DEVICE (doc 08 §5); the demo reset removes it with everything after the seed.
+- **The story's T is now.** A live run makes the payment when the presenter runs the story.
+  Moving the payment's time would put it out of order with the session that decides it, so the
+  script's `local_time` (S-1: 23:40 IST) goes on the payment instead (`story_local_time`, #291):
+  the job writes it in autoplay and returns it in the interactive `payment` body, and the prior's
+  hour features read it (doc 13 §3). Everything else about the payment is real time.
+- **Idempotency.** The payment's id is keyed by the job, so a retry after a lost lease finds the
+  payment its first attempt made, and the runner returns its session (one per payment). Each run
+  is one short transaction.
+- **Restarts.** The scripts live in the worker's memory. A story session resumed after a worker
+  restart (FR-GDN-14) answers its remaining probes from the response models with the story's
+  truth, so it may end differently from the script.
+- `POST /admin/demo/reset`: deletes every row of the demo's data created after the
+  `seed_completed_at` marker (in dependency order, in one transaction), re-activates KB v1, and
+  resets the persona state. Must finish in ≤ 60 s.
+  Labels (#159): it also deletes the `delphi.labels` rows delivered after the marker, sets
   `sim_truth.label_schedule.delivered` back to false for the rows due after the history's end,
   and lets `LABEL_DELIVERY` re-map complaint keys against the re-activated KB v1.
+  How it does it (`delphi.sim.reset`, #101; owner decisions delegated 2026-11-24):
+  - **What is deleted.** The bank's rows, the Guardian sessions and probe runs, cases and
+    everything on them, Chase operations (#113: their candidates, liens and tickets go with
+    them), labels, KB versions other than v1, and ground truth, each table by its
+    creation time (`created_at`, `at` for event logs, `started_at` for sessions). The platform's
+    own tables stay: users and sign-in sessions, jobs (the reset's own among them), the audit
+    chain (append-only, and the reset is audited in it), the outbox, idempotency keys, LLM
+    calls, the dataset row, the sensing models trained after the seed and the mule scores, and
+    the frozen response models. A test checks that every table is in one list or the other.
+    Mule scores keep any rescoring done after the seed: `MULE_SWEEP` refreshes them.
+  - **The persona state.** Rows from before the marker that the demo changed are put back:
+    account balances lose the deltas of the deleted ledger entries (one `DELETE … RETURNING`),
+    and every seeded schedule row done after the marker is due again, even one that was due
+    before it, so a transfer whose payment the reset deletes runs again instead of vanishing.
+    Not restored yet: account statuses (Chase's freezes), and the status of a seeded payment
+    decided after the marker (its ledger entries are reversed, its status stays). Nothing in the
+    `demo` profile reaches the second today.
+  - **One transaction, bounded.** The deletes are set-based (`DELETE … WHERE created_at >
+    :marker`), so no rows or key lists pass through Python (the #263 lesson). They run with a
+    statement timeout (`DELPHI_DEMO_RESET_TIMEOUT_S`, 60 s), under advisory lock 51 (a second
+    reset at once skips) and the label-delivery lock (no delivery interleaves). Every table the
+    reset writes is then locked `IN EXCLUSIVE MODE`, in a fixed order: reads go on, but a
+    payment, session or case being written waits for the reset, so none lands between its
+    steps.
+  - **Nothing new starts.** While a reset is queued or running, `POST /guardian/sessions` and
+    `POST /admin/demo/scenarios/{story}/run` answer 409 `INVALID_STATE_TRANSITION`, so no new
+    payment or story races its deletes.
+  - **Sessions in flight.** The api drops the LIVE sessions it is driving when the reset is
+    asked for, and the job drops the worker's WORKER sessions once it holds the reset's lock,
+    so no runner task is left driving a deleted session. If the reset then fails, the dropped
+    sessions stay unfinished until a restart resumes them or `SESSION_TIMEOUT_SWEEP` ends them;
+    run the reset again.
+  - **KB v1.** The api and the worker load the ACTIVE KB at start-up, so when the reset changed
+    the ACTIVE version, or deleted or retired another one, the job's result says
+    `restart_needed` (gap: no hot reload).

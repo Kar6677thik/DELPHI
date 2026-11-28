@@ -9,8 +9,8 @@ The parity test checks that these snapshots give the online path's features.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
 
@@ -75,7 +75,10 @@ def _optional_bool(value: Any) -> bool | None:
 
 def _frame(conn: Connection, query: Select[Any]) -> pd.DataFrame:
     result = conn.execute(query)
-    frame = pd.DataFrame(result.fetchall(), columns=list(result.keys()))
+    return _normalised(pd.DataFrame(result.fetchall(), columns=list(result.keys())))
+
+
+def _normalised(frame: pd.DataFrame) -> pd.DataFrame:
     for column in frame.columns:  # ids as strings, as the online path keys them
         if frame[column].map(lambda v: isinstance(v, UUID)).any():
             frame[column] = frame[column].map(lambda v: str(v) if isinstance(v, UUID) else None)
@@ -97,6 +100,10 @@ class BankFrames:
     logins: pd.DataFrame
     crm_events: pd.DataFrame
     complaints: pd.DataFrame
+    # bank.account_scores (the mule scorer's cache, docs/13 §6): one row per account
+    account_scores: pd.DataFrame = field(
+        default_factory=lambda: pd.DataFrame(columns=["account_id", "p_mule", "computed_at"])
+    )
 
 
 def load_bank_frames(conn: Connection) -> BankFrames:
@@ -151,6 +158,60 @@ def load_bank_frames(conn: Connection) -> BankFrames:
             conn,
             select(bank.complaints.c.reported_at, bank.complaints.c.counterparty_account_ids),
         ),
+        account_scores=_frame(
+            conn,
+            select(
+                bank.account_scores.c.account_id,
+                bank.account_scores.c.p_mule,
+                bank.account_scores.c.computed_at,
+            ),
+        ),
+    )
+
+
+# The columns ``load_bank_frames`` reads, per table: the in-memory path builds the same frames.
+FRAME_COLUMNS: dict[str, tuple[str, ...]] = {
+    "customers": ("id", "age", "is_vulnerable"),
+    "accounts": ("id", "customer_id", "opened_at", "kyc_level"),
+    "payments": (
+        "id",
+        "payer_account_id",
+        "payee_account_id",
+        "amount_paise",
+        "channel",
+        "initiated_at",
+        "device_id",
+        "status",
+        "executed_at",
+    ),
+    "session_telemetry": ("payment_id", "session_duration_s", "remote_access_active"),
+    "payees": ("customer_id", "account_id", "added_at"),
+    "devices": ("id", "customer_id", "first_seen_at", "fingerprint"),
+    "login_events": ("id", "customer_id", "at", "city"),
+    "crm_events": ("customer_id", "type", "at"),
+    "complaints": ("reported_at", "counterparty_account_ids"),
+}
+
+
+def frames_from_records(records: Mapping[str, Sequence[Any]]) -> BankFrames:
+    """``BankFrames`` from a generated dataset's rows (``delphi.sim.api.dataset_records``),
+    without a database: the evaluation harness trains and scores in memory (docs/22 §1)."""
+
+    def frame(table: str) -> pd.DataFrame:
+        columns = FRAME_COLUMNS[table]
+        rows = [tuple(getattr(r, c) for c in columns) for r in records.get(table, ())]
+        return _normalised(pd.DataFrame.from_records(rows, columns=list(columns)))
+
+    return BankFrames(
+        customers=frame("customers"),
+        accounts=frame("accounts"),
+        payments=frame("payments"),
+        telemetry=frame("session_telemetry"),
+        payees=frame("payees"),
+        devices=frame("devices"),
+        logins=frame("login_events"),
+        crm_events=frame("crm_events"),
+        complaints=frame("complaints"),
     )
 
 
@@ -166,6 +227,16 @@ class OfflineHistories:
         self._opened_us: dict[str, int] = dict(
             zip(accounts["id"], _us(accounts["opened_at"]).tolist(), strict=True)
         )
+        scores = frames.account_scores
+        self._mule_scores: dict[str, tuple[int, float]] = {
+            str(a): (t, float(p))
+            for a, t, p in zip(
+                scores["account_id"],
+                _us(scores["computed_at"]).tolist() if len(scores) else [],
+                scores["p_mule"],
+                strict=True,
+            )
+        }
         payments = frames.payments.assign(
             at_us=_us(frames.payments["initiated_at"]),
             customer_id=frames.payments["payer_account_id"].map(self._customer_of),
@@ -245,11 +316,19 @@ class OfflineHistories:
             initiated_at_us=row.at_us,
             device_id=device,
             payee_account_opened_at_us=self._opened_us[row.payee_account_id],
-            payee_p_mule=self.config.mule_score_fallback,  # until the mule scorer (#91)
+            payee_p_mule=self._payee_p_mule(row.payee_account_id, row.at_us),
             session_duration_s=row.session_duration_s,
             remote_access_active=row.remote_access_active,
         )
         return payment, history
+
+    def _payee_p_mule(self, payee: str, at_us: int) -> float:
+        """The payee's cached mule score if it was computed before the payment, else the
+        fallback (docs/13 §3, §6): a score the bank did not have yet must not leak in."""
+        cached = self._mule_scores.get(payee)
+        if cached is not None and cached[0] < at_us:
+            return cached[1]
+        return self.config.mule_score_fallback
 
     def features(self, payment_ids: Iterable[str]) -> pd.DataFrame:
         """One row of payment features per payment, columns in ``payment_feature_names``."""

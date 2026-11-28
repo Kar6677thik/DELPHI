@@ -33,9 +33,11 @@ from delphi.sensing.artifacts import (
     artifacts_of_job,
     store_artifact,
 )
+from delphi.sensing.mule_scores import MuleSweepJob, MuleSweepLimits
 from delphi.sensing.trainers import (
     NothingToTrainError,
     train_anomaly_artifact,
+    train_mule_artifact,
     train_prior_artifact,
 )
 from delphi.sim.api import DatasetInfo, current_dataset, history_window
@@ -66,6 +68,7 @@ Trainer = Callable[[TrainingRequest], TrainedModel]
 DEFAULT_TRAINERS: Mapping[ArtifactKind, Trainer] = {
     ArtifactKind.PRIOR: train_prior_artifact,
     ArtifactKind.ANOMALY: train_anomaly_artifact,
+    ArtifactKind.MULE: train_mule_artifact,
 }
 
 
@@ -153,6 +156,9 @@ def register_sensing_jobs(
     engine: Engine,
     sessions: sessionmaker[Session],
     clock: Clock,
+    mule_sweep: MuleSweepLimits,
     trainers: Mapping[ArtifactKind, Trainer] = DEFAULT_TRAINERS,
 ) -> None:
     registry.register(JobType.TRAIN_SENSING, TrainSensingJob(engine, sessions, clock, trainers))
+    # docs/13 §6: rescore stale accounts into bank.account_scores, in bounded batches
+    registry.register(JobType.MULE_SWEEP, MuleSweepJob(engine, clock, mule_sweep))

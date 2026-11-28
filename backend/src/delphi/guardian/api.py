@@ -2,10 +2,34 @@
 
 from __future__ import annotations
 
-from delphi.guardian.ddpack import DdPack
+from delphi.guardian.active import ClientSignals
+from delphi.guardian.autoplay import WorkerGuardian, worker_guardian
+from delphi.guardian.ddpack import DdPack, case_trail
 from delphi.guardian.ddpack import build as build_dd_pack
 from delphi.guardian.ddpack import render_html as render_dd_pack_html
-from delphi.guardian.store import SessionMode, SessionStatus
+from delphi.guardian.kpis import GuardianKpis, guardian_kpis
+from delphi.guardian.phone import (
+    PHONE_EVENT_TYPES,
+    LiveGuardian,
+    PhoneEvent,
+    PhoneHub,
+    PhoneSubscription,
+    live_guardian,
+)
+from delphi.guardian.procedure import (
+    ProbeStep,
+    SessionPrior,
+    SessionResult,
+    final_decision,
+    observe,
+    plan_step,
+    run_session,
+    session_prior,
+    stop_reason,
+    takes_fast_path,
+)
+from delphi.guardian.service import FAIRNESS_WINDOW, PriorPort
+from delphi.guardian.store import SessionMode, SessionStatus, TerminalReason
 from delphi.guardian.views import (
     SessionCursor,
     SessionFilter,
@@ -14,17 +38,44 @@ from delphi.guardian.views import (
     list_sessions,
     probe_run_rows,
 )
+from delphi.sensing.api import PriorInputs
 
 __all__ = [
+    "FAIRNESS_WINDOW",
+    "PHONE_EVENT_TYPES",
+    "ClientSignals",
     "DdPack",
+    "GuardianKpis",
+    "LiveGuardian",
+    "PhoneEvent",
+    "PhoneHub",
+    "PhoneSubscription",
+    "PriorInputs",
+    "PriorPort",
+    "ProbeStep",
     "SessionCursor",
     "SessionFilter",
     "SessionMode",
+    "SessionPrior",
+    "SessionResult",
     "SessionRow",
     "SessionStatus",
+    "TerminalReason",
+    "WorkerGuardian",
     "build_dd_pack",
+    "case_trail",
+    "final_decision",
     "get_session_row",
+    "guardian_kpis",
     "list_sessions",
+    "live_guardian",
+    "observe",
+    "plan_step",
     "probe_run_rows",
     "render_dd_pack_html",
+    "run_session",
+    "session_prior",
+    "stop_reason",
+    "takes_fast_path",
+    "worker_guardian",
 ]

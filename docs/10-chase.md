@@ -89,7 +89,8 @@ For every account with T_now ≥ ₹500 (the **freeze candidates**):
 p_present = exp(−Δ / τ_acc)
 p_mule    = mule scorer (doc 13 §6) for the account
 κ         = 0.30   # chance a lien on a non-mule holder's tainted balance is upheld (config)
-lien_amount = min(T_now, current balance)
+lien_amount = min(T_now, headroom)
+             # headroom = current balance − the account's other active liens (PLACED, TICKET_SENT)
 ERV       = lien_amount · p_present · (p_mule + (1 − p_mule) · κ)
 wrongful  = (1 − p_mule) · (5,000 ₹ + 0.02 · lien_amount)
 net       = ERV − wrongful
@@ -98,6 +99,14 @@ net       = ERV − wrongful
 Ranking is by `net` descending. Candidates with net > 0 are **recommended**. The parameters κ,
 the latencies, ₹5,000 and 0.02 are in `kb/engine.yaml` under `chase:`, so they are versioned
 with the KB.
+
+**Implementation** (`delphi.chase.scoring`, #112): pure functions the chase operation (#113)
+calls with the moves, taint and mule scores it loads. The time-to-80%-out is FIFO over the
+account's money, with the balance it held before the 30-day window leaving first. A credit still
+not 80% out counts with the time it has stayed so far (censored at now, a lower bound). Observed
+times are time-scaled like the fallbacks, as "(all × time_scale)" says. Expected values are
+rounded to the paisa. Ties in `net` are broken by ERV, then by account id, so the ranking is
+stable. The 30 days, the 80% and the 3-credit minimum are the definition above, not tunables.
 
 ## 5. Freezing
 
@@ -126,6 +135,22 @@ with the KB.
 8. A complaint never starts a chase automatically in the live app (an investigator decides).
    The evaluation harness starts one for every executed fraud with a complaint (doc 22 §4), and
    story S-3's runner starts its chase explicitly.
+
+**Implementation (#113 PR 1).**
+- **Operations** (`delphi.chase.operations`): `POST /chase/operations` traces and stores
+  `chase_operations` and `chase_candidates` (migration 0018).
+- **Candidates** come through a `CandidateSource`. The default is the tracer's accounts above
+  `min_trace_inr`, unscored; #112's scoring plugs in there and fills the score columns.
+- **Approval:** `POST /chase/operations/{id}/liens` re-traces as of now. Each approved candidate's
+  lien is `min(T_now, headroom)` (`lien_amount`): the headroom is the balance now less the
+  account's active liens (PLACED and TICKET_SENT) from any operation, and less any lien set
+  earlier in the same approval (FR-CHS-05). The lien keeps the taint traced at approval
+  (`taint_at_approval_paise`), since later re-traces overwrite the candidate's.
+  - An internal account's lien is PLACED, with `review_due_at`, or FAILED_FUNDS_MOVED at 0.
+  - An external account's lien waits as TICKET_SENT, with its ticket SENT_SIMULATED.
+- **Ticket worker:** acknowledgement, expiry and auto-close are PR 2.
+- **Bank effect:** the bank does not yet hold liened money back from later debits; that is #114's
+  live movement.
 
 ## 6. Metrics (per operation and aggregated)
 

@@ -27,6 +27,12 @@ export class FakeEventSource {
     for (const listener of this.listeners.get(type) ?? []) listener(event);
   }
 
+  /** A named frame carrying a JSON payload (the phone's events, docs/08 §4). */
+  emitData(type: string, data: unknown, id = '1'): void {
+    const event = new MessageEvent(type, { data: JSON.stringify(data), lastEventId: id });
+    for (const listener of this.listeners.get(type) ?? []) listener(event);
+  }
+
   open(): void {
     this.readyState = FakeEventSource.OPEN;
     this.onopen?.();

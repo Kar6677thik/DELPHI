@@ -27,6 +27,16 @@ from delphi.sensing.features import (
 )
 from delphi.sim import api as bank
 
+MINUTES_PER_HOUR = 60
+
+
+def _hour_of(local_time: str | None) -> float | None:
+    """A story's scripted IST "HH:MM" as a fractional local hour (docs/14 §10)."""
+    if local_time is None:
+        return None
+    hours, minutes = local_time.split(":")
+    return int(hours) + int(minutes) / MINUTES_PER_HOUR
+
 
 def load_payment_snapshot(
     conn: Connection, payment_id: UUID, config: FeatureConfig
@@ -67,9 +77,10 @@ def load_payment_snapshot(
         initiated_at_us=to_us(as_of),
         device_id=str(row.device_id) if row.device_id else None,
         payee_account_opened_at_us=to_us(row.payee_opened_at),
-        payee_p_mule=config.mule_score_fallback,  # until the mule scorer (#91)
+        payee_p_mule=payee_mule_score(conn, row.payee_account_id, as_of, config),
         session_duration_s=row.session_duration_s,
         remote_access_active=row.remote_access_active,
+        local_hour=_hour_of(row.story_local_time),
     )
 
     customer = conn.execute(
@@ -100,15 +111,19 @@ def load_payment_snapshot(
         .where(bank.login_events.c.customer_id == customer_id, bank.login_events.c.at < as_of)
         .order_by(bank.login_events.c.at, bank.login_events.c.id)
     ).all()
-    limits = conn.execute(
-        select(bank.crm_events.c.at)
-        .where(
-            bank.crm_events.c.customer_id == customer_id,
-            bank.crm_events.c.type.in_(config.limit_increase_event_types),
-            bank.crm_events.c.at < as_of,
-        )
-        .order_by(bank.crm_events.c.at)
-    ).all()
+    limits = (
+        conn.execute(
+            select(bank.crm_events.c.at)
+            .where(
+                bank.crm_events.c.customer_id == customer_id,
+                bank.crm_events.c.type.in_(config.limit_increase_event_types),
+                bank.crm_events.c.at < as_of,
+            )
+            .order_by(bank.crm_events.c.at)
+        ).all()
+        if config.limit_increase_event_types  # none configured yet: skip the round trip
+        else []
+    )
 
     history = CustomerHistory(
         customer_id=str(customer_id),
@@ -135,6 +150,25 @@ def complaints_naming(account_id: UUID, as_of: datetime) -> Select[tuple[datetim
         .where(c.c.counterparty_account_ids.contains([account_id]), c.c.reported_at < as_of)
         .order_by(c.c.reported_at)
     )
+
+
+def payee_mule_score(
+    conn: Connection, account_id: UUID, as_of: datetime, config: FeatureConfig
+) -> float:
+    """The account's cached mule score if it was computed before ``as_of``, else the
+    fallback (docs/13 §3, §6). The offline path applies the same rule (parity)."""
+    score = cached_mule_score(conn, account_id, as_of)
+    return score if score is not None else config.mule_score_fallback
+
+
+def cached_mule_score(conn: Connection, account_id: UUID, as_of: datetime) -> float | None:
+    """The account's score in ``bank.account_scores`` if it was computed before ``as_of``: a
+    score the bank did not have yet must not leak into an earlier decision (docs/13 §6)."""
+    s = bank.account_scores
+    score = conn.execute(
+        select(s.c.p_mule).where(s.c.account_id == account_id, s.c.computed_at < as_of)
+    ).scalar_one_or_none()
+    return float(score) if score is not None else None
 
 
 def load_account_snapshot(

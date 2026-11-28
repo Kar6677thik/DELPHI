@@ -30,9 +30,11 @@ from delphi.navigator.api import (
     CaseSort,
     CaseStatus,
     CaseType,
+    case_profile,
     get_case,
     list_cases,
     open_case,
+    recommend,
 )
 from delphi.navigator.tables import cases, metadata
 from delphi.platform.accounts import Role, create_user
@@ -97,9 +99,8 @@ def _open(env: Env, held: Held, decision: str, **kw: object) -> CaseRecord:
             guardian_session_id=held.session_id,
             kb_version_id=env.kb_version_id,
             prior_components=PRIOR,
-            amount_at_stake_paise=AMOUNT,
             unexplained=False,
-            **{"posterior": POSTERIOR, **kw},  # type: ignore[arg-type]
+            **{"posterior": POSTERIOR, "amount_at_stake_paise": AMOUNT, **kw},  # type: ignore[arg-type]
         )
 
 
@@ -110,7 +111,9 @@ def test_the_table_description_matches_the_migrated_schema(env: Env) -> None:
         assert reflected == [c.name for c in table.columns], table.name
 
 
-def test_a_protective_hold_opens_a_coercion_case_with_the_sessions_posterior(env: Env) -> None:
+def test_a_protective_hold_opens_a_coercion_case_with_the_sessions_posterior(
+    env: Env, kb: KnowledgeBase
+) -> None:
     """FR-GDN-08 / FR-NAV-01: PROTECTIVE_HOLD → PAYMENT_HOLD, COERCION, 30-minute SLA."""
     case = _open(env, _held(env), "PROTECTIVE_HOLD")
     assert (case.type, case.protocol, case.status) == (
@@ -122,7 +125,12 @@ def test_a_protective_hold_opens_a_coercion_case_with_the_sessions_posterior(env
     assert case.leading_hypothesis == "APP_DIGITAL_ARREST"
     assert case.opened_at == T0 and case.sla_due_at == T0 + timedelta(minutes=30)
     assert case.kb_version_id == env.kb_version_id and case.amount_at_stake_paise == AMOUNT
-    assert case.recommended_decision is None and case.risk_by_decision is None  # #103
+    # #208: stored from the moment the case opens, for the queue
+    profile = case_profile(kb, "PAYMENT_HOLD")
+    advice = recommend(profile, POSTERIOR, amount_paise=AMOUNT, vulnerable=False)
+    assert case.recommended_decision == advice.decision == "CONFIRM_FRAUD"
+    assert case.risk_by_decision == pytest.approx(advice.risk_by_decision)
+    assert case.expected_loss_paise == pytest.approx(advice.expected_loss_paise)
     assert case.version == 1
 
 
@@ -290,6 +298,26 @@ def test_the_queue_is_sorted_filtered_and_paged(env: Env) -> None:
         assert list_cases(s, limit=10, status=CaseStatus.DISPOSED) == []
 
 
+def test_the_queue_sorts_by_expected_loss(env: Env) -> None:
+    """#208, docs/16: the largest expected loss first; a case stored without a recommendation
+    (opened before #208) last."""
+    small = _open(env, _held(env), "PROTECTIVE_HOLD", amount_at_stake_paise=1_000_000)
+    large = _open(env, _held(env), "PROTECTIVE_HOLD", amount_at_stake_paise=90_000_000)
+    middle = _open(env, _held(env), "HOLD_FOR_REVIEW")
+    legacy = _open(env, _held(env), "HOLD_FOR_REVIEW")
+    with env.sessions.begin() as s:
+        s.execute(
+            update(cases)
+            .where(cases.c.id == legacy.id)
+            .values(recommended_decision=None, risk_by_decision=None)
+        )
+    assert small.expected_loss_paise is not None and large.expected_loss_paise is not None
+    assert small.expected_loss_paise < large.expected_loss_paise
+    with env.sessions() as s:
+        ordered = list_cases(s, limit=10, sort=CaseSort.EXPECTED_LOSS)
+    assert [r.id for r in ordered] == [large.id, middle.id, small.id, legacy.id]
+
+
 @pytest.fixture
 def client(env: Env) -> Iterator[TestClient]:
     platform = Platform(
@@ -320,6 +348,23 @@ def test_the_api_pages_the_queue(env: Env, client: TestClient) -> None:
     raw = json.dumps({"s": "sla_due_at", "at": "2026-11-13T18:30:00", "id": str(a.id)})
     naive = base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
     assert client.get("/api/v1/cases", params={"cursor": naive}).status_code == 422
+
+
+def test_the_api_pages_the_queue_by_expected_loss(env: Env, client: TestClient) -> None:
+    amounts = (5_000_000, 70_000_000, 20_000_000)
+    opened = [_open(env, _held(env), "HOLD_FOR_REVIEW", amount_at_stake_paise=a) for a in amounts]
+    first = client.get("/api/v1/cases", params={"sort": "expected_loss", "limit": 2}).json()
+    assert [i["id"] for i in first["items"]] == [str(opened[1].id), str(opened[2].id)]
+    assert all(i["recommended_decision"] and i["risk_by_decision"] for i in first["items"])
+    rest = client.get(
+        "/api/v1/cases",
+        params={"sort": "expected_loss", "limit": 2, "cursor": first["next_cursor"]},
+    ).json()
+    assert [i["id"] for i in rest["items"]] == [str(opened[0].id)]
+    raw = json.dumps({"s": "expected_loss", "at": "lots", "id": str(opened[0].id)})
+    bad = base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
+    response = client.get("/api/v1/cases", params={"sort": "expected_loss", "cursor": bad})
+    assert response.status_code == 422
 
 
 def test_the_api_reads_one_case_with_its_etag(env: Env, client: TestClient) -> None:

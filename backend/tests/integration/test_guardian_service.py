@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import itertools
 import threading
+import time
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -18,6 +19,7 @@ import pytest
 from sqlalchemy import Engine, func, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
+from delphi.guardian import procedure as procedure_module
 from delphi.guardian import service as service_module
 from delphi.guardian.service import Decided, GuardianService, NextProbe, PriorInputs
 from delphi.guardian.store import (
@@ -53,6 +55,7 @@ from ._db import engine_as, upgrade
 T0 = datetime(2026, 11, 15, 10, 0, tzinfo=UTC)
 KB_DIR = Path(__file__).resolve().parents[3] / "kb"
 INR = 100  # paise
+OTP_KEY = b"test-otp-key-32-bytes-long-enough"
 
 GENUINE_SURE = {
     "GENUINE": 0.999,
@@ -144,8 +147,11 @@ class Env:
     sessions: sessionmaker[Session]
     clock: FixedClock
 
-    def payment(self, amount_inr: int, *, balance_inr: int = 1_000_000) -> UUID:
-        customer, payer, payee, payment = uuid4(), uuid4(), uuid4(), uuid4()
+    def payment(
+        self, amount_inr: int, *, balance_inr: int = 1_000_000, payment_id: UUID | None = None
+    ) -> UUID:
+        customer, payer, payee = uuid4(), uuid4(), uuid4()
+        payment = payment_id or uuid4()
         with self.owner.begin() as conn:
             conn.execute(
                 text(
@@ -193,7 +199,13 @@ class Env:
         fetch = fetchers(outcomes, kw.pop("slow", None))
         self._release = fetch.pop("_release")
         return GuardianService(
-            self.sessions, self.clock, prior, fetch, passive_executor(threads=8), **kw
+            self.sessions,
+            self.clock,
+            prior,
+            fetch,
+            passive_executor(threads=8),
+            otp_key=OTP_KEY,
+            **kw,
         )
 
     def release_slow(self) -> None:
@@ -331,9 +343,46 @@ def test_passive_probes_update_in_kb_order_and_a_slow_adapter_does_not_block(env
 # ---------------------------------------------------------------- planning and the decision
 
 
+LOOP_TICK_S = 0.01
+SLOW_LOAD_S = 0.3
+
+
+def test_the_passive_phase_leaves_the_event_loop_free(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#285: the passive phase's database steps (its claim, its apply) run off the event loop,
+    so a slow database holds up this session only, not every request and session in the
+    process."""
+    svc = env.service(FixedPrior(GENUINE, q=0.95, p_mule=0.02), CLEAN)
+    started = svc.start(env.payment(480_000), mode=SessionMode.LIVE, runner=Runner.API)
+    load = GuardianService._load
+
+    def slow_load(self: GuardianService, s: Session, session_id: UUID) -> Any:
+        time.sleep(SLOW_LOAD_S)  # a database that answers slowly
+        return load(self, s, session_id)
+
+    monkeypatch.setattr(GuardianService, "_load", slow_load)
+
+    async def both() -> int:
+        ticks = 0
+        passive = asyncio.create_task(svc.passive(started.id))
+        while not passive.done():
+            await asyncio.sleep(LOOP_TICK_S)
+            ticks += 1
+        await passive
+        return ticks
+
+    ticks = asyncio.run(both())
+    # two slow loads (the claim and the apply): the loop ticked through them
+    assert ticks >= 2 * SLOW_LOAD_S / LOOP_TICK_S / 2
+
+
 def test_planning_issues_a_pending_active_probe_with_its_candidates(env: Env) -> None:
     payment = env.payment(50_000)
-    result = _run(env, env.service(FixedPrior(GENUINE, q=1.0, p_mule=None), UNSURE), payment)
+    # Greedy only: the payment id seeds exploration, and a fresh random id would explore in about
+    # 1 run in 20 (exploration_epsilon 0.05) and pick another probe (#207).
+    svc = env.service(FixedPrior(GENUINE, q=1.0, p_mule=None), UNSURE, explore=False)
+    result = _run(env, svc, payment)
     assert isinstance(result, NextProbe) and result.probe_key == "PURPOSE_QUESTION"
     with env.sessions() as s:
         active = [r for r in list_probe_runs(s, result.session.id) if r.mode is ProbeMode.ACTIVE]
@@ -342,7 +391,7 @@ def test_planning_issues_a_pending_active_probe_with_its_candidates(env: Env) ->
     ]
     with env.owner.connect() as conn:
         run = conn.execute(select(probe_runs).where(probe_runs.c.id == result.probe_run_id)).one()
-    assert run.selected_by in {"GREEDY", "EXPLORE"} and 0 < run.propensity <= 1
+    assert run.selected_by == "GREEDY" and run.propensity is None  # nothing was randomised
     assert run.candidates[0]["source_key"] == "PURPOSE_QUESTION" and run.candidates[0]["selected"]
     assert "PURPOSE_QUESTION" in run.eligible_set and run.lookahead_depth >= 1
     assert run.posterior_before == result.session.posterior
@@ -436,7 +485,8 @@ def test_an_engine_error_while_planning_rolls_back_and_holds(
     def broken(*_args: object, **_kw: object) -> None:
         raise FloatingPointError("injected")
 
-    monkeypatch.setattr(service_module, "plan_next", broken)
+    # The planner runs in the pure procedure the service calls (#123).
+    monkeypatch.setattr(procedure_module, "plan_next", broken)
     result = svc.plan(started.id)
     assert isinstance(result, Decided)
     assert result.session.terminal_reason is TerminalReason.ENGINE_ERROR

@@ -202,8 +202,8 @@ node address range allowed to reach it, and the optional monitoring scrape rule.
   - `DELPHI_LOG_LEVEL=INFO`
 - Secrets are created by the bootstrap from values generated on the operator's machine, and
   mounted with `envFrom: secretRef`. Manifests never name keys and never inline a value.
-  - **Secret `delphi-app`**, for the api: the app's database URL and the bootstrap admin. Later
-    also the LLM key.
+  - **Secret `delphi-app`**, for the api: the app's database URL, the bootstrap admin and the
+    server secret `DELPHI_SECRET_KEY` (it keys the OTP digest). Later also the LLM key.
   - **Secret `delphi-worker`**, for the worker only: the app and sim database URLs.
   - **Secret `delphi-migrate`**, for the migrate Job: the owner database URL.
   - **Secret `delphi-seed`**, for the seed Job: the app's database URL only.
@@ -296,12 +296,18 @@ to start, exit code 2, naming the variable, if one is missing or invalid.
 | `DELPHI_JOB_LEASE_S` / `DELPHI_JOB_RETRY_BACKOFF_S` / `DELPHI_JOB_MAX_ATTEMPTS` | `60` / `30` / `3` | worker | doc 04 §5.4 |
 | `DELPHI_WORKER_DEFAULT_CONCURRENCY` / `DELPHI_WORKER_FAST_CONCURRENCY` | `2` / `1` | worker | doc 04 §5.4 |
 | `DELPHI_WORKER_POLL_INTERVAL_S` / `DELPHI_WORKER_HEARTBEAT_MAX_AGE_S` | `1.0` / `30` | worker | doc 20 §3 |
+| `DELPHI_DEMO_RESET_TIMEOUT_S` | `60` | worker | the demo reset's statement timeout (doc 14 §10, FR-SIM-08) |
 | `DELPHI_OUTBOX_RETENTION_H` / `DELPHI_IDEMPOTENCY_RETENTION_H` | `24` / `24` | worker | doc 17 §6 |
+| `DELPHI_REVIEW_SWEEP_BATCH` / `DELPHI_REVIEW_SWEEP_MAX_PER_RUN` / `DELPHI_REVIEW_COMPLAINT_LOOKBACK_DAYS` | `25` / `100` / `30` | worker | doc 09 §1: reviews opened per transaction and per run, and the oldest complaint that opens one |
+| `DELPHI_MULE_SWEEP_BATCH` / `DELPHI_MULE_SWEEP_MAX_PER_RUN` | `200` / `2000` | worker | doc 13 §6: accounts rescored per transaction and per `MULE_SWEEP` run |
+| `DELPHI_YIELD_RECENT_DAYS` / `DELPHI_YIELD_BASELINE_DAYS` / `DELPHI_YIELD_DRIFT_RATIO` / `DELPHI_YIELD_MIN_RECENT_COUNT` / `DELPHI_YIELD_MIN_BASELINE_COUNT` | `7` / `28` / `0.7` / `30` / `30` | worker | doc 12 §5 |
+| `DELPHI_SECRET_KEY` | unset | api | Secret `delphi-app` (`openssl rand -hex 32`; 32 characters or more). Keys the Guardian's OTP digest (doc 08 §4). Required in `demo` wherever the Guardian runs; `dev` and `test` fall back to a fixed development key |
 | `DELPHI_OPE_BOOTSTRAP_RESAMPLES` / `DELPHI_OPE_MIN_ESS` / `DELPHI_OPE_MIN_SUPPORT_COVERAGE` | `1000` / `30` / `0.5` | api, worker | doc 12 §3 |
 | `DELPHI_PUBLIC_ORIGIN` | unset | api | ConfigMap: `https://delphi.karthiksurkanti.in`. The Origin that mutating requests must carry (CSRF, doc 19 §4). Unset in development: the request's own origin |
 | `DELPHI_CLIENT_IP_HEADER` | unset | api | ConfigMap: `CF-Connecting-IP`. The header with the real client IP behind the tunnel, used for the login lockout and audit. Safe because only the node (the host tunnel) can reach the api pod (§4 NetworkPolicies) |
 | `DELPHI_SESSION_IDLE_H` / `DELPHI_SESSION_ABSOLUTE_DAYS` | `12` / `7` | api | doc 19 §2 |
 | `DELPHI_LOGIN_MAX_FAILURES` / `DELPHI_LOGIN_WINDOW_MIN` | `5` / `15` | api | doc 16 §1 |
+| `DELPHI_EVAL_WORKERS` | `4` | evaluation run | doc 22 §1: worker processes for one evaluation run. Evaluation does not run in the cluster's worker pod (1536Mi): it runs off-cluster or as its own Job sized for it |
 | `DELPHI_DATASET_PROFILES` | `test,demo,eval` | api, worker | ConfigMap: `test,demo` on the home server (the `eval` dataset needs about 3.8 GiB; §4). `POST /admin/datasets`, `delphi seed` and `GENERATE_DATASET` refuse other profiles |
 | `DELPHI_RATE_LIMIT_PER_S` / `DELPHI_RATE_LIMIT_BURST` | `20` / `40` | api | doc 16 §1 |
 | `DELPHI_LLM_PROVIDER` | `template` | api, worker | `anthropic` or `template` (the kill switch, doc 15 §3). With `template` no model is called |
@@ -400,10 +406,14 @@ and the run summary shows its digest.
 - **The backups live on the same disk as the database**, so they protect against mistakes, not
   against losing the disk. An off-host copy is the owner's decision (not in scope).
 - **Restore drill** (M9, then monthly), to prove backups work (EFG §34):
-  1. As the operator, apply `deploy/k8s/ops/restore-test-job.yaml`. The Job restores the latest
-     dump into a temporary database `delphi_restore_test`.
-  2. A second container runs `verify-restore`, which checks table counts, that exactly one
-     ACTIVE KB exists, and that the audit chain verifies. Then it drops the database.
+  1. As the operator, apply `deploy/k8s/ops/restore-test-job.yaml` with `__IMAGE__` set to the
+     api's current image (the file's header has the commands). The Job restores the latest dump
+     into a temporary database `delphi_restore_test`, and prints how long the restore took.
+  2. A second container runs `delphi verify-restore`. It checks that the migrations are at
+     head, that exactly one ACTIVE KB exists, that the audit chain verifies and that there are
+     users, and it prints every table's row count as one JSON line. Then a third container drops
+     the database. A failed check stops the Job, which leaves the database for inspection; the
+     next run drops it first.
   3. Record the result in `docs/reports/restore-drill-<date>.md`.
 - **Disaster recovery:** re-run the bootstrap (§6) on a new node, then restore the latest dump
   instead of seeding. `delphi seed --if-empty` skips a non-empty database.

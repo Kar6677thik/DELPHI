@@ -2,7 +2,7 @@ import { act, screen, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { describe, expect, it } from 'vitest';
 
-import { slaLabel } from '../src/routes/CasesPage';
+import { expectedLoss, slaLabel, summary } from '../src/routes/CasesPage';
 import { FakeEventSource } from './fakeEventSource';
 import { mockCase, problem, setMockSession } from './mocks/handlers';
 import { server } from './mocks/node';
@@ -77,6 +77,77 @@ describe('case queue', () => {
   });
 });
 
+describe('queue order (docs/18 §2)', () => {
+  it('re-sorts on request, soonest SLA first by default', async () => {
+    setMockSession('viewer');
+    const sorts: (string | null)[] = [];
+    server.use(
+      http.get('/api/v1/cases', ({ request }) => {
+        sorts.push(new URL(request.url).searchParams.get('sort'));
+        return HttpResponse.json({ items: [mockCase()], next_cursor: null });
+      }),
+    );
+    const { user } = renderApp('/cases');
+    expect(
+      await screen.findByRole('table', { name: 'Cases, soonest SLA first' }),
+    ).toBeInTheDocument();
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Order' }),
+      'Highest expected loss',
+    );
+    expect(
+      await screen.findByRole('table', { name: 'Cases, highest expected loss first' }),
+    ).toBeInTheDocument();
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Order' }), 'Newest');
+    expect(await screen.findByRole('table', { name: 'Cases, newest first' })).toBeInTheDocument();
+    expect(sorts).toEqual(['sla_due_at', 'expected_loss', 'opened_at']);
+  });
+});
+
+describe('expected loss (docs/18 §2, #208)', () => {
+  it("shows an open case's stored recommendation's expected loss", async () => {
+    setMockSession('viewer');
+    server.use(
+      http.get('/api/v1/cases', () =>
+        HttpResponse.json({
+          items: [
+            mockCase({
+              recommended_decision: 'CONFIRM_FRAUD',
+              risk_by_decision: { CONFIRM_FRAUD: 1_200_000.4, RELEASE: 30_000_000 },
+            }),
+            mockCase({ id: '01930000-0000-7000-8000-000000000002' }),
+          ],
+          next_cursor: null,
+        }),
+      ),
+    );
+    renderApp('/cases');
+    const rows = within(await screen.findByRole('table')).getAllByRole('row');
+    expect(rows[0]).toHaveTextContent('Expected loss');
+    expect(rows[1]).toHaveTextContent('₹12,000.00');
+    expect(rows[2]).toHaveTextContent('—'); // a row without a recommendation
+  });
+
+  it('reads the loss of the recommended decision, and nothing else', () => {
+    expect(expectedLoss(mockCase())).toBeNull();
+    expect(
+      expectedLoss(
+        mockCase({ recommended_decision: 'RELEASE', risk_by_decision: { RELEASE: 7.6 } }),
+      ),
+    ).toBe(8);
+    expect(
+      expectedLoss(
+        mockCase({ recommended_decision: 'RELEASE', risk_by_decision: { CONFIRM_FRAUD: 5 } }),
+      ),
+    ).toBeNull();
+    expect(
+      expectedLoss(
+        mockCase({ recommended_decision: 'RELEASE', risk_by_decision: { RELEASE: 'x' } }),
+      ),
+    ).toBeNull();
+  });
+});
+
 describe('slaLabel', () => {
   const now = Date.parse('2026-11-14T10:00:00Z');
 
@@ -120,5 +191,31 @@ describe('live updates', () => {
     });
     expect(await screen.findByText('Coerced victim — digital arrest')).toBeInTheDocument();
     expect(calls).toBe(2);
+  });
+});
+
+describe('queue summary', () => {
+  it('counts the open cases and those past their SLA', () => {
+    const late = mockCase({ id: '01930000-0000-7000-8000-0000000000c2', sla_breached: true });
+    expect(summary([mockCase()], false)).toBe('1 open case, none past SLA.');
+    expect(summary([mockCase(), late], false)).toBe('2 open cases, 1 past their SLA.');
+  });
+
+  it('says it shows only the first page when more cases follow', () => {
+    expect(summary([mockCase()], true)).toBe('Showing the first 1 cases.');
+    const late = mockCase({ id: '01930000-0000-7000-8000-0000000000c3', sla_breached: true });
+    expect(summary([mockCase(), late], true)).toBe('Showing the first 2 cases; 1 past their SLA.');
+  });
+
+  it('shows the first-page wording on the queue when the server has more', async () => {
+    setMockSession('viewer');
+    server.use(
+      http.get('/api/v1/cases', () =>
+        HttpResponse.json({ items: [mockCase()], next_cursor: 'next-page' }),
+      ),
+    );
+    renderApp('/cases');
+    expect(await screen.findByText('Showing the first 1 cases.')).toBeVisible();
+    expect(screen.queryByText(/none past SLA/)).not.toBeInTheDocument();
   });
 });

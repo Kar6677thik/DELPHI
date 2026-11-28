@@ -1,6 +1,6 @@
-# CI (docs/23 §3): backend, frontend, contract and e2e jobs. Secret and image scanning arrive
-# with the security review (#127). The commit-policy check is in policy.yml. This workflow never
-# writes to the repository.
+# CI (docs/23 §3): backend, frontend, contract, e2e and the security scanners (docs/19 §5,
+# docs/21 §6, #127). The commit-policy check is in policy.yml. This workflow never writes to the
+# repository.
 name: ci
 
 # Runs once per PR update (not also on the branch push, which doubled every run), and from
@@ -39,7 +39,7 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           python-version: "3.12"
           enable-cache: true
@@ -118,18 +118,35 @@ jobs:
         run: pnpm check:api
 
   # End to end (docs/21 §4): the production image in the compose stack (compose.yaml), and the
-  # Playwright journeys against it. For now the M0 login smoke test; the story journeys join as
+  # Playwright journeys against it: the M0 login smoke test, and the story journeys as
   # their milestones land.
   e2e:
     # The browser runs in Microsoft's Playwright image (Chromium and its system packages
     # included, the same version as @playwright/test), so the job never needs apt: Ubuntu's
     # mirrors timing out was the e2e job's only flake.
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Start the stack (postgres, migrate, api, worker)
         run: docker compose up --build --detach --wait --wait-timeout 300 api worker
+      # The story journeys (E2E-S2, #101) need the demo dataset with its personas, and the
+      # sensing models trained on it: the seed job queues the training. About two minutes.
+      - name: Seed the demo dataset and train the models
+        run: |
+          docker compose exec -T api delphi seed --profile demo
+          jobs() {
+            docker compose exec -T postgres psql -U postgres -d delphi -tA -c \
+              "select type || ' ' || status from delphi.jobs
+               where type in ('GENERATE_DATASET', 'TRAIN_SENSING') order by created_at"
+          }
+          for _ in $(seq 1 90); do
+            state="$(jobs)"
+            if grep -q FAILED <<<"$state"; then echo "$state"; exit 1; fi
+            if grep -q "TRAIN_SENSING SUCCEEDED" <<<"$state"; then echo "$state"; exit 0; fi
+            sleep 10
+          done
+          echo "the dataset and models were not ready in 15 minutes:"; jobs; exit 1
       - name: Journeys (Playwright 1.55.0, Chromium)
         run: >-
           docker run --rm --network host --ipc host
@@ -144,3 +161,59 @@ jobs:
       - name: Stop the stack
         if: always()
         run: docker compose down --volumes
+
+  # Secrets in the history, vulnerable Python dependencies and risky Python code (docs/19 §5).
+  # pnpm audit runs in the frontend job. Tools run from images and packages pinned exactly.
+  security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # gitleaks reads every commit
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          working-directory: backend
+      - name: Secrets (gitleaks 8.28.0, the whole history)
+        run: >-
+          docker run --rm --volume "$PWD:/repo"
+          ghcr.io/gitleaks/gitleaks:v8.28.0@sha256:cdbb7c955abce02001a9f6c9f602fb195b7fadc1e812065883f695d1eeaba854
+          git /repo --redact --no-banner --exit-code 1
+      - name: Python dependencies (pip-audit 2.9.0, runtime only)
+        working-directory: backend
+        run: |
+          uv export --frozen --no-dev --no-hashes --no-emit-project > "$RUNNER_TEMP/requirements.txt"
+          uvx pip-audit==2.9.0 --requirement "$RUNNER_TEMP/requirements.txt" --strict --progress-spinner off
+      - name: Python code (bandit 1.8.6, settings in pyproject.toml)
+        working-directory: backend
+        run: uvx bandit[toml]==1.8.6 --configfile pyproject.toml --recursive src --quiet
+
+  # The production image, built but never pushed, scanned for HIGH and CRITICAL vulnerabilities
+  # that have a fix (docs/21 §6). A waiver goes in security/waivers.yaml, then .trivyignore.
+  image-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build the image (not pushed)
+        run: docker build --tag delphi:scan .
+      - name: Scan (Trivy 0.65.0)
+        run: >-
+          docker run --rm --volume /var/run/docker.sock:/var/run/docker.sock
+          --volume "$PWD:/src" --workdir /src
+          aquasec/trivy:0.65.0@sha256:a22415a38938a56c379387a8163fcb0ce38b10ace73e593475d3658d578b2436
+          image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1
+          --ignorefile .trivyignore --no-progress delphi:scan
+
+  # New dependencies a PR adds, checked against the GitHub advisory database.
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/dependency-review-action@bbc44d14a204704ccc493733616cd1e93a0321ec # v5.0.1
+        with:
+          fail-on-severity: high

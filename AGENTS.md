@@ -29,7 +29,7 @@ comments, failing checks, and the next assigned issue.
 | The human says | You do |
 |---|---|
 | **"continue"** (or "what's next") | 1. An open PR of theirs with unaddressed review comments or failing checks comes first: handle it as below. 2. Otherwise, if the current branch is `m<N>/<issue>-…`, read that issue and its latest comments, and finish the work. 3. Otherwise, start the next assigned issue: the lowest milestone first, skipping `status:blocked`, and skipping issues whose "Notes / dependencies" are not merged yet. Follow §1 (read the linked spec, check overlap) and comment on the issue that you started. |
-| **"check the PR"** / **"check comments"** | For each of their open PRs: read the conversation (`gh pr view <N> --comments`) **and** the inline review comments (`gh api repos/Kar6677thik/DELPHI/pulls/<N>/comments`). Fix each point in a new commit, run the §5 gates, push, then reply to each comment saying what changed (or why not). Never resolve a reviewer's thread for them unless the fix is plainly complete. If a comment asks for something outside the issue or against the spec, explain it to the human instead of doing it. |
+| **"check the PR"** / **"check comments"** | For each of their open PRs: read the conversation (`gh pr view <N> --comments`) **and** the inline review comments (`gh api repos/Kar6677thik/DELPHI/pulls/<N>/comments`). Fix each point in a new commit, run the §5 checks, push, then reply to each comment saying what changed (or why not). Never resolve a reviewer's thread for them unless the fix is plainly complete. If a comment asks for something outside the issue or against the spec, explain it to the human instead of doing it. |
 | **"check CI"** / **"pipeline"** | CI runs **by itself** on every push to a PR. You never need to trigger it. `gh pr checks <N>`; if one failed, `gh run view <run-id> --log-failed`, reproduce it locally with the §5 commands, fix the cause, push. A run that is still going: tell the human, don't loop on it. |
 | **"what's assigned to me"** | The issue list above, with milestone, labels and whether each one's dependencies are merged. |
 | **"deploy"** | Collaborators don't release. Follow `deploy/README.md` → "Collaborators: requesting a deploy": only after their change is merged to `main`, and then tell the owner. The owner approves every deploy. |
@@ -122,7 +122,10 @@ this repo, so don't depend on the wiki.
 
 ## 5. Before you push
 
-Run the same gates CI runs, from `backend/`:
+CI runs every gate on every push, and branch protection blocks a merge until CI passes. Before a
+push, run the **quick checks** below; CI runs the full suite (#262).
+
+**Quick checks** (always), from `backend/`:
 
 ```sh
 uv sync --frozen
@@ -131,13 +134,35 @@ uv run ruff format --check src tests
 uv run mypy
 uv run lint-imports
 uv run delphi kb validate ../kb
+uv run delphi openapi --check
+uv run pytest <the tests for the area you changed>
+```
+
+"The tests for the area" means its unit tests **and its integration tests on real PostgreSQL**
+(`DELPHI_REQUIRE_INTEGRATION=1`), so a database bug shows up before CI does. A frontend change
+also runs, from `frontend/`: `pnpm lint`, `pnpm typecheck`, `pnpm format:check`, `pnpm test` and
+`pnpm check:api`.
+
+**The full run is CI's.** CI runs the whole suite with coverage on every push, so it is not
+run locally by default (owner decision, 2026-11-27: it saves the contributor's machine). A
+change is **risky** when it touches a migration, `kb/`, or any of:
+- `delphi.platform` (including the job queue, the scheduler and the worker);
+- `delphi.api`;
+- `delphi.engine`;
+- `delphi/guardian/service.py`.
+
+Push a risky change as a **draft** and mark it ready only once CI's full run is green. Run the
+full set locally only to reproduce a CI failure:
+
+```sh
 uv run coverage run -m pytest
 uv run coverage report --include="src/delphi/engine/*" --fail-under=95
 uv run coverage report --fail-under=80
 ```
 
-All must pass. Never skip, delete or weaken a failing test or check to get green. Fix the
-cause, or stop and explain it to the human.
+All checks must pass. Never skip, delete or weaken a failing test or check to get green, and
+never mark a PR ready, or merge it, with red CI. When CI fails, reproduce it locally with the
+full command above and fix the cause, or stop and explain it to the human.
 
 ## 6. Pull requests
 

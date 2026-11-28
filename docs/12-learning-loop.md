@@ -106,6 +106,23 @@ the 7-day count ≥ 30. Alerts appear on the Learning page and in the metrics en
 (`delphi_probe_yield_degraded{source}`). The FDE response (rotate variants, re-elicit) is manual.
 The simulator can inject coaching adaptation (doc 14 §5.3), so the detector can be demonstrated.
 
+**Implementation (#121).** `delphi.learning.drift` is pure: `daily_yields` gives the
+`probe_yield_daily` rows, and `drift_alerts` raises `PROBE_YIELD_DEGRADED` per source and day.
+- The 7-day and 28-day means are weighted by observations.
+- The 28 days end where the 7 begin, and need at least `DELPHI_YIELD_MIN_BASELINE_COUNT` (30)
+  observations, as the 7 days need `DELPHI_YIELD_MIN_RECENT_COUNT` (30).
+- A day is a UTC calendar day (ADR-0014).
+- The numbers are settings (`DELPHI_YIELD_*`, doc 23 §4).
+- **Acceptance (#121, option (c)).** `tests/integration/test_yield_drift_coaching.py` feeds the
+  detector a deterministic stream of DA spell-breaker answers from the frozen response model,
+  each scored by its KB v1 update, with coaching (doc 14 §5.3) from day N:
+  - with shift 1.0 over 7 days, the alert comes by day N + 7;
+  - with the §5.3 default (shift 0.5 over 14 days), w is only 0.25 on day N + 7 and the 7-day
+    mean is still about 0.9 of the baseline. The alert comes on day N + 15, the day after the
+    ramp completes. "By day N + 7" therefore holds only for the faster ramp;
+  - the yield falls only for sessions whose prior leans GENUINE. Where the prior already leans
+    DA, a coached answer is a surprise, and the yield rises.
+
 ## 6. Investigator trace analytics
 
 Doc 09 §5 metrics are computed by the `RUN_LEARNING` job and on page load (cached 60 s).

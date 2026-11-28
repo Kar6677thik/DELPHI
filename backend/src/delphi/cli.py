@@ -8,32 +8,53 @@ errors exit with status 2 and a message naming the variable (fail fast, docs/24 
 from __future__ import annotations
 
 import argparse
+import json
 import logging
+import os
 import sys
 import threading
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
 
 import uvicorn
 from alembic import command
-from sqlalchemy import Engine
+from pydantic import ValidationError
+from sqlalchemy import Engine, text
 
 from delphi.api.app import create_app
 from delphi.api.contract import OPENAPI_FILE, openapi_document
+from delphi.guardian.api import (
+    LiveGuardian,
+    WorkerGuardian,
+    case_trail,
+    live_guardian,
+    worker_guardian,
+)
+from delphi.guardian.service import GuardianService
 from delphi.kb.canonical import content_sha256
 from delphi.kb.issues import KbValidationError
 from delphi.kb.loader import load_and_validate
 from delphi.kb.model import KnowledgeBase
 from delphi.kb.store import active_version, ensure_kb_v1
+from delphi.llm.evaluation import CASES_FILE, load_cases, render_report, run_eval
 from delphi.llm.service import LlmService, primary_provider
 from delphi.navigator.api import OUTREACH as OUTREACH_SOURCE
 from delphi.navigator.api import request_evidence
 from delphi.navigator.jobs import register_navigator_jobs
+from delphi.navigator.reviews import SweepLimits
 from delphi.platform.accounts import BootstrapError, ensure_bootstrap_admin
+from delphi.platform.audit import verify as audit_verify
 from delphi.platform.clock import SystemClock
-from delphi.platform.db import alembic_config, make_engine, make_session_factory
+from delphi.platform.db import (
+    alembic_config,
+    current_revision,
+    make_engine,
+    make_session_factory,
+    migration_head,
+)
 from delphi.platform.errors import DelphiError
 from delphi.platform.events import EventHub
 from delphi.platform.jobs import JobRegistry
@@ -42,14 +63,33 @@ from delphi.platform.metrics import SSE_CLIENTS, metrics_server
 from delphi.platform.settings import Settings, SettingsError, libpq_url, load_settings
 from delphi.platform.wiring import Platform, build_platform
 from delphi.platform.worker import build_registry, install_stop_handlers, run_worker
+from delphi.probes.api import (
+    SimBeneficiaryIntel,
+    SimPhoneRisk,
+    SimSessionTelemetry,
+    passive_executor,
+    passive_fetchers,
+)
 from delphi.probes.registry import CLASSIFIER_NAMES
+from delphi.sensing.api import SensingInference
+from delphi.sensing.config import load_sensing_config
 from delphi.sensing.jobs import register_sensing_jobs
+from delphi.sensing.mule_scores import MuleSweepLimits
 from delphi.sim.api import PROFILES, dataset_exists, request_dataset
+from delphi.sim.customer import LiveCustomer
 from delphi.sim.dataset import generate_dataset
 from delphi.sim.generator_config import load_generator_config
 from delphi.sim.jobs import register_sim_jobs
-from delphi.sim.response_models import GENERATED_FILE, dump_yaml, freeze, load_config
+from delphi.sim.reset import register_reset_job
+from delphi.sim.response_models import (
+    GENERATED_FILE,
+    dump_yaml,
+    freeze,
+    load_config,
+    load_response_models,
+)
 from delphi.sim.stats import dataset_stats, format_report
+from delphi.sim.stories import register_story_job
 
 EXIT_CONFIG_ERROR = 2
 # src/delphi/cli.py → the repository's kb/ (KB v1)
@@ -144,6 +184,7 @@ def _api(settings: Settings) -> int:
     _quiet_alembic()
     platform = build_platform(settings, process="api")
     hub = EventHub(platform.sessions, libpq_url(settings.database_url))
+    live, free_pool = live_guardian_for(platform)
     try:
         password = settings.bootstrap_admin_password
         with platform.sessions.begin() as session:
@@ -161,7 +202,7 @@ def _api(settings: Settings) -> int:
     threading.Thread(target=metrics.serve_forever, name="metrics", daemon=True).start()
     try:
         uvicorn.run(
-            create_app(platform, event_hub=hub),
+            create_app(platform, event_hub=hub, guardian_runner=live),
             host=settings.http_host,
             port=settings.http_port,
             log_config=None,  # logging is configured by configure_logging (docs/20 §1)
@@ -170,6 +211,7 @@ def _api(settings: Settings) -> int:
         )
     finally:
         metrics.shutdown()
+        free_pool()
         platform.close()
     return 0
 
@@ -183,25 +225,101 @@ def _active_kb(platform: Platform) -> KnowledgeBase:
     return active.kb
 
 
+def _guardian_service(
+    platform: Platform, kb: KnowledgeBase
+) -> tuple[GuardianService, Callable[[], None]]:
+    """The Guardian service both runners use (#95, docs/08 §2): the sensing inference as the
+    prior (#92) and the simulated passive adapters over the bank (docs/08 §5). Returns it with a
+    function that frees its thread pool.
+
+    Time runs REAL (`demo_time=False`): `DELPHI_TIME_MODE` (docs/07) is not a setting yet."""
+    settings = platform.settings
+    timeout_ms = (
+        kb.config.guardrails.passive_adapter_timeout_ms + settings.passive_statement_margin_ms
+    )
+    inference = SensingInference(platform.engine, platform.clock)
+    telemetry = SimSessionTelemetry(platform.engine, timeout_ms)
+    fetchers = passive_fetchers(
+        SimBeneficiaryIntel(platform.engine, inference, timeout_ms),
+        SimPhoneRisk(platform.engine, timeout_ms),
+        telemetry,
+        telemetry,
+    )
+    executor = passive_executor(settings.passive_probe_threads)
+    service = GuardianService(
+        platform.sessions,
+        platform.clock,
+        inference,
+        fetchers,
+        executor,
+        otp_key=settings.otp_key,
+    )
+    return service, executor.shutdown
+
+
+def live_guardian_for(
+    platform: Platform, *, kb_source: Callable[[Platform], KnowledgeBase] = _active_kb
+) -> tuple[LiveGuardian, Callable[[], None]]:
+    """The api's Guardian runner slot (#95, docs/08 §2): an API runner for the mock phone's
+    LIVE sessions. Returns the slot and a function that frees its thread pool."""
+    service, free_pool = _guardian_service(platform, kb_source(platform))
+    return live_guardian(service, platform.sessions, platform.clock), free_pool
+
+
+@dataclass
+class WorkerParts:
+    """What the worker's composition root builds: the job handlers, and with the simulator's
+    pool that pool and the WORKER Guardian runner (#95, #101)."""
+
+    registry: JobRegistry
+    sim_engine: Engine | None = None
+    guardian: WorkerGuardian | None = None
+    free_pool: Callable[[], None] | None = None
+
+    def close(self) -> None:
+        if self.guardian is not None:
+            self.guardian.stop()
+        if self.free_pool is not None:
+            self.free_pool()
+        if self.sim_engine is not None:
+            self.sim_engine.dispose()
+
+
 def worker_registry(
     platform: Platform, *, kb_source: Callable[[Platform], KnowledgeBase] = _active_kb
-) -> tuple[JobRegistry, Engine | None]:
+) -> WorkerParts:
     """The worker's handlers: the platform's and sensing's, plus the simulator's when it has its
     `delphi_sim` pool (`DELPHI_SIM_DATABASE_URL`, docs/17 §2). The api never gets that pool.
-    The simulator's jobs use the ACTIVE KB (``kb_source``). Returns the sim engine too, for the
-    caller to dispose of."""
+    The simulator's jobs use the ACTIVE KB (``kb_source``).
+
+    With the pool comes the worker's Guardian runner (runner WORKER, docs/08 §1): simulated
+    customers answer its AUTOPLAY sessions, which read ground truth through `delphi_sim`, and
+    `DEMO_STORY` submits the story payments to it. The caller starts it (``guardian.start()``
+    resumes its unfinished sessions, FR-GDN-14) and closes the parts."""
     registry = build_registry(platform)
-    register_sensing_jobs(
-        registry, engine=platform.engine, sessions=platform.sessions, clock=platform.clock
-    )
     settings = platform.settings
+    register_sensing_jobs(
+        registry,
+        engine=platform.engine,
+        sessions=platform.sessions,
+        clock=platform.clock,
+        mule_sweep=MuleSweepLimits.of(settings),
+    )
     llm = LlmService(
         platform.sessions,
         platform.clock,
         primary_provider(settings),
         settings.llm_daily_token_budget,
     )
-    register_navigator_jobs(registry, sessions=platform.sessions, llm=llm)
+    register_navigator_jobs(
+        registry,
+        sessions=platform.sessions,
+        llm=llm,
+        trail=case_trail,
+        clock=platform.clock,
+        p_mule_fallback=load_sensing_config().features.mule_score_fallback,
+        review_limits=SweepLimits.of(settings),
+    )
     if settings.simulation_enabled and settings.sim_database_url is None:
         # The api accepts simulated calls on this flag; a worker without the simulator's pool
         # would leave them queued for ever (docs/09 §3).
@@ -211,7 +329,7 @@ def worker_registry(
         )
     if settings.sim_database_url is None:
         log.warning("worker.sim_jobs_disabled", reason="DELPHI_SIM_DATABASE_URL is not set")
-        return registry, None
+        return WorkerParts(registry)
     kb = kb_source(platform)
     sim_engine = make_engine(
         settings.sim_database_url,
@@ -227,7 +345,24 @@ def worker_registry(
         allowed_profiles=settings.allowed_dataset_profiles,
         record_outreach=_outreach_recorder(platform),
     )
-    return registry, sim_engine
+    service, free_pool = _guardian_service(platform, kb)
+    customer = LiveCustomer(sim_engine, load_response_models(), kb.config.classifiers)
+    guardian = worker_guardian(service, customer, platform.sessions, platform.clock)
+    register_story_job(
+        registry,
+        sim_engine=sim_engine,
+        clock=platform.clock,
+        customer=customer,
+        submit=guardian.submit,
+    )
+    register_reset_job(
+        registry,
+        sim_engine=sim_engine,
+        clock=platform.clock,
+        timeout_s=settings.demo_reset_timeout_s,
+        drop_sessions=guardian.abandon,
+    )
+    return WorkerParts(registry, sim_engine, guardian, free_pool)
 
 
 def _outreach_recorder(platform: Platform) -> Callable[[UUID, str], None]:
@@ -254,13 +389,23 @@ def _worker(settings: Settings) -> int:
     stop = threading.Event()
     install_stop_handlers(stop)
     platform = build_platform(settings, process="worker")
-    registry, sim_engine = worker_registry(platform)
+    parts = worker_registry(platform)
     try:
-        run_worker(platform, stop, registry=registry)
+        if parts.guardian is not None:
+            parts.guardian.start()
+            # Stop the session tasks when asked to stop, before the platform's pool closes.
+            threading.Thread(
+                target=_on_stop, args=(stop, parts.guardian.stop), name="guardian-stop", daemon=True
+            ).start()
+        run_worker(platform, stop, registry=parts.registry)
     finally:
-        if sim_engine is not None:
-            sim_engine.dispose()
+        parts.close()
     return 0
+
+
+def _on_stop(stop: threading.Event, then: Callable[[], None]) -> None:
+    stop.wait()
+    then()
 
 
 def _seed(settings: Settings, args: argparse.Namespace) -> int:
@@ -325,6 +470,100 @@ def _migrate(settings: Settings) -> int:
     return 0
 
 
+LLM_EVAL_REPORTS = _REPO_KB_DIR.parent / "docs" / "reports"
+
+
+def _llm_eval(args: argparse.Namespace) -> int:
+    """docs/15 §8: run the fixed cases through the real model and write the report. Needs
+    DELPHI_LLM_PROVIDER=anthropic and ANTHROPIC_API_KEY; it uses no database."""
+    try:
+        settings = Settings(  # the eval reads no database; any other DELPHI_* comes from env
+            database_url=os.environ.get("DELPHI_DATABASE_URL", "postgresql://unused/llm-eval")
+        )
+    except ValidationError as exc:
+        print(f"delphi: invalid configuration: {exc}", file=sys.stderr)
+        return EXIT_CONFIG_ERROR
+    provider = primary_provider(settings)
+    if provider is None:
+        print(
+            "delphi llm-eval: set DELPHI_LLM_PROVIDER=anthropic and ANTHROPIC_API_KEY"
+            " (the run calls the real model and costs money)",
+            file=sys.stderr,
+        )
+        return EXIT_CONFIG_ERROR
+    report = run_eval(provider, load_cases(Path(args.cases)))
+    today = datetime.now(UTC).date()
+    out = Path(args.out) if args.out else LLM_EVAL_REPORTS / f"llm-eval-{today.isoformat()}.md"
+    out.write_text(render_report(report, on=today, git_sha=settings.version), encoding="utf-8")
+    print(f"llm-eval: {'PASS' if report.passed else 'FAIL'}; report written to {out}")
+    return 0 if report.passed else 1
+
+
+# The schemas whose tables the restore check counts (docs/17).
+RESTORE_SCHEMAS = ("delphi", "bank")
+
+
+def verify_restore_report(settings: Settings) -> dict[str, object]:
+    """docs/23 §8 restore drill: is the database at DELPHI_DATABASE_URL a usable restore? It is
+    if its migrations are at this build's head, exactly one KB version is ACTIVE, the audit chain
+    verifies end to end, and it has users. Also counts every table's rows, for the drill report."""
+    engine = make_engine(settings.database_url, application_name="delphi-verify-restore")
+    try:
+        with make_session_factory(engine)() as session:
+            conn = session.connection()
+            names = conn.execute(
+                text(
+                    "SELECT table_schema || '.' || table_name FROM information_schema.tables"
+                    " WHERE table_schema = ANY(:schemas) AND table_type = 'BASE TABLE'"
+                    " ORDER BY 1"
+                ),
+                {"schemas": list(RESTORE_SCHEMAS)},
+            ).scalars()
+            # The names come from the catalog, not from input; quoted as identifiers anyway.
+            counts = {
+                name: int(
+                    conn.execute(
+                        text(
+                            "SELECT count(*) FROM {}.{}".format(  # nosec B608
+                                *(f'"{p}"' for p in name.split("."))
+                            )
+                        )
+                    ).scalar_one()
+                )
+                for name in names
+            }
+            revision = current_revision(conn)
+            active = conn.execute(
+                text("SELECT count(*) FROM delphi.kb_versions WHERE status = 'ACTIVE'")
+            ).scalar_one()
+            chain = audit_verify(session)
+    finally:
+        engine.dispose()
+    head = migration_head(settings.migrations_dir)
+    checks = {
+        "migrations_at_head": revision is not None and revision == head,
+        "one_active_kb": active == 1,
+        "audit_chain_verifies": chain.ok,
+        "has_users": counts.get("delphi.users", 0) > 0,
+    }
+    return {
+        "ok": all(checks.values()),
+        "checks": checks,
+        "revision": revision,
+        "head": head,
+        "audit_entries_checked": chain.checked,
+        "audit_first_bad_id": chain.first_bad_id,
+        "row_counts": counts,
+    }
+
+
+def _verify_restore(settings: Settings) -> int:
+    report = verify_restore_report(settings)
+    # One JSON line, like the log lines around it on stdout.
+    print(json.dumps({"event": "verify_restore.report", **report}, sort_keys=True))
+    return 0 if report["ok"] else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="delphi")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -348,6 +587,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     seed.set_defaults(func=lambda args: _with_settings(lambda s: _seed(s, args))(args))
 
+    llm_eval = sub.add_parser(
+        "llm-eval", help="evaluate the LLM path against the real model (docs/15 §8; costs money)"
+    )
+    llm_eval.add_argument("--cases", default=str(CASES_FILE), help="the eval cases (JSONL)")
+    llm_eval.add_argument("--out", help="default: docs/reports/llm-eval-<date>.md")
+    llm_eval.set_defaults(func=_llm_eval)
+
+    sub.add_parser(
+        "verify-restore",
+        help="check that the database at DELPHI_DATABASE_URL is a usable restore (docs/23 §8)",
+    ).set_defaults(func=_with_settings(_verify_restore))
     openapi = sub.add_parser("openapi", help="write the OpenAPI contract (docs/16)")
     openapi.add_argument("--out", default=str(OPENAPI_FILE), help="default: backend/openapi.json")
     openapi.add_argument(
