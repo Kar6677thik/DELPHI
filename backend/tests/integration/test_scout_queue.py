@@ -1,0 +1,246 @@
+"""The unexplained queue's rules on a real database (docs/11 §1, FR-SCT-01, #117): decided
+sessions flagged unexplained and disposed account reviews at the threshold enter; dismissed
+items and members of a promoted typology's cluster leave."""
+
+from __future__ import annotations
+
+import json
+from datetime import timedelta
+from typing import Any
+from uuid import UUID, uuid4
+
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import text, update
+from sqlalchemy.dialects import postgresql
+
+from delphi.api.security import Permission, Principal, current_principal
+from delphi.guardian.api import unexplained_sessions_query
+from delphi.guardian.tables import guardian_sessions
+from delphi.kb.store import active_version
+from delphi.platform.errors import DelphiError, ProblemCode
+from delphi.scout import queue as queue_module
+from delphi.scout.api import dismiss, queue_items
+from delphi.scout.tables import scout_clusters, scout_runs, typology_drafts
+
+from .test_cases import BROWSER, T0, Env, _investigator, env, writer  # noqa: F401 - fixtures
+
+FDE = Principal(UUID(int=31), frozenset(Permission))
+
+
+def _decided(e: Env, *, unexplained: bool, minutes: int = 0) -> UUID:
+    session_id = e.new_session()
+    with e.owner.begin() as conn:
+        conn.execute(
+            update(guardian_sessions)
+            .where(guardian_sessions.c.id == session_id)
+            .values(
+                status="DECIDED",
+                decision="HOLD_FOR_REVIEW",
+                terminal_reason="STOP",
+                decided_at=T0 + timedelta(minutes=minutes),
+                unexplained=unexplained,
+                posterior={"GENUINE": 0.5, "UNEXPLAINED": 0.5 if unexplained else 0.1},
+            )
+        )
+    return session_id
+
+
+def _review(e: Env, p_unexplained: float) -> UUID:
+    """A disposed ACCOUNT_REVIEW case with this terminal P(UNEXPLAINED)."""
+    case_id, account = uuid4(), uuid4()
+    with e.owner.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO bank.accounts (id, customer_id, bank_code, opened_at, kyc_level,"
+                " status, balance_paise) VALUES (:a, NULL, 'DLPH', :t, 'FULL', 'ACTIVE', 0)"
+            ),
+            {"a": account, "t": T0},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO delphi.cases (id, type, protocol, status, subject_account_id,"
+                " kb_version_id, prior_components, posterior, leading_hypothesis,"
+                " amount_at_stake_paise, opened_at, sla_due_at, disposition, disposed_at,"
+                " is_override, dd_pack_complete, unexplained, version)"
+                " VALUES (:c, 'ACCOUNT_REVIEW', 'STANDARD', 'DISPOSED', :a, :k, '{}',"
+                " CAST(:p AS jsonb), 'UNEXPLAINED', 0, :t, :t, 'CLEAR', :t, false, false,"
+                " false, 2)"
+            ),
+            {
+                "c": case_id,
+                "a": account,
+                "k": e.kb_version_id,
+                "p": json.dumps({"MULE": 1 - p_unexplained, "UNEXPLAINED": p_unexplained}),
+                "t": T0,
+            },
+        )
+    return case_id
+
+
+def _ids(e: Env) -> list[UUID]:
+    with e.sessions() as s:
+        version = active_version(s)
+        assert version is not None
+        return [i.subject_id for i in queue_items(s, version.kb, limit=200)]
+
+
+def test_the_entry_rules(env: Env) -> None:  # noqa: F811
+    flagged = _decided(env, unexplained=True, minutes=1)
+    _decided(env, unexplained=False)
+    env.new_session()  # not decided yet
+    review = _review(env, 0.4)
+    _review(env, 0.2)  # below unexplained_routing_threshold (0.35)
+    assert _ids(env) == [review, flagged]  # oldest first
+
+
+def test_a_promoted_typology_takes_its_members_out(env: Env) -> None:  # noqa: F811
+    member, other = _decided(env, unexplained=True), _decided(env, unexplained=True)
+    run, cluster, draft = uuid4(), uuid4(), uuid4()
+    ref = {"subject_type": "GUARDIAN_SESSION", "subject_id": str(member)}
+    with env.owner.begin() as conn:
+        conn.execute(
+            scout_runs.insert().values(id=run, started_at=T0, n_items=2, n_clusters=1, params={})
+        )
+        conn.execute(
+            scout_clusters.insert().values(
+                id=cluster,
+                run_id=run,
+                size=1,
+                member_refs=[ref],
+                distinguishing_features=[],
+                outcome_profile={},
+                created_at=T0,
+            )
+        )
+        conn.execute(
+            typology_drafts.insert().values(
+                id=draft,
+                cluster_id=cluster,
+                status="CANDIDATE",
+                revision=1,
+                spec={},
+                editors=[],
+                created_at=T0,
+                updated_at=T0,
+                version=1,
+            )
+        )
+    assert set(_ids(env)) == {member, other}  # a candidate assigns nothing yet
+    with env.owner.begin() as conn:
+        conn.execute(
+            update(typology_drafts).where(typology_drafts.c.id == draft).values(status="PROMOTED")
+        )
+    assert _ids(env) == [other]
+
+
+def _post(client: TestClient, path: str, body: dict[str, Any]) -> Any:
+    headers = {"Idempotency-Key": str(uuid4()), **BROWSER}
+    return client.post(f"/api/v1{path}", json=body, headers=headers)
+
+
+def test_an_fde_engineer_dismisses_an_item(
+    env: Env,  # noqa: F811
+    writer: tuple[TestClient, Principal],  # noqa: F811
+) -> None:
+    client, investigator = writer
+    flagged = _decided(env, unexplained=True)
+    listed = client.get("/api/v1/scout/queue").json()["items"]
+    assert [i["id"] for i in listed] == [str(flagged)]
+    assert listed[0]["subject_type"] == "GUARDIAN_SESSION"
+    path = f"/scout/queue/{flagged}/dismiss"
+    assert _post(client, path, {"reason": "Known merchant refund"}).status_code == 403
+    fde = _investigator(env)  # a real user row for the dismissal's foreign key
+    client.app.dependency_overrides[current_principal] = lambda: Principal(  # type: ignore[attr-defined]
+        fde.user_id, frozenset(Permission)
+    )
+    assert _post(client, path, {"reason": " "}).status_code == 422
+    dismissed = _post(client, path, {"reason": "Known merchant refund"})
+    assert dismissed.status_code == 200, dismissed.text
+    assert client.get("/api/v1/scout/queue").json()["items"] == []
+    assert _post(client, path, {"reason": "again"}).status_code == 404
+    with env.owner.connect() as conn:
+        audited = conn.execute(
+            text("SELECT count(*) FROM delphi.audit_log WHERE action = 'scout.queue.dismissed'")
+        ).scalar_one()
+    assert audited == 1
+    del investigator
+
+
+def test_the_queue_pages_with_a_keyset_cursor(
+    env: Env,  # noqa: F811
+    writer: tuple[TestClient, Principal],  # noqa: F811
+) -> None:
+    client, _ = writer
+    flagged = [_decided(env, unexplained=True, minutes=m) for m in range(5)]
+    seen: list[str] = []
+    cursor = None
+    while True:
+        params = {"limit": 2, **({"cursor": cursor} if cursor else {})}
+        page = client.get("/api/v1/scout/queue", params=params).json()
+        seen += [i["id"] for i in page["items"]]
+        cursor = page["next_cursor"]
+        if cursor is None:
+            break
+    assert seen == [str(i) for i in flagged]  # oldest first, each once
+    assert client.get("/api/v1/scout/queue", params={"limit": 201}).status_code == 422
+    assert client.get("/api/v1/scout/queue", params={"cursor": "nope"}).status_code == 422
+
+
+def test_losing_a_concurrent_dismissal_is_a_409(
+    env: Env,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two dismissals of one item with different Idempotency-Keys, both past the lookup: the
+    second to insert finds the row taken and gets a 409, not a 500 on the primary key."""
+    flagged = _decided(env, unexplained=True)
+    fde = _investigator(env)
+    with env.sessions.begin() as s:
+        version = active_version(s)
+        assert version is not None
+        kb = version.kb
+        item = queue_module.queue_item(s, kb, flagged)
+        dismiss(s, env.clock, kb, flagged, reason="Known merchant", by=fde.user_id)
+    # The other request looked the item up before the first one committed.
+    monkeypatch.setattr(queue_module, "queue_item", lambda *_a: item)
+    with env.sessions.begin() as s, pytest.raises(DelphiError) as raised:
+        dismiss(s, env.clock, kb, flagged, reason="Duplicate", by=fde.user_id)
+    assert raised.value.code is ProblemCode.INVALID_STATE_TRANSITION
+
+
+def test_the_count_is_bounded_by_since_and_the_cap(env: Env) -> None:  # noqa: F811
+    """#254: the auto-trigger's count reads items entered since a time, and stops at a cap."""
+    for minute in range(3):
+        _decided(env, unexplained=True, minutes=minute)
+    with env.sessions() as s:
+        version = active_version(s)
+        assert version is not None
+        count = queue_module.count_queue_items
+        assert count(s, version.kb, since=T0, cap=10) == 3
+        assert count(s, version.kb, since=T0, cap=2) == 2
+        assert count(s, version.kb, since=T0 + timedelta(minutes=1), cap=10) == 2
+        [item] = queue_items(s, version.kb, limit=1)
+        typed = queue_module.queue_item(s, version.kb, item.subject_id, item.subject_type)
+        assert typed == item
+        other = (
+            queue_module.SubjectType.CASE
+            if item.subject_type is queue_module.SubjectType.GUARDIAN_SESSION
+            else queue_module.SubjectType.GUARDIAN_SESSION
+        )
+        assert queue_module.queue_item(s, version.kb, item.subject_id, other) is None
+
+
+def _plan(e: Env, query: Any) -> str:
+    """EXPLAIN with sequential scans off: a plan that still scans the table can't use an index."""
+    sql = str(query.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
+    with e.owner.begin() as conn:
+        conn.exec_driver_sql("SET LOCAL enable_seqscan = off")
+        return "\n".join(r[0] for r in conn.exec_driver_sql(f"EXPLAIN {sql}"))
+
+
+def test_the_session_source_uses_its_partial_index(env: Env) -> None:  # noqa: F811
+    """#254 review: `WHERE unexplained` matches the partial index; `IS true` did not, so every
+    page, lookup and count read the whole of guardian_sessions."""
+    _decided(env, unexplained=True)
+    query = unexplained_sessions_query().order_by(text("entered_at"), text("subject_id")).limit(50)
+    assert "guardian_sessions_unexplained_decided_idx" in _plan(env, query)
