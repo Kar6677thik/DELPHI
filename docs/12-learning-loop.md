@@ -83,7 +83,18 @@ The resamples, the ESS minimum and the 50% coverage minimum are settings
 
 **Rows.** E_i is rebuilt from the logged candidates table as doc 06 §10 defines it (eligible,
 net ≥ 0, tier ≤ tier(a*)), with tiers from the session's pinned KB. Sessions whose first active
-probe has no propensity (no exploration configured) are left out. "Greedy under candidate KB"
+probe has no propensity (no exploration configured) are left out. Only a first active probe run
+that ended COMPLETED or TIMED_OUT counts: a TIMED_OUT run stores the belief unchanged, so its
+reward is 0, while a PENDING or AWAITING_CUSTOMER run hasn't ended and an ERROR run observed
+nothing.
+
+The stored candidates' nets are rounded to the paise, so the rebuilt E_i and a* can differ from
+the planner's: a net of −0.4 is stored as 0 and joins E, and 100.6 against 99.5 becomes a tie
+that the tie-break may settle the other way. Each row is therefore checked against its own log,
+with the session's pinned ε: a GREEDY row's action must be the rebuilt a*, and the logged
+propensity must equal (1 − ε)·[a = a*] + ε / |E_i|. A row that disagrees is left out and counted
+as `rebuild_mismatch` in the report. The lasting fix is to store the planner's E on the probe
+run (#319). "Greedy under candidate KB"
 re-plans each context with a learning run's candidate KB, so it arrives with the learning runs
 (§2); the other targets need only the logged row (`delphi.learning.ope`).
 

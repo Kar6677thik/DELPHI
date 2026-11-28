@@ -8,12 +8,17 @@ from uuid import UUID
 import numpy as np
 import pytest
 
+from delphi.engine.planner import TIE_TOLERANCE_PAISE, explore
+from delphi.engine.types import CompiledProfile
 from delphi.learning.ope import (
     LoggedCandidate,
     LoggedProbe,
     OpeConfig,
     OpeInputError,
     OpeStatus,
+    RebuildMismatchError,
+    RoundRow,
+    collect_rounds,
     effective_sample_size,
     evaluate,
     exploration_set,
@@ -126,7 +131,9 @@ def test_exploration_set_follows_docs_06_section_10() -> None:
 def test_logged_probe_from_a_probe_run_row() -> None:
     run = {
         "probe_key": "Y",
-        "propensity": 0.1,
+        "status": "COMPLETED",
+        "selected_by": "EXPLORE",
+        "propensity": 0.1,  # ε / |E| = 0.2 / 2
         "candidates": [
             {
                 "source_key": "X",
@@ -146,11 +153,103 @@ def test_logged_probe_from_a_probe_run_row() -> None:
         "posterior_before": {"GENUINE": 0.5, "APP_INVESTMENT": 0.5},
         "posterior_after": {"GENUINE": 0.2, "APP_INVESTMENT": 0.8},
     }
-    probe = logged_probe(UUID(int=9), run, "APP_INVESTMENT", {"X": 1, "Y": 1})
+    tiers = {"X": 1, "Y": 1}
+    probe = logged_probe(UUID(int=9), run, "APP_INVESTMENT", tiers, EPS)
     assert probe.exploration_set == ("X", "Y")
     assert probe.reward == pytest.approx(math.log2(0.8 / 0.5))
     with pytest.raises(OpeInputError):
-        logged_probe(UUID(int=9), {**run, "propensity": None}, "GENUINE", {"X": 1, "Y": 1})
+        logged_probe(UUID(int=9), {**run, "propensity": None}, "GENUINE", tiers, EPS)
+    # #210 review: a run with no posterior after it (an ERROR run) is an input error, not a
+    # TypeError, and only COMPLETED and TIMED_OUT runs count (docs/12 §3).
+    with pytest.raises(OpeInputError, match="no posterior"):
+        logged_probe(UUID(int=9), {**run, "posterior_after": None}, "GENUINE", tiers, EPS)
+    with pytest.raises(OpeInputError, match="ERROR"):
+        logged_probe(UUID(int=9), {**run, "status": "ERROR"}, "GENUINE", tiers, EPS)
+    timed_out = {**run, "status": "TIMED_OUT", "posterior_after": run["posterior_before"]}
+    assert logged_probe(UUID(int=9), timed_out, "GENUINE", tiers, EPS).reward == 0.0
+
+
+def _row(
+    nets: dict[str, float],
+    tiers: dict[str, int],
+    action: str,
+    selected_by: str,
+    propensity: float,
+    *,
+    session: int = 1,
+) -> RoundRow:
+    """A probe run as Guardian stores it: each net rounded to the paise (``_paise``)."""
+    run = {
+        "probe_key": action,
+        "status": "COMPLETED",
+        "selected_by": selected_by,
+        "propensity": propensity,
+        "candidates": [
+            {
+                "source_key": key,
+                "eligible": True,
+                "cost_paise": 100,
+                "voi_myopic_paise": 0,
+                "net_value_paise": round(net),
+            }
+            for key, net in nets.items()
+        ],
+        "posterior_before": {"GENUINE": 0.5, "MULE": 0.5},
+        "posterior_after": {"GENUINE": 0.6, "MULE": 0.4},
+    }
+    return RoundRow(UUID(int=session), run, "GENUINE", tiers, EPS)
+
+
+def test_a_negative_net_stored_as_zero_is_a_rebuild_mismatch() -> None:
+    # The planner's E is {X}: Y's net of −0.4 paise is below 0. Stored, it reads 0, so the
+    # rebuilt E would be {X, Y} and the logged propensity 1 would be taken for 0.8 + 0.2 / 2.
+    bad = _row({"X": 500.0, "Y": -0.4}, {"X": 1, "Y": 1}, "X", "GREEDY", 1.0, session=1)
+    good = _row({"X": 500.0, "Y": 3.0}, {"X": 1, "Y": 1}, "X", "GREEDY", 0.8 + EPS / 2, session=2)
+    with pytest.raises(RebuildMismatchError):
+        logged_probe(bad.session_id, bad.run, bad.label, bad.tier_rank, bad.epsilon)
+    rounds = collect_rounds([bad, good])
+    assert [p.session_id for p in rounds.probes] == [UUID(int=2)]
+    assert rounds.rebuild_mismatch == 1
+
+
+def test_a_tie_made_by_rounding_is_a_rebuild_mismatch() -> None:
+    # 100.6 and 99.5 are not a tie as floats (a* = A, tier 2). Rounded to 101 and 100 they are,
+    # and the tie-break picks B (tier 1): the rebuilt a* is not the logged greedy action.
+    row = _row({"A": 100.6, "B": 99.5}, {"A": 2, "B": 1}, "A", "GREEDY", 0.8 + EPS / 2)
+    rounds = collect_rounds([row])
+    assert rounds.probes == () and rounds.rebuild_mismatch == 1
+
+
+def test_the_rebuild_reproduces_the_engines_explore(guardian: CompiledProfile) -> None:
+    """The engine's own `explore()`, on nets the rounding leaves exact: `logged_probe`
+    rebuilds its pool, a* and propensity, for greedy and explored rounds alike."""
+    rng = np.random.default_rng(210)
+    tiers = {k: s.tier_rank for k, s in guardian.sources.items()}
+    eps = guardian.exploration_epsilon
+    assert eps > 0
+    kinds = set()
+    for session in range(200):
+        keys = rng.choice(sorted(guardian.sources), size=int(rng.integers(2, 6)), replace=False)
+        net = {str(k): float(rng.integers(-300, 3_000)) for k in keys}
+        if max(net.values()) < 0:
+            continue
+
+        def order(key: str) -> tuple[int, float, str]:
+            src = guardian.sources[key]
+            return (src.tier_rank, src.cost_paise, key)
+
+        best = max(net.values())
+        greedy = min((k for k, v in net.items() if v >= best - TIE_TOLERANCE_PAISE), key=order)
+        chosen, selected_by, propensity = explore(guardian, net, greedy, rng)
+        kinds.add(selected_by.value)
+        run = _row(net, {}, chosen, selected_by.value, propensity).run
+        for c in run["candidates"]:
+            c["cost_paise"] = round(guardian.sources[c["source_key"]].cost_paise)
+        probe = logged_probe(UUID(int=session), run, "GENUINE", tiers, eps)
+        pool = sorted(k for k, v in net.items() if v >= 0 and tiers[k] <= tiers[greedy])
+        assert probe.exploration_set == tuple(pool)
+        assert probe.propensity == propensity
+    assert kinds == {"GREEDY", "EXPLORE"}
 
 
 def test_true_gain_needs_the_label_in_the_posterior() -> None:

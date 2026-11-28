@@ -17,7 +17,7 @@ caller's job (``logged_probe``).
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
@@ -29,6 +29,12 @@ import numpy as np
 TIE_TOLERANCE_PAISE = 1
 # docs/12 §3: the CI is a 95% percentile bootstrap over sessions.
 CI_LEVEL = 0.95
+# A logged propensity and the one rebuilt from the row agree to float rounding, or not at all.
+PROPENSITY_TOLERANCE = 1e-9
+# docs/12 §3: the probe-run statuses whose round counts. A TIMED_OUT run stores the belief
+# unchanged, so its reward is 0; PENDING and AWAITING_CUSTOMER haven't ended, and an ERROR run
+# (a cancelled session, say) observed nothing.
+COUNTED_STATUSES = frozenset({"COMPLETED", "TIMED_OUT"})
 
 
 class OpeStatus(StrEnum):
@@ -89,6 +95,11 @@ class OpeInputError(ValueError):
     """A logged row that cannot be evaluated (no propensity, or an action outside E)."""
 
 
+class RebuildMismatchError(OpeInputError):
+    """E_i or a* rebuilt from the stored (rounded) candidates is not what the planner used: the
+    logged action or propensity disagrees with it, so the row's weights would be biased."""
+
+
 # ---------------------------------------------------------------- target policies (docs/12 §3)
 
 
@@ -102,9 +113,14 @@ def _best(candidates: Sequence[LoggedCandidate], value: Callable[[LoggedCandidat
     return min(ties, key=lambda c: (c.tier_rank, c.cost_paise, c.source_key)).source_key
 
 
-def greedy_action(probe: LoggedProbe) -> str:
+def greedy_action_of(candidates: Sequence[LoggedCandidate]) -> str:
     """The logged planner's greedy choice a*: the highest net value (lookahead)."""
-    return _best(probe.candidates, lambda c: c.net_value_paise)
+    return _best(candidates, lambda c: c.net_value_paise)
+
+
+def greedy_action(probe: LoggedProbe) -> str:
+    """a* of a logged round."""
+    return greedy_action_of(probe.candidates)
 
 
 def uniform(probe: LoggedProbe) -> Mapping[str, float]:
@@ -217,7 +233,7 @@ def true_gain(before: Mapping[str, float], after: Mapping[str, float], label: st
 
 def exploration_set(candidates: Sequence[LoggedCandidate]) -> tuple[str, ...]:
     """docs/06 §10: E = {eligible, net ≥ 0, tier ≤ tier(a*)}, sorted as the planner sorts it."""
-    greedy = _best(candidates, lambda c: c.net_value_paise)
+    greedy = greedy_action_of(candidates)
     tier = next(c.tier_rank for c in candidates if c.source_key == greedy)
     return tuple(
         sorted(
@@ -233,11 +249,23 @@ def logged_probe(
     run: Mapping[str, Any],
     label: str,
     tier_rank: Mapping[str, int],
+    epsilon: float,
 ) -> LoggedProbe:
     """A ``probe_runs`` row (as a mapping of its columns) and the session's label, as one OPE
-    round. ``tier_rank`` comes from the session's pinned KB profile."""
+    round. ``tier_rank`` and ``epsilon`` come from the session's pinned KB profile.
+
+    The stored nets are rounded to the paise, so the E_i and a* rebuilt from them can differ from
+    the planner's (a net of −0.4 is stored as 0; 100.6 and 99.5 become a tie). The row is checked
+    against its own log: a GREEDY row's action must be the rebuilt a*, and the logged propensity
+    must be ``(1 − ε)·[a = a*] + ε / |E|``. A row that disagrees raises
+    ``RebuildMismatchError``; ``collect_rounds`` leaves it out and counts it."""
     if run.get("propensity") is None:
         raise OpeInputError(f"session {session_id}: the first active probe has no propensity")
+    status = run.get("status")
+    if status is not None and status not in COUNTED_STATUSES:
+        raise OpeInputError(f"session {session_id}: the first active probe is {status}")
+    if run.get("posterior_before") is None or run.get("posterior_after") is None:
+        raise OpeInputError(f"session {session_id}: the first active probe stored no posterior")
     candidates = tuple(
         LoggedCandidate(
             source_key=c["source_key"],
@@ -249,11 +277,56 @@ def logged_probe(
         )
         for c in run["candidates"]
     )
+    action, propensity = str(run["probe_key"]), float(run["propensity"])
+    pool = exploration_set(candidates)
+    greedy = greedy_action_of(candidates)
+    if run.get("selected_by") == "GREEDY" and action != greedy:
+        raise RebuildMismatchError(
+            f"session {session_id}: logged greedy {action}, rebuilt a* is {greedy}"
+        )
+    expected = (1.0 - epsilon) * (1.0 if action == greedy else 0.0) + epsilon / len(pool)
+    if action not in pool or abs(propensity - expected) > PROPENSITY_TOLERANCE:
+        raise RebuildMismatchError(
+            f"session {session_id}: logged propensity {propensity}, rebuilt {expected}"
+            f" over E = {pool}"
+        )
     return LoggedProbe(
         session_id=session_id,
-        action=str(run["probe_key"]),
-        propensity=float(run["propensity"]),
-        exploration_set=exploration_set(candidates),
+        action=action,
+        propensity=propensity,
+        exploration_set=pool,
         candidates=candidates,
         reward=true_gain(run["posterior_before"], run["posterior_after"], label),
     )
+
+
+@dataclass(frozen=True, slots=True)
+class RoundRow:
+    """What ``logged_probe`` needs for one labelled session."""
+
+    session_id: UUID
+    run: Mapping[str, Any]
+    label: str
+    tier_rank: Mapping[str, int]
+    epsilon: float
+
+
+@dataclass(frozen=True, slots=True)
+class LoggedRounds:
+    probes: tuple[LoggedProbe, ...]
+    rebuild_mismatch: int  # rows left out: the rebuilt E_i or a* disagrees with the log
+
+
+def collect_rounds(rows: Iterable[RoundRow]) -> LoggedRounds:
+    """The OPE rounds, leaving out (and counting) the rows whose rebuild disagrees with the
+    log, so one such row doesn't stop the evaluation. Other bad rows still raise."""
+    probes: list[LoggedProbe] = []
+    mismatch = 0
+    for row in rows:
+        try:
+            probes.append(
+                logged_probe(row.session_id, row.run, row.label, row.tier_rank, row.epsilon)
+            )
+        except RebuildMismatchError:
+            mismatch += 1
+    return LoggedRounds(tuple(probes), mismatch)
