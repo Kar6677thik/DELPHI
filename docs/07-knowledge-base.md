@@ -321,6 +321,8 @@ scout:
   shadow_min_sessions_demo: 10            # used when DELPHI_TIME_MODE=DEMO
   # cluster_selection_epsilon: 1.0       # docs/11 §2; a model default (#117), so KB v1 omits it and
                                           # keeps its hash; a later version may set it
+  # f3_window_h: 24                      # docs/11 §2: the customer events read for an item's F3
+                                          # stages; a model default (#255), like the one above
 time:
   demo_time_scale: 0.0333333333           # 1/30: time-scaled durations shrink 30× when DELPHI_TIME_MODE=DEMO
 elicitation:
@@ -428,6 +430,9 @@ KB v1 ships three approved English variants per probe.
 - **Languages.** The job drafts English rewordings and the hi, te and ta translations: the API
   accepts all four, as doc 15's output schema does.
 - `question_variants` is demo data: the demo reset deletes it, with the KB versions after v1.
+  A variant drafted before the seed is kept, and if a batch after the seed included it, the
+  reset clears its `included_in_kb_version` (that version is deleted), so it waits for the
+  next batch again (#307).
 
 Canonical English (variant 1) and option keys:
 

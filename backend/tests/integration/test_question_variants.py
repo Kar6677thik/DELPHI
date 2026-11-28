@@ -143,8 +143,18 @@ def env(create_database: Callable[[], str]) -> Iterator[Env]:
 
 
 def _rows(env: Env) -> list[Any]:
+    """In the queue's own order. Under FixedClock the drafts share `created_at`, and uuid7 ids
+    made in the same millisecond have no order, so tests match rows by language (#307 review)."""
+    q = question_variants.c
     with env.engine.connect() as conn:
-        return list(conn.execute(select(question_variants).order_by(question_variants.c.id)))
+        return list(conn.execute(select(question_variants).order_by(q.created_at, q.id)))
+
+
+def _by_language(items: list[dict[str, Any]], *languages: str) -> list[dict[str, Any]]:
+    """The listed variants for ``languages``, in that order, whatever order the list has."""
+    found = {i["language"]: i for i in items}
+    assert sorted(found) == sorted(languages) and len(items) == len(languages)
+    return [found[language] for language in languages]
 
 
 def test_the_job_drafts_one_pending_variant_per_language_asked_for(env: Env) -> None:
@@ -153,9 +163,9 @@ def test_the_job_drafts_one_pending_variant_per_language_asked_for(env: Env) -> 
     result = env.job(llm, ["te", "hi"], job_id)
     assert result["drafted"] == 2
     rows = _rows(env)
-    assert [(r.language, r.status, r.generated_by) for r in rows] == [
-        ("te", "PENDING_REVIEW", "LLM"),
+    assert sorted((r.language, r.status, r.generated_by) for r in rows) == [
         ("hi", "PENDING_REVIEW", "LLM"),
+        ("te", "PENDING_REVIEW", "LLM"),
     ]
     assert all(r.llm_call_id is not None and r.job_id == job_id for r in rows)
     # The model was given the canonical English variant and the languages.
@@ -189,13 +199,15 @@ def test_a_draft_with_other_option_keys_is_refused_by_the_validators(env: Env) -
 def test_the_queue_lists_pending_variants_beside_the_english_original(env: Env) -> None:
     env.job(FakeLlm(), ["te", "hi"])
     items = env.pending()
-    assert [i["language"] for i in items] == ["te", "hi"]
-    assert items[0]["original"]["variant_id"] == SOURCE.variant_id
-    assert items[0]["original"]["text"] == SOURCE.text
+    for item in _by_language(items, "te", "hi"):
+        assert item["original"]["variant_id"] == SOURCE.variant_id
+        assert item["original"]["text"] == SOURCE.text
+    # The list follows (created_at, id), and the pages follow the list.
+    assert [i["id"] for i in items] == [str(r.id) for r in _rows(env)]
     page = env.client.get(f"{URL}/variants", params={"limit": 1}).json()
     assert len(page["items"]) == 1 and page["next_cursor"]
     rest = env.client.get(f"{URL}/variants", params={"cursor": page["next_cursor"]}).json()
-    assert [i["language"] for i in rest["items"]] == ["hi"]
+    assert [i["id"] for i in page["items"] + rest["items"]] == [i["id"] for i in items]
 
 
 def test_generate_queues_a_job_for_a_question_probe(env: Env) -> None:
@@ -219,7 +231,7 @@ def test_generate_queues_a_job_for_a_question_probe(env: Env) -> None:
 
 def test_a_review_is_audited_and_happens_once(env: Env) -> None:
     env.job(FakeLlm(), ["te", "hi"])
-    te, hi = env.pending()
+    te, hi = _by_language(env.pending(), "te", "hi")
     approved = env.review(te["id"], decision="APPROVE", edited_text="  ఈ డబ్బు ఎందుకు?  ")
     assert approved.status_code == 200, approved.text
     assert approved.json()["status"] == "APPROVED"
@@ -264,7 +276,7 @@ def test_a_bad_edit_is_refused(env: Env, body: dict[str, Any], status: int) -> N
 
 def test_approve_batch_makes_a_candidate_holding_the_approved_variants(env: Env) -> None:
     env.job(FakeLlm(), ["te", "hi"])
-    te, hi = env.pending()
+    te, hi = _by_language(env.pending(), "te", "hi")
     env.review(te["id"], decision="APPROVE")
     env.review(hi["id"], decision="REJECT")
     waiting = {"status": "APPROVED", "included": "false"}
@@ -297,7 +309,7 @@ def test_pending_and_unpromoted_variants_are_never_served(env: Env) -> None:
     customer: the ACTIVE KB, which sessions are pinned to, is unchanged, so a Telugu customer
     still gets an approved KB v1 variant."""
     env.job(FakeLlm(), ["te", "hi"])
-    te, _hi = env.pending()
+    te, _hi = _by_language(env.pending(), "te", "hi")
     env.review(te["id"], decision="APPROVE")
     assert env.approve_batch().status_code == 201
     drafted = {r.text for r in _rows(env)}

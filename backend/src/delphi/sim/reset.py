@@ -202,6 +202,23 @@ def _undeliver_labels(session: Session, marker: Marker) -> int:
 
 
 def _delete_after(session: Session, marker: datetime) -> dict[str, int]:
+    # A variant drafted before the seed but batched into a KB version after it is kept, while
+    # its version goes: it is approved but not yet in a version again (#307 review). The
+    # column has no ON DELETE, so without this the delete below would fail every time.
+    variants = table(
+        "question_variants", column("included_in_kb_version"), column("created_at"), schema="delphi"
+    )
+    versions = table("kb_versions", column("id"), column("created_at"), schema="delphi")
+    session.execute(
+        variants.update()
+        .where(
+            variants.c.created_at <= marker,
+            variants.c.included_in_kb_version.in_(
+                select(versions.c.id).where(versions.c.created_at > marker)
+            ),
+        )
+        .values(included_in_kb_version=None)
+    )
     deleted: dict[str, int] = {}
     for name, created in RESET_TABLES:
         schema, table_name = name.split(".")
