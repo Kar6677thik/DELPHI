@@ -1,7 +1,7 @@
 """Campaigns (docs/05 §5, docs/09 §8, docs/17, #107).
 
-Revision ID: 0021
-Revises: 0020
+Revision ID: 0022
+Revises: 0021
 Create Date: 2026-11-24
 
 `CAMPAIGN_RECOMPUTE` stores each campaign the merge rule finds (`delphi.navigator.campaign_store`)
@@ -26,8 +26,8 @@ from __future__ import annotations
 
 from alembic import op
 
-revision = "0021"
-down_revision = "0020"
+revision = "0022"
+down_revision = "0021"
 branch_labels = None
 depends_on = None
 

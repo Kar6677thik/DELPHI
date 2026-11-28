@@ -158,7 +158,7 @@ police_alert_drafts(id, case_id, status (DRAFT|SENT_SIMULATED|DISCARDED), payloa
        -- migration 0014 (#106); unique case_id; acted_by and acted_at set iff not DRAFT
 campaigns(id, leading_hypothesis, case_count, f3_stage_max, expected_loss_paise,
           vulnerable_victims, rank_score, merged_into null, created_at, updated_at)
-       -- migration 0021 (#107); idx (rank_score desc, id desc)
+       -- migration 0022 (#107); idx (rank_score desc, id desc)
        -- WHERE merged_into IS NULL AND case_count > 0 (the list's filter and order);
        -- cases.campaign_id gets its foreign key here (NOT VALID, then VALIDATE), with an index
 case_entities(case_id → cases ON DELETE CASCADE, entity, pk(case_id, entity))
