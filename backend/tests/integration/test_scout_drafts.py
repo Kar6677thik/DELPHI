@@ -83,6 +83,12 @@ def test_an_edit_is_the_next_revision_back_in_draft(fde: TestClient, candidate: 
     enabled = _patch(fde, candidate, {"enabled_sources": {"COLLECT_INTENT_CHECK": rows}}, '"2"')
     assert enabled.status_code == 200, enabled.text
     assert enabled.json()["revision"] == 3 and len(enabled.json()["editors"]) == 1
+    # #309 review: an engineer who sets the share and then clears it gets the default back.
+    share = _patch(fde, candidate, {"open_mass_share": 0.3}, '"3"')
+    assert share.status_code == 200 and share.json()["spec"]["open_mass_share"] == 0.3
+    cleared = _patch(fde, candidate, {"open_mass_share": None}, '"4"')
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["spec"]["open_mass_share"] == 0.5
 
 
 def test_an_edit_that_breaks_a_kb_rule_is_refused_unsaved(

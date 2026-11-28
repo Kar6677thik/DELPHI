@@ -167,9 +167,10 @@ export function TypologyDraftPage() {
 }
 
 function Editor({ draft }: { draft: DraftView }) {
-  // Unsaved edits, with the version they started from. None: the form shows the draft as the
-  // server has it now, so a version bump with nothing unsaved (a backtest) just shows through.
-  const [local, setLocal] = useState<{ version: number; spec: Spec } | null>(null);
+  // Unsaved edits, with the revision they started from. None: the form shows the draft as the
+  // server has it now. Every save bumps the revision; a backtest bumps only the version, so
+  // edits over a revision that hasn't moved still save, with the server's current version.
+  const [local, setLocal] = useState<{ revision: number; spec: Spec } | null>(null);
   const stored = useMemo(() => readSpec(draft.spec), [draft.spec]);
   const spec = local?.spec ?? stored;
   const kb = useActiveKb();
@@ -177,13 +178,13 @@ function Editor({ draft }: { draft: DraftView }) {
   const canWrite = useHasPermission('fde');
   const conflict = save.error instanceof ApiError ? save.error.status : null;
   const editable = EDITABLE.has(draft.status) && conflict !== 409;
-  const changedOnServer = local !== null && local.version !== draft.version;
+  const changedOnServer = local !== null && local.revision !== draft.revision;
   const reload = () => {
     setLocal(null);
     save.reset();
   };
   const edit = (next: (s: Spec) => Spec) => {
-    setLocal((l) => ({ version: l?.version ?? draft.version, spec: next(l?.spec ?? stored) }));
+    setLocal((l) => ({ revision: l?.revision ?? draft.revision, spec: next(l?.spec ?? stored) }));
   };
   const set = (patch: Partial<Spec>) => {
     edit((s) => ({ ...s, ...patch }));
@@ -195,9 +196,9 @@ function Editor({ draft }: { draft: DraftView }) {
     name: spec.name,
     key: spec.key,
     description: spec.description,
-    // Only what someone set: no colour or open mass share nobody chose.
+    // No colour nobody chose. A cleared open mass share is sent as null: the server's default.
     ...(spec.color !== null && { color: spec.color }),
-    ...(spec.open_mass_share !== null && { open_mass_share: spec.open_mass_share }),
+    open_mass_share: spec.open_mass_share,
     likelihoods: Object.fromEntries(
       Object.entries(spec.likelihoods).map(([source, row]) => [
         source,
@@ -243,7 +244,7 @@ function Editor({ draft }: { draft: DraftView }) {
         onSubmit={(e) => {
           e.preventDefault();
           save.mutate(
-            { version: local?.version ?? draft.version, patch: patch() },
+            { version: draft.version, patch: patch() },
             {
               onSuccess: () => {
                 setLocal(null); // the saved draft is the server's now (useSaveDraft caches it)
@@ -252,7 +253,10 @@ function Editor({ draft }: { draft: DraftView }) {
           );
         }}
       >
-        <fieldset disabled={!editable || !canWrite} className="space-y-4 rounded-md bg-surface p-6">
+        <fieldset
+          disabled={!editable || !canWrite || save.isPending}
+          className="space-y-4 rounded-md bg-surface p-6"
+        >
           <legend className="sr-only">Typology</legend>
           <Field label="Display name" id="draft-name">
             <input
@@ -324,7 +328,10 @@ function Editor({ draft }: { draft: DraftView }) {
           </Field>
         </fieldset>
 
-        <fieldset disabled={!editable || !canWrite} className="min-w-0 rounded-md bg-surface p-6">
+        <fieldset
+          disabled={!editable || !canWrite || save.isPending}
+          className="min-w-0 rounded-md bg-surface p-6"
+        >
           <legend className="text-[16px] text-ink">Likelihood rows</legend>
           <p className="mt-1 text-[12px] text-muted">
             Weights per outcome, shown normalised. Confidence sets how much evidence the row is

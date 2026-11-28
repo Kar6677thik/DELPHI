@@ -320,7 +320,7 @@ describe('the typology draft editor', () => {
     expect(screen.getByRole('button', { name: 'Backtest revision 2' })).toBeDisabled();
   });
 
-  it('keeps unsaved edits when the server bumps the version, and offers a reload', async () => {
+  it('keeps unsaved edits when someone saves a new revision, and offers a reload', async () => {
     let current = draft();
     serve(current);
     server.use(http.get('/api/v1/typology-drafts/:id', () => HttpResponse.json(current)));
@@ -328,14 +328,65 @@ describe('the typology draft editor', () => {
     const name = await screen.findByLabelText('Display name');
     await user.clear(name);
     await user.type(name, 'My edit');
-    // A backtest (or someone's save) bumps the version on the server.
-    current = draft({ version: 5, revision: 2, spec: { ...draft().spec, name: 'Server name' } });
+    // Someone's save bumps the revision (and the version) on the server.
+    current = draft({ version: 5, revision: 3, spec: { ...draft().spec, name: 'Server name' } });
     await queryClient.invalidateQueries();
     expect(await screen.findByText(/changed on the server/)).toBeVisible();
     expect(screen.getByLabelText('Display name')).toHaveValue('My edit');
-    expect(screen.getByRole('button', { name: 'Save as revision 3' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Save as revision 4' })).toBeDisabled();
     await user.click(screen.getByRole('button', { name: /Reload the draft/ }));
     expect(screen.getByLabelText('Display name')).toHaveValue('Server name');
+  });
+
+  it('keeps editing through a backtest, which bumps the version but not the revision', async () => {
+    let current = draft();
+    const seen = serve(current);
+    server.use(http.get('/api/v1/typology-drafts/:id', () => HttpResponse.json(current)));
+    const { user, queryClient } = renderApp(`/scout/drafts/${DRAFT_ID}`);
+    const name = await screen.findByLabelText('Display name');
+    await user.clear(name);
+    await user.type(name, 'My edit');
+    // The backtest's report lands: version 4 → 5, revision still 2.
+    current = draft({
+      version: 5,
+      status: 'BACKTESTED',
+      backtest_report: REPORT,
+      backtested_revision: 2,
+    });
+    await queryClient.invalidateQueries();
+    expect(await screen.findByText(/Queue items it now explains/)).toBeVisible();
+    expect(screen.queryByText(/changed on the server/)).toBeNull();
+    expect(screen.getByLabelText('Display name')).toHaveValue('My edit');
+    await user.click(screen.getByRole('button', { name: 'Save as revision 3' }));
+    await waitFor(() => {
+      expect(seen.patches).toHaveLength(1);
+    });
+    expect(seen.patches[0]?.ifMatch).toBe('"5"'); // the server's version now, quietly
+    expect(seen.patches[0]?.body).toMatchObject({ name: 'My edit' });
+  });
+
+  it('locks the form while a save is in flight, so nothing typed then is lost', async () => {
+    serve();
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    server.use(
+      http.patch('/api/v1/typology-drafts/:id', async () => {
+        await held;
+        return HttpResponse.json({ ...draft(), revision: 3, version: 5 });
+      }),
+    );
+    const { user } = renderApp(`/scout/drafts/${DRAFT_ID}`);
+    await user.type(await screen.findByLabelText('Display name'), '!');
+    await user.click(screen.getByRole('button', { name: 'Save as revision 3' }));
+    await waitFor(() => {
+      expect(screen.getByLabelText('Display name')).toBeDisabled();
+    });
+    release();
+    await waitFor(() => {
+      expect(screen.getByLabelText('Display name')).toBeEnabled();
+    });
   });
 
   it('takes a server-side bump quietly when nothing is unsaved', async () => {
@@ -387,11 +438,9 @@ describe('the typology draft editor', () => {
     expect(screen.getByLabelText('Display name')).toBeDisabled();
   });
 
-  it('never sends a colour or an open mass share nobody chose', async () => {
+  it('never sends a colour nobody chose', async () => {
     const bare = draft();
-    const seen = serve(
-      draft({ spec: { ...bare.spec, color: undefined, open_mass_share: undefined } }),
-    );
+    const seen = serve(draft({ spec: { ...bare.spec, color: undefined } }));
     const { user } = renderApp(`/scout/drafts/${DRAFT_ID}`);
     await user.type(await screen.findByLabelText('Display name'), '!');
     await user.click(screen.getByRole('button', { name: 'Save as revision 3' }));
@@ -399,7 +448,21 @@ describe('the typology draft editor', () => {
       expect(seen.patches).toHaveLength(1);
     });
     expect(seen.patches[0]?.body).not.toHaveProperty('color');
-    expect(seen.patches[0]?.body).not.toHaveProperty('open_mass_share');
+  });
+
+  it('sends a cleared open mass share as null, so the server default applies', async () => {
+    const bare = draft();
+    const seen = serve(draft({ spec: { ...bare.spec, open_mass_share: 0.3 } }));
+    const { user } = renderApp(`/scout/drafts/${DRAFT_ID}`);
+    const share = await screen.findByLabelText('Open mass share');
+    expect(share).toHaveValue(0.3);
+    await user.clear(share);
+    expect(share).toHaveAttribute('placeholder', 'Server default');
+    await user.click(screen.getByRole('button', { name: 'Save as revision 3' }));
+    await waitFor(() => {
+      expect(seen.patches).toHaveLength(1);
+    });
+    expect(seen.patches[0]?.body).toHaveProperty('open_mass_share', null);
   });
 
   it('shows a viewer the draft with its inputs disabled', async () => {

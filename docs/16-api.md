@@ -130,7 +130,7 @@ is not built yet.
 | POST `/scout/runs` | `fde` | → job |
 | GET `/scout/clusters` | `view` | newest first, each with its draft; keyset paging (`limit` ≤ 200, default 50, `cursor`) → `{items, next_cursor}` |
 | GET `/typology-drafts`, GET `/typology-drafts/{id}` | `view` | one `status` (default `CANDIDATE`, #255), most recently edited first, keyset paging → `{items, next_cursor}`; one draft has `ETag` and `issues` (what still breaks a KB rule) |
-| PATCH `/typology-drafts/{id}` | `fde` | `If-Match`; partial update; validated against the KB rules: 422 with `errors` `[{path, code, message}]`, nothing saved; 409 `INVALID_STATE_TRANSITION` once in shadow, promoted, rejected or superseded |
+| PATCH `/typology-drafts/{id}` | `fde` | `If-Match`; partial update (`open_mass_share: null` puts the default back); validated against the KB rules: 422 with `errors` `[{path, code, message}]`, nothing saved; 409 `INVALID_STATE_TRANSITION` once in shadow, promoted, rejected or superseded |
 | POST `/typology-drafts/{id}/backtest` | `fde` | `Idempotency-Key` → 202 `{job_id, created, status}` (`RUN_BACKTEST` for the draft's current revision; asking again returns that job, `created: false` with its `status`, unless it FAILED, was cancelled or was skipped, when a new attempt is queued). 404 unknown, 409 `INVALID_STATE_TRANSITION` unless DRAFT or BACKTESTED, 422 with `errors` while the draft breaks a KB rule. The report lands on the draft (`backtest_report`, status BACKTESTED) |
 | POST `/typology-drafts/{id}/shadow` | `fde` | requires BACKTESTED |
 | POST `/typology-drafts/{id}/promote` | `fde` | four-eyes; requires shadow count |

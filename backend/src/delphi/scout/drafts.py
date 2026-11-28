@@ -98,7 +98,8 @@ class DraftSpec(BaseModel):
 
 
 class DraftPatch(BaseModel):
-    """A partial update: the fields given replace the spec's (docs/16: partial update)."""
+    """A partial update: the fields given replace the spec's (docs/16: partial update).
+    ``open_mass_share: null`` puts the default back (docs/11 §3)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -263,10 +264,10 @@ def edit_draft(
             f"A draft that is {row.status} cannot be edited.",
             code=ProblemCode.INVALID_STATE_TRANSITION,
         )
-    merged: Mapping[str, Any] = {
-        **stored_spec(row).model_dump(mode="json"),
-        **patch.model_dump(mode="json", exclude_unset=True),
-    }
+    edits = patch.model_dump(mode="json", exclude_unset=True)
+    if "open_mass_share" in edits and edits["open_mass_share"] is None:
+        edits["open_mass_share"] = DEFAULT_OPEN_MASS_SHARE  # null: back to the default (#309)
+    merged: Mapping[str, Any] = {**stored_spec(row).model_dump(mode="json"), **edits}
     try:
         spec = DraftSpec.model_validate(merged)
     except ValidationError as err:

@@ -42,11 +42,20 @@ export function useClusters() {
   });
 }
 
+/**
+ * An open draft is re-read this often while it can still change: a backtest started elsewhere
+ * (another tab, another engineer) writes its report with no event of its own (#309 review).
+ */
+export const DRAFT_POLL_MS = 30_000;
+const LIVE_DRAFT = new Set(['CANDIDATE', 'DRAFT', 'BACKTESTED']);
+
 /** `GET /typology-drafts/{id}`, with the KB issues the draft has as it stands. */
 export function useDraft(id: string) {
   return useQuery({
     queryKey: [...SCOUT_QUERY_KEY, 'draft', id],
     queryFn: () => getJson<DraftView>(`/typology-drafts/${id}`),
+    refetchInterval: (query) =>
+      query.state.data && LIVE_DRAFT.has(query.state.data.status) ? DRAFT_POLL_MS : false,
   });
 }
 
@@ -61,6 +70,8 @@ export function useFollowJob(jobId: string | null | undefined) {
     queryFn: () => getJson<JobView>(`/jobs/${encodeURIComponent(jobId ?? '')}`),
     enabled: Boolean(jobId),
     refetchInterval: (query) => {
+      // Stop on an error too (after the query's own retries), rather than polling for good.
+      if (query.state.status === 'error') return false;
       const data = query.state.data;
       return data && isFinished(data) ? false : JOB_POLL_MS;
     },
