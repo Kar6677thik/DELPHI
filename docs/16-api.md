@@ -95,13 +95,13 @@ monitor's "OTP would pass" line). Risks are whole paise; probabilities have 6 de
 | POST `/cases/{id}/trace-events` | `view` | `{events: [{type, payload, at}]}` (batched, 1–100 events) → `{recorded}`. Only the view events (`CASE_VIEWED`, `EVIDENCE_VIEWED`, `NARRATIVE_EXPANDED`, `WCMM_VIEWED`); the server records the actions itself (doc 09 §5). `payload` is `{evidence_record_id}` for `EVIDENCE_VIEWED` and `NARRATIVE_EXPANDED` (a record of this case) and empty for the others; nothing else is accepted. Any bad event is 422 and the whole batch is refused; an unknown case is 404. `at` must carry a time zone (UTC, ADR-0014; a zone-less time is 422) and is kept between the case's opening and now (#108) |
 | GET `/cases/{id}/dd-pack` | `view` | `?format=json\|html`: `{case_id, complete, sections: [{number, title, required, content, note?}]}` (doc 09 §7), or a printable page. Computed on read, so it is authoritative over the stored `dd_pack_complete`; 404 for an unknown case (#108) |
 | POST `/cases/{id}/police-alert/{action}` | `case:write` | action `send\|discard` → `CaseView` with `ETag` (the case's new version: acting on the alert bumps it; with `police_alert: {id, status, payload, acted_by, acted_at}`); 404 for a case without one (only COERCION cases have one), 409 once acted on |
-| GET `/campaigns`, GET `/campaigns/{id}` | `view` | |
+| GET `/campaigns`, GET `/campaigns/{id}` | `view` | the list: live campaigns, highest `rank_score` first, keyset paging (`limit` ≤ 200, default 50, `cursor`) → `{items, next_cursor}`. One campaign: `CampaignView` + `cases[]` (its oldest 200 cases, oldest first; `GET /cases?campaign_id=` pages all of them) + `shared_entities[]` `{kind, value, case_count}` (entities two or more of its cases share, most shared first, at most 20, counted in SQL); a merged one has `merged_into`; 404 for an unknown id |
 
 **M4 stub (#97):** `GET /cases` and `GET /cases/{id}` are served; the other case routes come with
 #103. The list filters `status`, `type` and `protocol` and sorts by `sla_due_at` (soonest first)
 or `opened_at` (newest first), and by `expected_loss` (largest first, #208: the recommended
-decision's risk; a case stored without one sorts last); `campaign_id` and `sla_breached` filters
-come with campaigns. A cursor is tied to its sort order. `CaseView` holds the
+decision's risk; a case stored without one sorts last); `campaign_id` filters the queue to one
+campaign (#107); an `sla_breached` filter is not there yet. A cursor is tied to its sort order. `CaseView` holds the
 opening fields (posterior, prior components, leading hypothesis, amount, SLA and `sla_breached`,
 `version` with `ETag`); `recommended_decision` and `risk_by_decision` are stored when the case opens and after each evidence record, and again at disposition (#208).
 

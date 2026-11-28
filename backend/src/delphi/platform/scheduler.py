@@ -68,6 +68,7 @@ SCHEDULE: tuple[Recurring, ...] = (
     # mode is wired the slot is the floor; a run with nothing due does nothing (#113).
     Recurring(JobType.CHASE_RETRACE, every=timedelta(seconds=20)),
     Recurring(JobType.LABEL_DELIVERY, every=timedelta(seconds=60)),
+    Recurring(JobType.CAMPAIGN_RECOMPUTE, every=timedelta(seconds=60)),
     Recurring(JobType.MULE_SWEEP, every=timedelta(seconds=60)),
     Recurring(JobType.ACCOUNT_REVIEW_SWEEP, every=timedelta(seconds=60)),
     Recurring(JobType.SCOUT_AUTO_TRIGGER, every=timedelta(minutes=5)),

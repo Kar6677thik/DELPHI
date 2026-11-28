@@ -18,12 +18,13 @@ MODEL_ARTIFACT_LOCK_KEY = 48  # storing a sensing artifact and switching the ACT
 LABEL_DELIVERY_LOCK_KEY = 49  # delivering due labels from the simulator's schedule (docs/14 §7)
 ACCOUNT_REVIEW_SWEEP_LOCK_KEY = 50  # opening ACCOUNT_REVIEW cases from triggers (docs/09 §1)
 DEMO_RESET_LOCK_KEY = 51  # one demo reset at a time (docs/14 §10)
+# 52 is the lien-account class (#250).
+CAMPAIGN_RECOMPUTE_LOCK_KEY = 53  # regrouping cases into campaigns (docs/05 §5)
 MULE_SWEEP_LOCK_KEY = 54  # rescoring accounts into account_scores (docs/13 §6)
 # Two-key locks (class, hashtext(id)): one per bank account while its liens are set, so two
 # approvals or acknowledgements cannot both use the same headroom (FR-CHS-05). The class is a
 # separate namespace from the one-key locks above (their high half is 0).
 LIEN_ACCOUNT_LOCK_CLASS = 52
-# 53 is the campaign recompute's (#288), 54 MULE_SWEEP's (#252).
 SCOUT_RUN_LOCK_KEY = 55  # one RUN_SCOUT at a time (docs/11 §2)
 
 ALL_LOCK_KEYS: dict[str, int] = {
@@ -35,6 +36,7 @@ ALL_LOCK_KEYS: dict[str, int] = {
     "kb_seed": KB_SEED_LOCK_KEY,
     "model_artifact": MODEL_ARTIFACT_LOCK_KEY,
     "label_delivery": LABEL_DELIVERY_LOCK_KEY,
+    "campaign_recompute": CAMPAIGN_RECOMPUTE_LOCK_KEY,
     "account_review_sweep": ACCOUNT_REVIEW_SWEEP_LOCK_KEY,
     "demo_reset": DEMO_RESET_LOCK_KEY,
     "mule_sweep": MULE_SWEEP_LOCK_KEY,

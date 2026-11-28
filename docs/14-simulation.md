@@ -663,9 +663,10 @@ Details where the scripts are silent:
   and lets `LABEL_DELIVERY` re-map complaint keys against the re-activated KB v1.
   How it does it (`delphi.sim.reset`, #101; owner decisions delegated 2026-11-24):
   - **What is deleted.** The bank's rows, the Guardian sessions and probe runs, cases and
-    everything on them, Chase operations (#113: their candidates, liens and tickets go with
-    them), the Scout's runs, clusters, drafts and queue dismissals (#117), labels, KB versions
-    other than v1, and ground truth, each table by its
+    everything on them (campaigns too, #107: `case_entities` go with their case, and the
+    recompute's watermark stays, since later cases open after it), Chase operations (#113: their
+    candidates, liens and tickets go with them), the Scout's runs, clusters, drafts and queue
+    dismissals (#117), labels, KB versions other than v1, and ground truth, each table by its
     creation time (`created_at`, `at` for event logs, `started_at` for sessions). The platform's
     own tables stay: users and sign-in sessions, jobs (the reset's own among them), the audit
     chain (append-only, and the reset is audited in it), the outbox, idempotency keys, LLM
@@ -682,7 +683,9 @@ Details where the scripts are silent:
   - **One transaction, bounded.** The deletes are set-based (`DELETE … WHERE created_at >
     :marker`), so no rows or key lists pass through Python (the #263 lesson). They run with a
     statement timeout (`DELPHI_DEMO_RESET_TIMEOUT_S`, 60 s), under advisory lock 51 (a second
-    reset at once skips) and the label-delivery lock (no delivery interleaves). Every table the
+    reset at once skips), the label-delivery lock (no delivery interleaves) and the campaign
+    recompute's lock 53 (it writes `case_entities` then `campaigns`, the reverse of the reset's
+    order, so a recompute in flight finishes first, #288). Every table the
     reset writes is then locked `IN EXCLUSIVE MODE`, in a fixed order: reads go on, but a
     payment, session or case being written waits for the reset, so none lands between its
     steps.

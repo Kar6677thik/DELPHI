@@ -1166,6 +1166,23 @@
             }
           },
           {
+            "name": "campaign_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Campaign Id"
+            }
+          },
+          {
             "name": "sort",
             "in": "query",
             "required": false,
@@ -1569,6 +1586,110 @@
                 "schema": {}
               },
               "text/html": {}
+            }
+          },
+          "default": {
+            "description": "An RFC 9457 problem (docs/16 §1)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/campaigns": {
+      "get": {
+        "tags": [
+          "campaigns"
+        ],
+        "summary": "Read Campaigns",
+        "operationId": "read_campaigns_api_v1_campaigns_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CampaignPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An RFC 9457 problem (docs/16 §1)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/campaigns/{campaign_id}": {
+      "get": {
+        "tags": [
+          "campaigns"
+        ],
+        "summary": "Read Campaign",
+        "operationId": "read_campaign_api_v1_campaigns__campaign_id__get",
+        "parameters": [
+          {
+            "name": "campaign_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Campaign Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CampaignDetail"
+                }
+              }
             }
           },
           "default": {
@@ -2831,6 +2952,244 @@
         ],
         "title": "BiometricAnswer"
       },
+      "CampaignCaseView": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "leading_hypothesis": {
+            "type": "string",
+            "title": "Leading Hypothesis"
+          },
+          "opened_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Opened At"
+          },
+          "amount_at_stake_paise": {
+            "type": "integer",
+            "title": "Amount At Stake Paise"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "type",
+          "status",
+          "leading_hypothesis",
+          "opened_at",
+          "amount_at_stake_paise"
+        ],
+        "title": "CampaignCaseView"
+      },
+      "CampaignDetail": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "leading_hypothesis": {
+            "type": "string",
+            "title": "Leading Hypothesis"
+          },
+          "case_count": {
+            "type": "integer",
+            "title": "Case Count"
+          },
+          "f3_stage_max": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "F3 Stage Max"
+          },
+          "expected_loss_paise": {
+            "type": "integer",
+            "title": "Expected Loss Paise"
+          },
+          "vulnerable_victims": {
+            "type": "integer",
+            "title": "Vulnerable Victims"
+          },
+          "rank_score": {
+            "type": "number",
+            "title": "Rank Score"
+          },
+          "merged_into": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Merged Into"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "cases": {
+            "items": {
+              "$ref": "#/components/schemas/CampaignCaseView"
+            },
+            "type": "array",
+            "title": "Cases",
+            "description": "The oldest 200 cases at most, oldest first; GET /cases?campaign_id= pages all of them."
+          },
+          "shared_entities": {
+            "items": {
+              "$ref": "#/components/schemas/SharedEntity"
+            },
+            "type": "array",
+            "title": "Shared Entities",
+            "description": "Entities two or more of the cases share, most shared first (at most 20)."
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "leading_hypothesis",
+          "case_count",
+          "f3_stage_max",
+          "expected_loss_paise",
+          "vulnerable_victims",
+          "rank_score",
+          "merged_into",
+          "created_at",
+          "updated_at",
+          "cases",
+          "shared_entities"
+        ],
+        "title": "CampaignDetail"
+      },
+      "CampaignPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CampaignView"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "CampaignPage"
+      },
+      "CampaignView": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "leading_hypothesis": {
+            "type": "string",
+            "title": "Leading Hypothesis"
+          },
+          "case_count": {
+            "type": "integer",
+            "title": "Case Count"
+          },
+          "f3_stage_max": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "F3 Stage Max"
+          },
+          "expected_loss_paise": {
+            "type": "integer",
+            "title": "Expected Loss Paise"
+          },
+          "vulnerable_victims": {
+            "type": "integer",
+            "title": "Vulnerable Victims"
+          },
+          "rank_score": {
+            "type": "number",
+            "title": "Rank Score"
+          },
+          "merged_into": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Merged Into"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "leading_hypothesis",
+          "case_count",
+          "f3_stage_max",
+          "expected_loss_paise",
+          "vulnerable_victims",
+          "rank_score",
+          "merged_into",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "CampaignView"
+      },
       "CandidateView": {
         "properties": {
           "id": {
@@ -3040,6 +3399,18 @@
           "amount_at_stake_paise": {
             "type": "integer",
             "title": "Amount At Stake Paise"
+          },
+          "campaign_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Campaign Id"
           },
           "opened_at": {
             "type": "string",
@@ -3421,6 +3792,18 @@
           "amount_at_stake_paise": {
             "type": "integer",
             "title": "Amount At Stake Paise"
+          },
+          "campaign_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Campaign Id"
           },
           "opened_at": {
             "type": "string",
@@ -4836,6 +5219,7 @@
           "SESSION_TIMEOUT_SWEEP",
           "SCOUT_AUTO_TRIGGER",
           "LABEL_DELIVERY",
+          "CAMPAIGN_RECOMPUTE",
           "ACCOUNT_REVIEW_SWEEP",
           "PROBE_YIELD_DAILY",
           "RETENTION_SWEEP",
@@ -6620,6 +7004,29 @@
           "CANCELLED_BY_CUSTOMER"
         ],
         "title": "SessionStatus"
+      },
+      "SharedEntity": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "value": {
+            "type": "string",
+            "title": "Value"
+          },
+          "case_count": {
+            "type": "integer",
+            "title": "Case Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "value",
+          "case_count"
+        ],
+        "title": "SharedEntity"
       },
       "StartChase": {
         "properties": {

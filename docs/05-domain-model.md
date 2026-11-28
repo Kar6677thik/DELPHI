@@ -119,6 +119,41 @@ disposition and every new case.
   claim the id; the other groups get new ids (or another campaign they can claim). Within a
   group, the oldest-`created_at` rule above still chooses among the campaigns it can claim.
 
+**Implementation (#107).** The merge rule is `delphi.navigator.campaigns` (pure). Within one
+(hypothesis, entity) bucket it joins only time-adjacent neighbours, which gives the same groups
+as joining every pair, in O(n log n). The store is `delphi.navigator.campaign_store`.
+- **The job.** `CAMPAIGN_RECOMPUTE` runs every 60 s (doc 04 §5.4), so a new case, a disposition or
+  new evidence is regrouped within a minute or two, not in the transaction that caused it. It runs
+  under advisory lock 53 and skips while another run holds it.
+- **Only around touched cases.** Touched cases are those opened, disposed or given an evidence
+  record since `campaign_watermark`, by Clock time (`opened_at`, `disposed_at`,
+  `evidence_records.requested_at`). Those times are read before their transaction commits, so a
+  touch is taken only once it is `DELPHI_CAMPAIGN_SETTLE_LAG_S` (120 s) old, longer than any such
+  transaction: one that commits late is not skipped. They are taken in batches:
+  `DELPHI_CAMPAIGN_BATCH` (50) per transaction, at most `DELPHI_CAMPAIGN_BATCHES_PER_RUN` (20) per
+  run, each under a 30 s statement timeout. The watermark moves with each committed batch.
+- **The component.** From the touched cases, the job follows shared entities (an indexed lookup
+  on `case_entities`) to cases with the same leading hypothesis opened within the window. It adds
+  the other members of the campaigns it meets. Only that component is regrouped. A component that
+  reaches `DELPHI_CAMPAIGN_MAX_COMPONENT` (2,000, at most 5,000) cases is **cut**: regrouping part
+  of it could split or dissolve its campaigns wrongly, so the job changes no campaign and no case
+  for it, and logs and counts it (`component_cut`). When a batch's joint component is cut, each
+  touched case is regrouped on its own, so only the cases whose own component is cut are
+  skipped; the rest of the batch is grouped as usual. The watermark moves past the batch.
+- **A case's campaign** is set null if its campaign row is deleted (`ON DELETE SET NULL`), so a
+  demo reset that deletes a campaign made after the seed never leaves a case from before the
+  seed pointing at it.
+- **Entities** are written to `case_entities` the first time the job sees a case:
+  - a payment case: the payee account, the payment's device fingerprint, and the payer's latest
+    login /24 at or before the payment;
+  - an account review: the account itself.
+- **Merged and dissolved campaigns** keep their rows with `case_count = 0`; a merged one also has
+  `merged_into`.
+- **Fields.** `vulnerable_victims` counts distinct vulnerable payers, and the share in `rank_score`
+  is over the distinct payers. `f3_stage_max` stays null until the event → F3 stage mapping is
+  specified (asked on #117).
+- A case's `version` is not bumped when its campaign changes (the campaign is derived).
+
 ## 6. Chase operation (aggregate root: `ChaseOperation`)
 
 Owns `ChaseCandidate`s, `Lien`s and `CfcfrmsTicket`s.

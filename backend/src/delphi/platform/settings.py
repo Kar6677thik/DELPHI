@@ -134,6 +134,14 @@ class Settings(BaseSettings):
     # docs/08 §4), so reading `probe_runs` reveals no live code (#171). Secret `delphi-app`,
     # api only. Generate with `openssl rand -hex 32`.
     secret_key: SecretStr | None = Field(default=None, min_length=MIN_SECRET_KEY_LENGTH)
+    # Campaign recompute (docs/05 §5, #107), bounded after #263: touched cases per transaction,
+    # transactions per run, and the most cases one connected component may load.
+    campaign_batch: int = Field(default=50, ge=1, le=1_000)
+    campaign_batches_per_run: int = Field(default=20, ge=1, le=1_000)
+    campaign_max_component: int = Field(default=2_000, ge=10, le=5_000)
+    # How old a touch must be before the recompute takes it: longer than any transaction that
+    # opens, disposes or adds evidence to a case (#288), so a late commit is not skipped.
+    campaign_settle_lag_s: int = Field(default=120, ge=0, le=3_600)
     # The most queue items (and reference sessions) one RUN_SCOUT loads, the newest of the
     # lookback (docs/11 §2, bounded after #263; approved on #255).
     scout_max_items: int = Field(default=500, ge=10, le=20_000)

@@ -45,6 +45,7 @@ from delphi.llm.evaluation import CASES_FILE, load_cases, render_report, run_eva
 from delphi.llm.service import LlmService, primary_provider
 from delphi.navigator.api import OUTREACH as OUTREACH_SOURCE
 from delphi.navigator.api import request_evidence
+from delphi.navigator.campaign_store import Limits as CampaignLimits
 from delphi.navigator.jobs import register_navigator_jobs
 from delphi.navigator.reviews import SweepLimits
 from delphi.platform.accounts import BootstrapError, ensure_bootstrap_admin
@@ -328,6 +329,7 @@ def worker_registry(
         llm=llm,
         trail=case_trail,
         clock=platform.clock,
+        campaign_limits=CampaignLimits.of(settings),
         p_mule_fallback=load_sensing_config().features.mule_score_fallback,
         review_limits=SweepLimits.of(settings),
     )

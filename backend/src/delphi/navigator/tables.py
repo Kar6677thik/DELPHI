@@ -107,3 +107,33 @@ trace_events = Table(
     Column("payload", JSONB, nullable=False),
     _ts("at"),
 )
+
+campaigns = Table(
+    "campaigns",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("leading_hypothesis", Text, nullable=False),
+    Column("case_count", Integer, nullable=False),
+    Column("f3_stage_max", Text),
+    Column("expected_loss_paise", BigInteger, nullable=False),
+    Column("vulnerable_victims", Integer, nullable=False),
+    Column("rank_score", Float, nullable=False),
+    Column("merged_into", UUID(as_uuid=True)),
+    _ts("created_at"),
+    _ts("updated_at"),
+)
+
+case_entities = Table(
+    "case_entities",
+    metadata,
+    Column("case_id", UUID(as_uuid=True), primary_key=True),
+    Column("entity", Text, primary_key=True),
+)
+
+campaign_watermark = Table(
+    "campaign_watermark",
+    metadata,
+    Column("id", SmallInteger, primary_key=True),
+    _ts("at"),
+    Column("case_id", UUID(as_uuid=True), nullable=False),
+)

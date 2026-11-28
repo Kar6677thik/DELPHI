@@ -7,6 +7,13 @@ console view and records dispositions (docs/16, #103), and stores the console's 
 
 from __future__ import annotations
 
+from delphi.navigator.campaign_store import (
+    MEMBER_CASES_LIMIT,
+    get_campaign,
+    list_campaigns,
+    member_cases,
+    shared_entities,
+)
 from delphi.navigator.console import (
     ConsoleView,
     EvidenceRow,
@@ -65,6 +72,7 @@ __all__ = [
     "CLIENT_TYPES",
     "HOLD_DECISIONS",
     "MAX_TRACE_BATCH",
+    "MEMBER_CASES_LIMIT",
     "OUTREACH",
     "AlertAction",
     "AlertStatus",
@@ -94,9 +102,12 @@ __all__ = [
     "current_records",
     "dispose",
     "get_alert",
+    "get_campaign",
     "get_case",
+    "list_campaigns",
     "list_cases",
     "list_traces",
+    "member_cases",
     "observed_sources",
     "open_case",
     "open_case_for_payment",
@@ -106,6 +117,7 @@ __all__ = [
     "refresh_dd_pack_complete",
     "request_evidence",
     "request_simulated_outreach",
+    "shared_entities",
     "sort_value",
     "unexplained_reviews_query",
     "vulnerable_payer",

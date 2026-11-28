@@ -22,7 +22,7 @@ from delphi.platform.audit import audit_log
 from delphi.platform.clock import FixedClock
 from delphi.platform.db import make_session_factory
 from delphi.platform.jobs import JobQueue, JobRegistry, JobStatus, JobType, QueueConfig, enqueue
-from delphi.platform.locks import DEMO_RESET_LOCK_KEY
+from delphi.platform.locks import CAMPAIGN_RECOMPUTE_LOCK_KEY, DEMO_RESET_LOCK_KEY
 from delphi.platform.tables import jobs
 from delphi.platform.worker import run_job
 from delphi.sim.bank import accounts, ledger_entries, sim_schedule
@@ -321,6 +321,35 @@ def test_a_second_reset_at_once_skips(seeded: Bank) -> None:
         job = _reset(seeded)
     assert job["status"] == JobStatus.SUCCEEDED
     assert job["result"] == {"skipped": "another demo reset is running"}
+
+
+def test_a_campaign_recompute_in_flight_finishes_before_the_reset(seeded: Bank) -> None:
+    """#288 review: the reset waits on lock 53 before its table locks, so it can't deadlock
+    with a recompute that writes case_entities then campaigns."""
+    holder = seeded.owner.connect()
+    tx = holder.begin()
+    holder.execute(select(func.pg_advisory_xact_lock(CAMPAIGN_RECOMPUTE_LOCK_KEY)))
+    done: list[Any] = []
+    reset = threading.Thread(target=lambda: done.append(_reset(seeded)))
+    reset.start()
+    try:
+        reset.join(timeout=2)
+        assert reset.is_alive()  # waiting on the recompute's lock
+        with seeded.owner.connect() as conn:
+            # It holds no table lock yet, so the recompute can still write.
+            taken = conn.execute(
+                text(
+                    "SELECT count(*) FROM pg_locks WHERE locktype = 'relation'"
+                    " AND mode = 'ExclusiveLock' AND relation = 'delphi.campaigns'::regclass"
+                )
+            ).scalar_one()
+        assert taken == 0
+        tx.commit()
+    finally:
+        holder.close()
+        reset.join(timeout=TIMEOUT_S)
+    job = done[0]
+    assert job["status"] == JobStatus.SUCCEEDED, job["error"]
 
 
 def test_children_are_deleted_before_their_parents(seeded: Bank) -> None:
