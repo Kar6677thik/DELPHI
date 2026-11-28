@@ -58,7 +58,10 @@ The output is `scout_clusters` rows plus one `typology_drafts` row per cluster, 
 `CANDIDATE` as `SUPERSEDED` (the owner's decision on #255), so only the latest run's candidates
 are open. A draft past `CANDIDATE` (edited, backtested, in shadow, promoted or rejected) is never
 touched. A `SUPERSEDED` draft is final: it cannot be edited, and the draft list shows
-`CANDIDATE` drafts unless asked for another status.
+`CANDIDATE` drafts unless asked for another status. The run audits the transition once, listing
+the drafts it superseded (`scout.drafts.superseded`, by the system, on the run). A run that finds
+no cluster supersedes the earlier candidates too: it read the newer queue, and a candidate it no
+longer finds is stale.
 
 **Implementation** (#117): the clustering core is `delphi.scout.clustering` (pure functions):
 `matrix`, `cluster_labels`, `distinguishing_features` (absolute standardised mean difference,
@@ -77,7 +80,33 @@ missing from an item sits at its training mean (z = 0).
 - **Leaving the queue:** an item leaves when an FDE engineer dismisses it
   (`scout_queue_dismissals`, one row per item, audited), or when it is a member of a cluster
   whose typology draft is PROMOTED. Members are stored as `{subject_type, subject_id}` refs.
-- **Still to come:** the `RUN_SCOUT` job, the auto-trigger and each cluster's size and time span.
+- **The run** (`delphi.scout.run`): `RUN_SCOUT` (`POST /scout/runs`, or `SCOUT_AUTO_TRIGGER`
+  once `auto_trigger_new_items` items have entered since the last run) loads the queue items of
+  the last `lookback_days`.
+  - It is bounded (after #263): at most `DELPHI_SCOUT_MAX_ITEMS` (500) queue items, the newest
+    of the lookback, and as many reference sessions (newest first, served by a partial index
+    on `guardian_sessions (decided_at DESC, id) WHERE NOT unexplained`). The sensing config is
+    parsed once per run. The run's transaction has `SET LOCAL statement_timeout` (30 s) and
+    `work_mem` (16 MB).
+  - Runs are serialised: a run takes `pg_try_advisory_xact_lock(55)` and, while another holds
+    it, skips and says so in its result (a manual and an automatic run, or two manual ones).
+  - It is idempotent: a retried job (a lost lease) finds its run by `scout_runs.job_id` (unique)
+    and returns it.
+  - The auto-trigger enqueues nothing while a `RUN_SCOUT` is QUEUED or RUNNING, nor for
+    `DELPHI_SCOUT_FAILURE_BACKOFF_MIN` (60) after the latest one FAILED. It counts the items
+    that entered since the last run started (before any run: within the lookback) only up to
+    `auto_trigger_new_items`, so the count stays bounded.
+  - The reference set is that period's sessions attributed to a known typology: not flagged
+    unexplained, with an argmax (taken in SQL) that is neither GENUINE nor UNEXPLAINED.
+  - Each item's outcomes are a session's completed probe runs or a case's current evidence
+    records. Its features are the doc 13 §3 payment features (none for an account review).
+  - Each cluster is stored with its size, members and time span (`first_at`/`last_at`, next to
+    its features), plus a CANDIDATE `typology_drafts` row. The draft's spec holds the suggested
+    name, the draft likelihood rows and the outcome profile.
+- **Gap fills:**
+  - z-scores use the run's own items, because the sensing artifacts store no feature means.
+  - F3 stage indicators are empty until the event → stage mapping is specified (A-07 names only
+    the stages).
 
 ## 3. FDE drafting (`DRAFT`)
 

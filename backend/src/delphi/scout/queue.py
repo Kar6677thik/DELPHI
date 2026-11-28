@@ -97,9 +97,10 @@ def queue_items(
     limit: int,
     since: datetime | None = None,
     after: QueueCursor | None = None,
+    newest_first: bool = False,
 ) -> list[QueueItem]:
-    """At most ``limit`` queue items, oldest first, after ``after``; ``since`` keeps the items
-    that entered at or after it."""
+    """At most ``limit`` queue items, oldest first (``newest_first``: the newest, newest
+    first), after ``after``; ``since`` keeps the items that entered at or after it."""
     query = _queue(kb, since=since).subquery("q")
     rows = select(query)
     if after is not None:
@@ -107,7 +108,8 @@ def queue_items(
             tuple_(query.c.entered_at, query.c.subject_id)
             > tuple_(after.entered_at, after.subject_id)
         )
-    rows = rows.order_by(query.c.entered_at, query.c.subject_id).limit(limit)
+    order = (query.c.entered_at, query.c.subject_id)
+    rows = rows.order_by(*(c.desc() for c in order) if newest_first else order).limit(limit)
     return [_item(r) for r in session.execute(rows)]
 
 
