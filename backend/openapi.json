@@ -2579,125 +2579,6 @@
         ],
         "title": "BiometricAnswer"
       },
-      "CandidateView": {
-        "properties": {
-          "id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Id"
-          },
-          "account_id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Account Id"
-          },
-          "hop": {
-            "type": "integer",
-            "title": "Hop"
-          },
-          "taint_paise": {
-            "type": "integer",
-            "title": "Taint Paise"
-          },
-          "balance_paise": {
-            "type": "integer",
-            "title": "Balance Paise"
-          },
-          "p_present": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "P Present"
-          },
-          "p_mule": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "P Mule"
-          },
-          "erv_paise": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Erv Paise"
-          },
-          "wrongful_cost_paise": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Wrongful Cost Paise"
-          },
-          "net_paise": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Net Paise"
-          },
-          "rank": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Rank"
-          },
-          "recommended": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Recommended"
-          }
-        },
-        "type": "object",
-        "required": [
-          "id",
-          "account_id",
-          "hop",
-          "taint_paise",
-          "balance_paise",
-          "p_present",
-          "p_mule",
-          "erv_paise",
-          "wrongful_cost_paise",
-          "net_paise",
-          "rank",
-          "recommended"
-        ],
-        "title": "CandidateView"
-      },
       "CaseDetail": {
         "properties": {
           "id": {
@@ -3350,7 +3231,7 @@
           },
           "candidates": {
             "items": {
-              "$ref": "#/components/schemas/CandidateView"
+              "$ref": "#/components/schemas/delphi__api__routers__chase__CandidateView"
             },
             "type": "array",
             "title": "Candidates"
@@ -4402,6 +4283,25 @@
           "started_at"
         ],
         "title": "HealthView"
+      },
+      "Ineligible": {
+        "type": "string",
+        "enum": [
+          "ALREADY_OBSERVED",
+          "DISABLED",
+          "WRONG_CONTEXT",
+          "WRONG_CHANNEL",
+          "ACTIVE_PROBE_IN_PASSIVE_PHASE",
+          "PASSIVE_PROBE_IN_ACTIVE_PHASE",
+          "NO_CONSENT",
+          "NO_LANGUAGE_VARIANT",
+          "FAIRNESS_CAP",
+          "EXCLUSIVE_GROUP",
+          "ACTIVE_BUDGET",
+          "MEDIUM_BUDGET"
+        ],
+        "title": "Ineligible",
+        "description": "Why a source cannot be chosen now (docs/06 §8). Persisted in candidates tables."
       },
       "JobPage": {
         "properties": {
@@ -5879,8 +5779,7 @@
           },
           "candidates": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/delphi__api__routers__guardian__CandidateView"
             },
             "type": "array",
             "title": "Candidates"
@@ -6592,6 +6491,203 @@
           "version"
         ],
         "title": "UserView"
+      },
+      "delphi__api__routers__chase__CandidateView": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "account_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Account Id"
+          },
+          "hop": {
+            "type": "integer",
+            "title": "Hop"
+          },
+          "taint_paise": {
+            "type": "integer",
+            "title": "Taint Paise"
+          },
+          "balance_paise": {
+            "type": "integer",
+            "title": "Balance Paise"
+          },
+          "p_present": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P Present"
+          },
+          "p_mule": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P Mule"
+          },
+          "erv_paise": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Erv Paise"
+          },
+          "wrongful_cost_paise": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wrongful Cost Paise"
+          },
+          "net_paise": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Net Paise"
+          },
+          "rank": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rank"
+          },
+          "recommended": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recommended"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "account_id",
+          "hop",
+          "taint_paise",
+          "balance_paise",
+          "p_present",
+          "p_mule",
+          "erv_paise",
+          "wrongful_cost_paise",
+          "net_paise",
+          "rank",
+          "recommended"
+        ],
+        "title": "CandidateView"
+      },
+      "delphi__api__routers__guardian__CandidateView": {
+        "properties": {
+          "source_key": {
+            "type": "string",
+            "title": "Source Key"
+          },
+          "eligible": {
+            "type": "boolean",
+            "title": "Eligible"
+          },
+          "ineligible_reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Ineligible"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cost_paise": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Paise"
+          },
+          "voi_myopic_paise": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Voi Myopic Paise"
+          },
+          "net_value_paise": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Net Value Paise"
+          },
+          "settle_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Settle Pct"
+          },
+          "selected": {
+            "type": "boolean",
+            "title": "Selected"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source_key",
+          "eligible",
+          "selected"
+        ],
+        "title": "CandidateView",
+        "description": "One row of a planning step's candidates table (docs/08 §6), as the Guardian stores it in\n`probe_runs.candidates` (`guardian.service._candidates`). Money is integer paise."
       }
     }
   }
