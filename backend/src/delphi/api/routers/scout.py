@@ -15,13 +15,14 @@ from http import HTTPStatus
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Header, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select, true, tuple_
 from sqlalchemy.orm import Session
 
 from delphi.api.idempotency import IdempotencyKey, RawBody, run_idempotent
+from delphi.api.problems import problem
 from delphi.api.routers import API_PREFIX
 from delphi.api.security import Permission, Principal, require
 from delphi.kb.store import active_version
@@ -29,12 +30,20 @@ from delphi.platform.errors import DelphiError, ProblemCode
 from delphi.platform.jobs import JobType, enqueue
 from delphi.platform.wiring import Platform
 from delphi.scout.api import (
+    DraftInvalidError,
+    DraftPatch,
+    DraftStatus,
     QueueCursor,
     QueueItem,
     dismiss,
+    edit_draft,
+    get_draft,
+    list_drafts,
     queue_items,
     scout_clusters,
+    stored_spec,
     typology_drafts,
+    validate_draft,
 )
 
 router = APIRouter(prefix=API_PREFIX, tags=["scout"])
@@ -242,3 +251,145 @@ def read_clusters(
         ],
         next_cursor=_encode_keyset(page[-1].created_at, page[-1].id) if more and page else None,
     )
+
+
+# --------------------------------------------------------------------------- typology drafts
+
+
+class DraftIssue(BaseModel):
+    path: str
+    code: str
+    message: str
+
+
+class DraftView(BaseModel):
+    id: UUID
+    cluster_id: UUID | None
+    status: str
+    revision: int
+    spec: dict[str, Any]
+    editors: list[UUID]
+    last_edited_by: UUID | None
+    backtest_report: dict[str, Any] | None
+    backtested_revision: int | None
+    created_at: datetime
+    updated_at: datetime
+    version: int
+    # The current spec checked against ACTIVE + the draft (docs/11 §3): what still stops it
+    # being backtested. A CANDIDATE lacks at least a key and a colour.
+    issues: list[DraftIssue]
+
+
+class DraftPage(BaseModel):
+    items: list[DraftView]
+    next_cursor: str | None
+
+
+def _draft_view(row: Any, kb: Any) -> DraftView:
+    issues = validate_draft(kb, stored_spec(row))
+    return DraftView(
+        id=row.id,
+        cluster_id=row.cluster_id,
+        status=row.status,
+        revision=row.revision,
+        spec=row.spec,
+        editors=list(row.editors),
+        last_edited_by=row.last_edited_by,
+        backtest_report=row.backtest_report,
+        backtested_revision=row.backtested_revision,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+        version=row.version,
+        issues=[DraftIssue(path=i.path, code=i.code, message=i.message) for i in issues],
+    )
+
+
+def _with_etag(view: DraftView) -> JSONResponse:
+    return JSONResponse(view.model_dump(mode="json"), headers={"ETag": f'"{view.version}"'})
+
+
+def _if_match(raw: str | None) -> int:
+    if raw is None:
+        raise DelphiError(
+            "An edit needs an If-Match header with the draft's ETag.",
+            code=ProblemCode.VALIDATION_FAILED,
+        )
+    value = raw.strip().removeprefix("W/").strip('"')
+    if not value.isdigit():
+        raise DelphiError(
+            "If-Match must be the ETag the server returned.", code=ProblemCode.VALIDATION_FAILED
+        )
+    return int(value)
+
+
+@router.get("/typology-drafts")
+def read_drafts(
+    request: Request,
+    _principal: Annotated[Principal, Depends(require(Permission.VIEW))],
+    status: Annotated[DraftStatus, Query()] = DraftStatus.CANDIDATE,
+    limit: Annotated[int, Query(ge=1, le=MAX_LIMIT)] = DEFAULT_LIMIT,
+    cursor: Annotated[str | None, Query()] = None,
+) -> DraftPage:
+    """The drafts of one status (CANDIDATE unless asked, the owner's decision on #255), most
+    recently edited first; keyset paging (docs/16 §1)."""
+    after = _decode_cursor(cursor) if cursor else None
+    with _platform(request).sessions() as session:
+        kb = _kb(session)
+        rows = list_drafts(
+            session,
+            limit=limit + 1,
+            status=status,
+            after=(after.entered_at, after.subject_id) if after else None,
+        )
+        views = [_draft_view(r, kb) for r in rows[:limit]]
+    more = len(rows) > limit
+    return DraftPage(
+        items=views,
+        next_cursor=_encode_keyset(views[-1].updated_at, views[-1].id) if more else None,
+    )
+
+
+@router.get("/typology-drafts/{draft_id}", response_model=DraftView)
+def read_draft(
+    draft_id: UUID,
+    request: Request,
+    _principal: Annotated[Principal, Depends(require(Permission.VIEW))],
+) -> JSONResponse:
+    with _platform(request).sessions() as session:
+        return _with_etag(_draft_view(get_draft(session, draft_id), _kb(session)))
+
+
+@router.patch("/typology-drafts/{draft_id}", response_model=DraftView)
+def patch_draft(
+    draft_id: UUID,
+    body: DraftPatch,
+    request: Request,
+    principal: Annotated[Principal, Depends(require(Permission.FDE))],
+    if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+) -> JSONResponse:
+    """docs/11 §3: a partial edit, validated as ACTIVE + the draft; the next revision, back to
+    DRAFT. 412 on a stale If-Match; 422 with `errors` when it breaks KB rules (nothing saved);
+    409 for a draft in shadow, promoted or rejected."""
+    expected = _if_match(if_match)
+    platform = _platform(request)
+    try:
+        with platform.sessions.begin() as session:
+            kb = _kb(session)
+            row = edit_draft(
+                session,
+                platform.clock,
+                kb,
+                draft_id,
+                body,
+                expected_version=expected,
+                by=principal.user_id,
+            )
+            view = _draft_view(row, kb)
+    except DraftInvalidError as err:
+        return problem(
+            request,
+            ProblemCode.VALIDATION_FAILED,
+            err.detail,
+            errors=[{"path": i.path, "code": i.code, "message": i.message} for i in err.issues],
+        )
+    return _with_etag(view)
