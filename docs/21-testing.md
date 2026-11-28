@@ -81,9 +81,6 @@ test.
 | E2E-RESET | Demo reset returns personas to their initial state; S-1 can run again |
 | E2E-A11Y | axe scan on every route: no serious or critical violations |
 
-E2E-S1's Guardian half is out of the suite while #291's follow-up finds why the phone's
-interactive S-1 (unlike autoplay) reaches the cooling-off in CI; it comes back with that fix.
-
 The journeys share one stack and one bank, and E2E-RESET deletes what the others made, so the
 spec files run one at a time (`workers: 1` in `frontend/playwright.config.ts`).
 
