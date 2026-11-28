@@ -148,7 +148,25 @@ stable. The 30 days, the 80% and the 3-credit minimum are the definition above, 
   (`taint_at_approval_paise`), since later re-traces overwrite the candidate's.
   - An internal account's lien is PLACED, with `review_due_at`, or FAILED_FUNDS_MOVED at 0.
   - An external account's lien waits as TICKET_SENT, with its ticket SENT_SIMULATED.
-- **Ticket worker:** acknowledgement, expiry and auto-close are PR 2.
+- **Tickets** (`delphi.chase.tickets`, #113 PR 2): `CHASE_RETRACE` (every 20 s, the docs/04
+  floor) settles the SENT_SIMULATED tickets, oldest sent first, at most
+  `DELPHI_CHASE_TICKETS_PER_RUN` (200) per run (bounded after #263); the next run carries on.
+  - **Acknowledged** after the simulator's CFCFRMS latency (doc 14 §9,
+    `sim.external.cfcfrms_ack_delay`, seeded by the bank's dataset). The lien is then PLACED for
+    min(approved amount, headroom), the headroom being the balance now less the account's other
+    active liens, or FAILED_FUNDS_MOVED at 0. Only the accounts of the tickets acknowledged in
+    this pass are locked (the same per-account lock as approval).
+  - **Expired** after `ticket_expiry_min`: the lien is FAILED_NO_RESPONSE. Expiry needs no
+    simulator, so tickets also expire while no dataset is seeded (none is then acknowledged).
+- **Closing:** the same job closes OPEN operations past their golden hour with no pending ticket,
+  at most `DELPHI_CHASE_TICKETS_PER_RUN` per run, skipping one another transaction holds (an
+  approval): the next run closes it, so the two never deadlock.
+  `POST …/close` closes one by hand, and `POST …/liens/{id}/release` releases a PLACED lien with a
+  reason (`ChaseView` shows `released_at` and `release_reason`).
+- **A ticket settles after a manual close too.** This is intended: the external bank acts on the
+  request it was sent, whatever happens to the operation afterwards. A lien it places stays
+  under periodic review and is released with the release endpoint.
+- **Time:** all latencies run in real time until the DEMO time mode is wired.
 - **Bank effect:** the bank does not yet hold liened money back from later debits; that is #114's
   live movement.
 

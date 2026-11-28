@@ -55,7 +55,8 @@ devices(id, customer_id → customers, fingerprint, os, first_seen_at)
 payees(id, customer_id, account_id, label, added_at, unique(customer_id, account_id))
 payments(id, payer_account_id, payee_account_id, amount_paise > 0, channel, initiated_at,
          device_id null, status, origin, executed_at null, scheduled_by null, created_at,
-         story_local_time null)  -- a DEMO_STORY payment's scripted IST "HH:MM" (doc 14 §10)
+         story_local_time null,  -- a DEMO_STORY payment's scripted IST "HH:MM" (doc 14 §10)
+         story null)             -- the demo story it plays (S1…S4): its scripted prior (#291)
    idx: (payer_account_id, initiated_at), (payee_account_id, initiated_at), (status)
 ledger_entries(id bigint identity, account_id, payment_id, delta_paise, balance_after_paise, at)
    idx: (account_id, at)
@@ -157,7 +158,7 @@ police_alert_drafts(id, case_id, status (DRAFT|SENT_SIMULATED|DISCARDED), payloa
        -- migration 0014 (#106); unique case_id; acted_by and acted_at set iff not DRAFT
 campaigns(id, leading_hypothesis, case_count, f3_stage_max, expected_loss_paise,
           vulnerable_victims, rank_score, merged_into null, created_at, updated_at)
-       -- migration 0021 (#107); idx (rank_score desc, id desc)
+       -- migration 0022 (#107); idx (rank_score desc, id desc)
        -- WHERE merged_into IS NULL AND case_count > 0 (the list's filter and order);
        -- cases.campaign_id gets its foreign key here (NOT VALID, then VALIDATE), with an index
 case_entities(case_id → cases ON DELETE CASCADE, entity, pk(case_id, entity))
