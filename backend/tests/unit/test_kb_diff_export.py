@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import io
+import json
 import zipfile
 from pathlib import Path
 
-from delphi.kb.canonical import content_sha256
+from delphi.kb.canonical import canonical_json, content_sha256
 from delphi.kb.diff import Change, DiffOp, diff_content
 from delphi.kb.export import export_zip, yaml_tree
 from delphi.kb.loader import load_and_validate
+from delphi.kb.model import KnowledgeBase
 from delphi.kb.store import content_of
 from delphi.probes.registry import CLASSIFIER_NAMES
 
@@ -86,3 +88,16 @@ def test_the_zip_is_reproducible_and_headed(tmp_path: Path) -> None:
         first = archive.read("kb.yaml").decode()
     assert first.startswith(f"# Exported from DELPHI KB version 1 (sha256 {sha})")
     assert load_and_validate(tmp_path, CLASSIFIER_NAMES) == KB_V1
+
+
+def test_the_scout_epsilon_default_keeps_kb_v1s_hash() -> None:
+    """#117: `scout.cluster_selection_epsilon` is a model default (1.0) that a stored KB v1
+    without the key validates to, with the same SHA-256; a version that sets it hashes it."""
+    assert KB_V1.config.scout.cluster_selection_epsilon == 1.0
+    reloaded = KnowledgeBase.model_validate(json.loads(canonical_json(KB_V1)))
+    assert content_sha256(reloaded) == content_sha256(KB_V1)
+    scout = type(KB_V1.config.scout).model_validate(
+        {**KB_V1.config.scout.model_dump(), "cluster_selection_epsilon": 1.0}
+    )
+    explicit = KB_V1.model_copy(update={"config": KB_V1.config.model_copy(update={"scout": scout})})
+    assert "cluster_selection_epsilon" in canonical_json(explicit)

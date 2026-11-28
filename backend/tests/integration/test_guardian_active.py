@@ -5,6 +5,8 @@ driven end to end through the service with a scripted customer (docs/21 §3)."""
 from __future__ import annotations
 
 import asyncio
+import threading
+import time
 from collections.abc import Callable, Iterator, Mapping
 from datetime import timedelta
 from typing import Any
@@ -14,6 +16,7 @@ import pytest
 from sqlalchemy import select
 
 from delphi.engine import SessionFacts, compile_profile
+from delphi.guardian import service as service_module
 from delphi.guardian.active import ClientSignals, Ui
 from delphi.guardian.api import PriorInputs, run_session
 from delphi.guardian.service import Decided, GuardianService, IssuedProbe, NextProbe
@@ -24,6 +27,7 @@ from delphi.guardian.store import (
     SessionStatus,
     TerminalReason,
     add_probe_run,
+    get_session,
 )
 from delphi.guardian.tables import guardian_sessions, probe_runs
 from delphi.kb.loader import load_and_validate
@@ -32,6 +36,10 @@ from delphi.platform.errors import DelphiError, ProblemCode
 from delphi.probes.registry import CLASSIFIER_NAMES
 
 from .test_guardian_service import CLEAN, GENUINE, INR, KB_DIR, UNSURE, Env, FixedPrior, make_env
+
+# How long the cancel is given to commit inside the passive step's window (#268).
+CANCEL_WINDOW_S = 0.5
+JOIN_S = 30.0
 
 
 @pytest.fixture
@@ -394,6 +402,44 @@ def test_a_cancel_during_the_passive_phase_is_not_undone(env: Env) -> None:
     assert (
         env.count("SELECT count(*) FROM delphi.probe_runs WHERE session_id = :s", s=started.id) == 0
     )  # the passive results were not applied over the cancel
+
+
+def test_a_cancel_landing_while_the_passive_results_apply_never_errors(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#268: the customer's cancel commits after the passive step read the session but before it
+    wrote it, the window a slow CI runner opened past the 300 ms adapter timeout. The two must
+    take turns on the session row: the results apply, then the cancel ends the session. Neither
+    surfaces "changed underneath this step"."""
+    payment = env.payment(480_000)
+    svc = env.service(FixedPrior(GENUINE), CLEAN, explore=False)
+    started = svc.start(payment, mode=SessionMode.LIVE, runner=Runner.API)
+    real_add = service_module.add_probe_run
+    errors: list[BaseException] = []
+    threads: list[threading.Thread] = []
+
+    def cancel() -> None:
+        try:
+            svc.cancel(started.id)
+        except BaseException as exc:  # reported by the test below, not swallowed
+            errors.append(exc)
+
+    def add_then_let_the_cancel_in(*args: Any, **kwargs: Any) -> Any:
+        if not threads:  # the first passive result: the apply has read the session
+            threads.append(threading.Thread(target=cancel))
+            threads[0].start()
+            time.sleep(CANCEL_WINDOW_S)  # the cancel commits now, unless it waits its turn
+        return real_add(*args, **kwargs)
+
+    monkeypatch.setattr(service_module, "add_probe_run", add_then_let_the_cancel_in)
+    after = asyncio.run(svc.passive(started.id))  # raised "changed underneath" before #268
+    threads[0].join(JOIN_S)
+    assert not threads[0].is_alive() and not errors, errors
+    assert after.status is SessionStatus.PLANNING  # the results applied first
+    with env.sessions() as s:
+        ended = get_session(s, started.id)
+    assert ended is not None and ended.status is SessionStatus.CANCELLED_BY_CUSTOMER
+    assert env.payment_row(payment).status == "CANCELLED"
 
 
 def test_the_cooling_off_window_does_not_count_towards_the_session_age(env: Env) -> None:
