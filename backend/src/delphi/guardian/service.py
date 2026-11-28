@@ -286,6 +286,7 @@ class GuardianService:
             open_mass=built.open_mass,
             open_mass_shares=built.open_mass_shares,
             top_features=[dict(f) for f in inputs.top_features],
+            prior_source=inputs.source,
             posterior=ctx.as_dict(prior),
             risk_by_decision=_risks(profile, risks),
         )

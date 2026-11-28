@@ -91,6 +91,7 @@ function view(overrides: Partial<GuardianSessionView> = {}): GuardianSessionView
       anomaly_percentile: null,
       open_mass: null,
       top_features: [],
+      source: 'MODEL',
     },
     risk_by_decision: null,
     probe_runs: [
@@ -418,6 +419,7 @@ describe('/phone demo stories', () => {
           device_id: 'd-story',
           telemetry: STORY_TELEMETRY,
           story_local_time: '23:40',
+          story: 'S1',
         },
       },
       error: null,
@@ -481,6 +483,7 @@ describe('/phone demo stories', () => {
         channel: 'IMPS',
         device_id: 'd-story',
         story_local_time: '23:40',
+        story: 'S1',
         telemetry: { on_call: true, call_counterparty_known: false },
       },
     });

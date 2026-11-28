@@ -5331,6 +5331,23 @@
               }
             ],
             "title": "Story Local Time"
+          },
+          "story": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "S1",
+                  "S2",
+                  "S3",
+                  "S4"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Story"
           }
         },
         "additionalProperties": false,
@@ -5688,6 +5705,14 @@
             },
             "type": "array",
             "title": "Top Features"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "MODEL",
+              "STORY_SCRIPT"
+            ],
+            "title": "Source"
           }
         },
         "type": "object",
@@ -5696,7 +5721,8 @@
           "p_model",
           "anomaly_percentile",
           "open_mass",
-          "top_features"
+          "top_features",
+          "source"
         ],
         "title": "PriorView"
       },

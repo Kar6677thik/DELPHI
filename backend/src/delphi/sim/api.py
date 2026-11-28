@@ -58,6 +58,7 @@ from delphi.sim.payments import (
     get_payment,
     get_payments,
 )
+from delphi.sim.persona_config import load_persona_config
 from delphi.sim.phone import (
     PHONE_CHANNELS,
     PayChannel,
@@ -121,6 +122,7 @@ __all__ = [
     "request_dataset",
     "request_reset",
     "request_story",
+    "scripted_priors",
     "session_telemetry",
     "sim_phone_risk",
     "sim_registry_listings",
@@ -136,6 +138,17 @@ StoryName = Literal["S1", "S2", "S3", "S4"]
 STORIES: tuple[str, ...] = get_args(StoryName)
 RUNNABLE_STORIES: tuple[str, ...] = ("S1", "S2")
 StoryMode = Literal["interactive", "autoplay"]
+
+
+def scripted_priors() -> dict[str, dict[str, float]]:
+    """Each runnable story's scripted prior (docs/06 §17, #291), from `personas.yaml`: the
+    Guardian's composition root starts a story payment's session from it."""
+    stories = load_persona_config().stories
+    return {
+        name: dict(stories[name].scripted_prior or {})
+        for name in RUNNABLE_STORIES
+        if stories[name].scripted_prior
+    }
 
 
 def dataset_exists(session: Session) -> bool:

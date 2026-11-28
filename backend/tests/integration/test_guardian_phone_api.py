@@ -32,8 +32,9 @@ from delphi.api.security import Principal, current_principal
 from delphi.guardian.active import Ui
 from delphi.guardian.api import LiveGuardian, live_guardian
 from delphi.guardian.phone import PhoneChannel, PhoneHub
-from delphi.guardian.service import IssuedProbe
+from delphi.guardian.service import IssuedProbe, PriorPort
 from delphi.guardian.store import Runner, SessionMode, get_session
+from delphi.guardian.story_prior import StoryPrior
 from delphi.kb.loader import load_and_validate
 from delphi.kb.model import KnowledgeBase, QuestionVariant
 from delphi.kb.store import ensure_kb_v1
@@ -45,6 +46,7 @@ from delphi.platform.settings import Settings
 from delphi.platform.wiring import Platform
 from delphi.probes.registry import CLASSIFIER_NAMES
 from delphi.sim import api as bank
+from delphi.sim.api import scripted_priors
 
 from ._db import MIGRATIONS_DIR, engine_as, upgrade
 from .test_guardian_active import KAMALA_ANSWERS, KAMALA_PASSIVE, KAMALA_PRIOR, story_prior
@@ -194,7 +196,7 @@ def _platform(env: Env) -> Platform:
     )
 
 
-def _live(env: Env, prior: FixedPrior, outcomes: Mapping[str, str]) -> LiveGuardian:
+def _live(env: Env, prior: PriorPort, outcomes: Mapping[str, str]) -> LiveGuardian:
     return live_guardian(env.service(prior, outcomes, explore=False), env.sessions, env.clock)
 
 
@@ -406,6 +408,29 @@ def test_a_story_payment_keeps_its_scripted_local_time(env: Env) -> None:
     with env.owner.connect() as conn:
         scripted = conn.execute(select(bank.payments.c.story_local_time)).scalars().all()
     assert scripted == ["23:40"]
+
+
+def test_a_story_payment_starts_from_its_scripted_prior(env: Env) -> None:
+    """docs/06 §17, #291: a story payment (S1) starts from the story's scripted prior, and the
+    session says so; a payment without a story keeps the trained model's."""
+    p = _persona(env)
+    live = _live(env, StoryPrior(FixedPrior(GENUINE_SURE, p_mule=None), scripted_priors()), CLEAN)
+    with TestClient(_app(env, _user(env, Role.INVESTIGATOR), live), headers=BROWSER) as client:
+        story = client.post(API, json={"payment": _payment(p, story="S1")}, headers=_key())
+        plain = client.post(API, json={"payment": _payment(p, 3_000)}, headers=_key())
+        unknown = client.post(API, json={"payment": _payment(p, story="S9")}, headers=_key())
+    assert story.status_code == 201, story.text
+    scripted = story.json()["prior"]
+    assert scripted["source"] == "STORY_SCRIPT"
+    assert scripted["probs"]["APP_DIGITAL_ARREST"] == pytest.approx(0.30)
+    assert scripted["top_features"] == [
+        {"feature": "scripted_prior", "value": "S1", "contribution": 0.0}
+    ]
+    assert plain.status_code == 201 and plain.json()["prior"]["source"] == "MODEL"
+    assert unknown.status_code == 422
+    with env.owner.connect() as conn:
+        stories = conn.execute(select(bank.payments.c.story)).scalars().all()
+    assert sorted(stories, key=str) == sorted(["S1", None], key=str)
 
 
 # ---------------------------------------------------------------- answering and cancelling

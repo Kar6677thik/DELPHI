@@ -1815,6 +1815,8 @@ export interface components {
             telemetry?: components["schemas"]["TelemetryIn"] | null;
             /** Story Local Time */
             story_local_time?: string | null;
+            /** Story */
+            story?: ("S1" | "S2" | "S3" | "S4") | null;
         };
         /** PaymentSummary */
         PaymentSummary: {
@@ -1964,6 +1966,11 @@ export interface components {
             top_features: {
                 [key: string]: unknown;
             }[];
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "MODEL" | "STORY_SCRIPT";
         };
         /**
          * ProbeResponseRequest
