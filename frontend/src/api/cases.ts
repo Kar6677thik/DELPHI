@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { ApiError, apiFetch, getJson } from './client';
 import type { CaseDetail, CasePage, CaseSort, DispositionRequest, EvidenceRequest } from './types';
@@ -8,11 +8,24 @@ import type { components } from './schema';
 export const CASES_ROOT_KEY = ['cases'] as const;
 export const CASES_QUERY_KEY = [...CASES_ROOT_KEY, 'queue'] as const;
 
-/** The case queue (docs/16 `GET /cases`): the first page, soonest SLA first or newest first. */
-export function useCases(sort: CaseSort = 'sla_due_at') {
-  return useQuery({
-    queryKey: [...CASES_QUERY_KEY, sort],
-    queryFn: () => getJson<CasePage>(`/cases?sort=${sort}&limit=50`),
+/** Cases per page of `GET /cases`. */
+export const CASE_PAGE_SIZE = 50;
+
+/**
+ * The case queue (docs/16 `GET /cases`) in the chosen order, optionally only one campaign's
+ * cases, a page at a time: "Load more" follows `next_cursor`, so no case is out of reach.
+ */
+export function useCases(sort: CaseSort = 'sla_due_at', campaignId: string | null = null) {
+  return useInfiniteQuery({
+    queryKey: [...CASES_QUERY_KEY, sort, campaignId],
+    queryFn: ({ pageParam }) => {
+      const params = new URLSearchParams({ sort, limit: String(CASE_PAGE_SIZE) });
+      if (campaignId !== null) params.set('campaign_id', campaignId);
+      if (pageParam) params.set('cursor', pageParam);
+      return getJson<CasePage>(`/cases?${params.toString()}`);
+    },
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.next_cursor ?? undefined,
   });
 }
 

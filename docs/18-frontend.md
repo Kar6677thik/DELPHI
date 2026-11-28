@@ -48,10 +48,29 @@ and error states. `case.opened` and `case.updated` invalidate the `['cases']` qu
 (`lib/liveQueries.ts`, the first SSE → query-key map). Sorting controls, expected loss and
 campaign arrive with the console and campaigns (#103, M5).
 
+**Campaigns (#107):** `/campaigns` lists the live campaigns from `GET /campaigns`, highest
+`rank_score` first, 50 at a time with "Load more" (`next_cursor`, as on `/guardian`): the leading
+hypothesis (a link), the F3 stage strip, the case count, the total expected loss and the
+vulnerable victims. `/campaigns/:id` (`GET /campaigns/{id}`) shows the strip,
+the totals (cases, vulnerable victims, expected loss; not `rank_score`, a paise-scaled weight
+that would read as a sum of money), the shared infrastructure (each entity's kind, value and case
+count) and the cases, oldest first (opened times in IST), each linking to its console. With
+more cases than the detail holds (200), it links to `/cases?campaign_id=`. A campaign that merged
+says so and links to the one that took its cases.
+- **The F3 stage strip** is four segments in kill-chain order, filled up to `f3_stage_max`, with the
+  stage in words beside it (and in its accessible name). While `f3_stage_max` is null (doc 09 §8)
+  it reads "F3 stage not known yet", never an empty chain; in a table row (compact) it reads
+  "Not known yet".
+- `campaign.updated` refreshes the campaign queries and the case queue (its campaign column).
+
 **M5 case queue and Navigator console (#105):** `/cases` gains an order control (soonest SLA,
 highest expected loss or newest, `GET /cases?sort=`) and an "Expected loss" column: the loss of
 the case's `recommended_decision` in its `risk_by_decision`, which the backend stores from the
-moment a case opens (#208), and "—" for a row without one; the campaign column arrives with campaigns (#107). `/cases/:id` follows doc 09 §2 from `GET /cases/{id}`:
+moment a case opens (#208), and "—" for a row without one. The "Campaign" column links a case
+to its campaign ("—" for none; the link's accessible name names the case), and
+`/cases?campaign_id=` lists one campaign's cases (#107). The queue loads 50 at a time with
+"Load more", so every case of a large campaign can be reached.
+`/cases/:id` follows doc 09 §2 from `GET /cases/{id}`:
 - the posterior `HypothesisBar` and the `RiskTable`;
 - the "Evidence sufficient — recommend {decision} (expected loss ₹X)" banner while
   `evidence_sufficient` and not disposed;

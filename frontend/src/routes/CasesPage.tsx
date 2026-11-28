@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 
 import { useCases } from '../api/cases';
 import type { CaseSort, CaseView } from '../api/types';
@@ -83,7 +83,11 @@ export function summary(items: readonly CaseView[], more: boolean): string {
 /** The case queue (docs/18 §2 `/cases`): soonest SLA, highest expected loss, or newest first. */
 export function CasesPage() {
   const [sort, setSort] = useState<CaseSort>('sla_due_at');
-  const cases = useCases(sort);
+  const [params] = useSearchParams();
+  const campaignId = params.get('campaign_id');
+  const cases = useCases(sort, campaignId);
+  const items = cases.data?.pages.flatMap((page) => page.items) ?? [];
+  const more = cases.hasNextPage;
   const now = useNow(TICK_MS);
   return (
     <section aria-labelledby="cases-title" className="max-w-[1320px]">
@@ -93,10 +97,22 @@ export function CasesPage() {
             Case queue
           </h1>
           <p className="mt-1 text-[14px] text-muted">
-            {cases.isSuccess && cases.data.items.length > 0
-              ? summary(cases.data.items, cases.data.next_cursor !== null)
+            {cases.isSuccess && items.length > 0
+              ? summary(items, more)
               : 'The payments Guardian held, for an investigator to decide.'}
           </p>
+          {campaignId !== null && (
+            <p className="mt-1 text-[13px] text-soft">
+              One campaign's cases.{' '}
+              <Link to={`/campaigns/${campaignId}`} className="underline">
+                Back to the campaign
+              </Link>{' '}
+              ·{' '}
+              <Link to="/cases" className="underline">
+                All cases
+              </Link>
+            </p>
+          )}
         </div>
         <label className="ml-auto flex items-center gap-2 text-[13px] text-muted">
           Order
@@ -118,12 +134,12 @@ export function CasesPage() {
       <div className="mt-6">
         {cases.isPending && <p className="text-[14px] text-muted">Loading cases…</p>}
         {cases.isError && <ProblemAlert error={cases.error} title="Could not load the cases" />}
-        {cases.isSuccess && cases.data.items.length === 0 && (
+        {cases.isSuccess && items.length === 0 && (
           <p className="rounded-md border border-dashed border-control px-4 py-3 text-[13px] text-muted">
             No cases yet. Guardian holds open them.
           </p>
         )}
-        {cases.isSuccess && cases.data.items.length > 0 && (
+        {cases.isSuccess && items.length > 0 && (
           <div className="overflow-x-auto rounded-md bg-surface px-8 py-5">
             <table className="w-full min-w-[860px] text-left text-[14px]">
               <caption className="sr-only">{CAPTIONS[sort]}</caption>
@@ -147,13 +163,16 @@ export function CasesPage() {
                   <th scope="col" className="py-2 pr-6 text-right font-normal">
                     Expected loss
                   </th>
-                  <th scope="col" className="py-2 font-normal">
+                  <th scope="col" className="py-2 pr-6 font-normal">
                     Status
+                  </th>
+                  <th scope="col" className="py-2 font-normal">
+                    Campaign
                   </th>
                 </tr>
               </thead>
               <tbody>
-                {cases.data.items.map((item) => {
+                {items.map((item) => {
                   const loss = expectedLoss(item);
                   return (
                     <tr key={item.id} className="border-b border-line last:border-0">
@@ -190,13 +209,38 @@ export function CasesPage() {
                       <td className="figure py-3 pr-6 text-right text-soft">
                         {loss === null ? '—' : <MoneyText paise={loss} />}
                       </td>
-                      <td className="py-3 text-soft">{humanise(item.status)}</td>
+                      <td className="py-3 pr-6 text-soft">{humanise(item.status)}</td>
+                      <td className="py-3 text-soft">
+                        {item.campaign_id ? (
+                          <Link
+                            to={`/campaigns/${item.campaign_id}`}
+                            aria-label={`Campaign of the ${item.leading_hypothesis_name} case, ${slaLabel(item, now)}`}
+                            className="underline decoration-control underline-offset-4 hover:decoration-soft"
+                          >
+                            Campaign
+                          </Link>
+                        ) : (
+                          '—'
+                        )}
+                      </td>
                     </tr>
                   );
                 })}
               </tbody>
             </table>
           </div>
+        )}
+        {cases.hasNextPage && (
+          <button
+            type="button"
+            className="mt-4 rounded-full border border-control px-4 py-1.5 text-[13px] text-soft transition-colors hover:border-soft hover:text-ink disabled:opacity-50"
+            disabled={cases.isFetchingNextPage}
+            onClick={() => {
+              void cases.fetchNextPage();
+            }}
+          >
+            {cases.isFetchingNextPage ? 'Loading…' : 'Load more'}
+          </button>
         )}
       </div>
     </section>

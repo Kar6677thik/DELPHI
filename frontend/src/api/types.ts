@@ -49,6 +49,12 @@ export type EvidenceRequest = Schemas['EvidenceRequest'];
 export type DispositionRequest = Schemas['DispositionRequest'];
 /** The case queue's orders. */
 export type CaseSort = Schemas['CaseSort'];
+/** docs/16 "Cases": a campaign in the list, one with its cases, and an entity its cases share. */
+export type CampaignView = Schemas['CampaignView'];
+export type CampaignPage = Schemas['CampaignPage'];
+export type CampaignDetail = Schemas['CampaignDetail'];
+export type CampaignCase = Schemas['CampaignCaseView'];
+export type SharedEntity = Schemas['SharedEntity'];
 /** `GET /metrics/summary`: the Overview's live KPIs and alerts (docs/22 §7, docs/20 §4). */
 export type MetricsSummary = Schemas['MetricsSummary'];
 /** `GET /status`: whether the demo is seeded and its models trained (docs/16, docs/20 §3). */
