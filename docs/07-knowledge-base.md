@@ -430,6 +430,9 @@ KB v1 ships three approved English variants per probe.
 - **Languages.** The job drafts English rewordings and the hi, te and ta translations: the API
   accepts all four, as doc 15's output schema does.
 - `question_variants` is demo data: the demo reset deletes it, with the KB versions after v1.
+  A variant drafted before the seed is kept, and if a batch after the seed included it, the
+  reset clears its `included_in_kb_version` (that version is deleted), so it waits for the
+  next batch again (#307).
 
 Canonical English (variant 1) and option keys:
 

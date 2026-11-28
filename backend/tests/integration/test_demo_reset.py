@@ -26,6 +26,7 @@ from delphi.platform.locks import DEMO_RESET_LOCK_KEY
 from delphi.platform.tables import jobs
 from delphi.platform.worker import run_job
 from delphi.sim.bank import accounts, ledger_entries, sim_schedule
+from delphi.sim.catalog import datasets
 from delphi.sim.delivery import deliver_labels
 from delphi.sim.jobs import register_sim_jobs
 from delphi.sim.reset import CASCADED_TABLES, KEPT_TABLES, RESET_TABLES, register_reset_job
@@ -321,6 +322,45 @@ def test_a_second_reset_at_once_skips(seeded: Bank) -> None:
         job = _reset(seeded)
     assert job["status"] == JobStatus.SUCCEEDED
     assert job["result"] == {"skipped": "another demo reset is running"}
+
+
+def test_a_kept_variant_batched_after_the_seed_is_unbatched(
+    seeded: Bank, kb: KnowledgeBase
+) -> None:
+    """#307 review: a variant approved before the seed and batched into a KB version after it
+    keeps its row, but no longer points at the version the reset deletes."""
+    with seeded.owner.connect() as conn:
+        marker = conn.execute(select(datasets.c.seed_completed_at)).scalar_one()
+    variant = uuid4()
+    with seeded.owner.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO delphi.question_variants (id, probe_key, language, text, options,"
+                " status, generated_by, reviewed_at, created_at) VALUES (:id, 'PURPOSE_QUESTION',"
+                " 'te', 'A Telugu wording', '[]'::jsonb, 'APPROVED', 'HUMAN', :at, :at)"
+            ),
+            {"id": variant, "at": marker - timedelta(hours=1)},
+        )
+    seeded.clock.advance(timedelta(minutes=1))
+    with seeded.sessions.begin() as s:
+        batched = insert_version(
+            s, seeded.clock, kb, status=KbStatus.CANDIDATE, change_summary="batch"
+        )
+        s.execute(
+            text("UPDATE delphi.question_variants SET included_in_kb_version = :v WHERE id = :id"),
+            {"v": batched, "id": variant},
+        )
+    job = _reset(seeded)
+    assert job["status"] == JobStatus.SUCCEEDED, job["error"]
+    with seeded.owner.connect() as conn:
+        kept = conn.execute(
+            text(
+                "SELECT status, included_in_kb_version FROM delphi.question_variants WHERE id = :id"
+            ),
+            {"id": variant},
+        ).one()
+        gone = conn.execute(select(kb_versions.c.id).where(kb_versions.c.id == batched)).first()
+    assert tuple(kept) == ("APPROVED", None) and gone is None
 
 
 def test_children_are_deleted_before_their_parents(seeded: Bank) -> None:
