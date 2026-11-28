@@ -125,8 +125,8 @@ is not built yet.
 
 | Method & path | Perm | Notes |
 |---|---|---|
-| GET `/scout/queue` | `view` | unexplained items |
-| POST `/scout/queue/{item_id}/dismiss` | `fde` | `{reason}`: removes the item from the queue (audited) |
+| GET `/scout/queue` | `view` | unexplained items, oldest first; keyset paging (`limit` ≤ 200, default 50, `cursor`) → `{items, next_cursor}` |
+| POST `/scout/queue/{item_id}/dismiss` | `fde` | `{reason}`: removes the item from the queue (audited). 404 if it is not in the queue; 409 if a concurrent dismissal of it won |
 | POST `/scout/runs` | `fde` | → job |
 | GET `/scout/clusters` | `view` | |
 | GET `/typology-drafts`, GET `/typology-drafts/{id}` | `view` | |
