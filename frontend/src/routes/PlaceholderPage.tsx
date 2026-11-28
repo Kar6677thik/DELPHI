@@ -4,7 +4,6 @@ import { StatePage } from './StatePage';
 const ARRIVES: Readonly<Record<string, string>> = {
   '/campaigns': 'campaigns, which group cases that share a fraudster',
   '/campaigns/:id': 'campaigns, which group cases that share a fraudster',
-  '/chase/:id': 'Jatayu, the chase that follows stolen money through mule accounts',
   '/scout': 'the Typology Scout, which proposes new fraud patterns from unexplained cases',
   '/scout/drafts/:id':
     'the Typology Scout, which proposes new fraud patterns from unexplained cases',

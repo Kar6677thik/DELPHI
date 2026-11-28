@@ -188,6 +188,19 @@ stable. The 30 days, the 80% and the 3-credit minimum are the definition above, 
 - Ticket list with statuses. Demo mode adds a live feed of onward transfers made by the mule
   network.
 
+**Implementation (#115, part 1).** `/chase/:id` (`ChasePage`) shows what `ChaseView` carries
+today:
+- the status, the golden-hour timer and the gauge (the PLACED liens' total of the reported loss);
+- the candidates table, in the server's order (by rank). Every recommended candidate without a
+  lien is selected by default. "Approve selected" and the checkboxes are shown only with
+  `chase:write`, and only while the operation is OPEN;
+- the liens, each with its ticket's status.
+
+The screen re-reads the operation on `chase.updated` and `chase.lien.updated`. Still to come,
+with the fields `ChaseView` does not carry yet: the graph, the candidates' bank, the
+`max_liens_per_round` cap on the default selection (the server refuses more with a 422), and the
+live feed.
+
 ## 8. Inbound side (receiving bank)
 
 Inbound mule detection is handled by `ACCOUNT_REVIEW` cases (doc 09 §1). Chase only acts on
