@@ -609,10 +609,7 @@ class _Planner:
         )
         instances.append(instance)
         rate = rng.gamma(routine.daily_rate_gamma["shape"], routine.daily_rate_gamma["scale"])
-        unusual = self.cfg.genuine_unusual
-        unusual_rate = (
-            rate * unusual.rate_per_10k / unusual.routine_rate_per_10k * unusual.made_share
-        )
+        unusual_rate = self._unusual_rate(customer, rate)
         habit = routine.habitual_hour.min + rng.random() * (
             routine.habitual_hour.max - routine.habitual_hour.min
         )
@@ -723,6 +720,19 @@ class _Planner:
                     intents=intents,
                     instances=instances,
                 )
+
+    def _unusual_rate(self, customer: Customer, rate: float) -> float:
+        """docs/14 §4: unusual events are a share of all the customer's genuine sessions, so
+        the new-payee streams (#166), planned outside the routine λ, count too (v17). Personas
+        save no new payees."""
+        unusual, routine = self.cfg.genuine_unusual, self.routine
+        sessions = rate
+        if customer.persona_key is None:
+            sessions += (
+                routine.new_person_payee.sessions_per_day
+                + routine.new_merchant_payee.sessions_per_day
+            )
+        return sessions * unusual.rate_per_10k / unusual.routine_rate_per_10k * unusual.made_share
 
     def _new_merchants(
         self,
