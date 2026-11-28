@@ -134,6 +134,13 @@ class Settings(BaseSettings):
     # docs/08 §4), so reading `probe_runs` reveals no live code (#171). Secret `delphi-app`,
     # api only. Generate with `openssl rand -hex 32`.
     secret_key: SecretStr | None = Field(default=None, min_length=MIN_SECRET_KEY_LENGTH)
+    # The most queue items (and reference sessions) one RUN_SCOUT loads, the newest of the
+    # lookback (docs/11 §2, bounded after #263; approved on #255).
+    scout_max_items: int = Field(default=500, ge=10, le=20_000)
+    # How long SCOUT_AUTO_TRIGGER waits after a RUN_SCOUT FAILED before it enqueues another (#255).
+    scout_failure_backoff_min: int = Field(default=60, ge=1, le=24 * 60)
+    # CFCFRMS tickets CHASE_RETRACE settles per run, oldest sent first (docs/10 §5, #263).
+    chase_tickets_per_run: int = Field(default=200, ge=1, le=10_000)
     # The ACCOUNT_REVIEW sweep (docs/09 §1, #109), bounded after #263: reviews opened per
     # transaction and per run, and how old a complaint may be and still open a review.
     review_sweep_batch: int = Field(default=25, ge=1, le=500)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections import Counter, defaultdict
 from datetime import timedelta
 from itertools import pairwise
@@ -264,7 +265,7 @@ def test_app_payments_fall_near_the_victims_habitual_hour(long_test: Dataset) ->
 
 
 def test_some_takeovers_are_staged(long_test: Dataset) -> None:
-    """#166: 35% of takeovers saved the mule 4–48 h before the login (past the cooling-off)."""
+    """#166: 35% of takeovers saved the mule 4–48 h before the login (hours before the drain)."""
     history = long_test.history
     of = {p.id: p for p in history.payments}
     customer_of = {a.id: a.customer_id for a in long_test.population.accounts if a.customer_id}
@@ -277,4 +278,7 @@ def test_some_takeovers_are_staged(long_test: Dataset) -> None:
         login = seen[first.device_id]
         added = saved[customer_of[first.payer_account_id], first.payee_account_id]
         staged.append(login - added >= timedelta(hours=4))
-    assert sum(staged) / len(staged) == pytest.approx(0.35, abs=0.2)
+    # Binomial: within 4 standard errors of the configured share.
+    share = load_generator_config().fraud.ato.staged_share
+    n = len(staged)
+    assert abs(sum(staged) / n - share) <= 4 * math.sqrt(share * (1 - share) / n)
