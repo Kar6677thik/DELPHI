@@ -35,7 +35,7 @@ next attempt, ``review_retry_base_s`` after the first failure, doubling with eac
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
@@ -114,10 +114,13 @@ class Backoff:
 
 @dataclass(frozen=True, slots=True)
 class Swept:
-    """One trigger's part of a batch: the reviews it opened and the accounts that failed."""
+    """One trigger's part of a batch: the reviews it opened, the accounts that failed, and every
+    account it tried. ``tried`` also counts one whose review another caller opened first (a
+    lost race opens nothing and fails nothing), so the caps count every attempt."""
 
-    opened: list[CaseRecord]
-    failed: list[UUID]
+    opened: list[CaseRecord] = field(default_factory=list)
+    failed: list[UUID] = field(default_factory=list)
+    tried: list[UUID] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -402,6 +405,7 @@ def try_open(
     """Open the account's review in a savepoint (``open_with_trigger``). On a failure, roll back
     only this account, record it and back it off, so the caller's batch commits the others
     (#290)."""
+    swept.tried.append(account_id)
     try:
         with session.begin_nested():
             case = open_with_trigger(
@@ -439,7 +443,7 @@ def open_complaint_reviews(
     reported after ``since`` names, unless it has an open review, or a review opened after the
     latest such complaint, or is backing off after a failed open. In the caller's transaction."""
     now = clock.now()
-    swept = Swept([], [])
+    swept = Swept()
     for account_id, _reported_at in complaint_candidates(session, now, since=since, limit=limit):
         try_open(
             session,
@@ -511,7 +515,7 @@ def open_mule_reviews(
     if version is None:
         raise DelphiError(f"No KB version {kb_version_id}.", code=ProblemCode.VALIDATION_FAILED)
     navigator = version.kb.config.navigator
-    swept = Swept([], [])
+    swept = Swept()
     for account_id in mule_candidates(
         session,
         clock.now(),
@@ -559,10 +563,11 @@ class AccountReviewSweepJob:
     def __call__(self, ctx: JobContext) -> Mapping[str, Any] | None:
         counts = {"complaints": 0, "mule_scores": 0}
         failed = 0
+        attempted = 0  # opened, failed, or lost to a concurrent open: the caps count them all
         since = self.clock.now() - self.limits.complaint_lookback
 
         def tried() -> int:
-            return sum(counts.values()) + failed
+            return attempted
 
         def result(**extra: Any) -> dict[str, Any]:
             return {"opened": sum(counts.values()), **counts, "failed": failed, **extra}
@@ -585,7 +590,7 @@ class AccountReviewSweepJob:
                     backoff=self.limits.backoff,
                     demo_time=self.demo_time,
                 )
-                left = room - len(complaints.opened) - len(complaints.failed)
+                left = room - len(complaints.tried)
                 mules = (
                     open_mule_reviews(
                         session,
@@ -596,12 +601,13 @@ class AccountReviewSweepJob:
                         demo_time=self.demo_time,
                     )
                     if left > 0
-                    else Swept([], [])
+                    else Swept()
                 )
             counts["complaints"] += len(complaints.opened)
             counts["mule_scores"] += len(mules.opened)
             failed += len(complaints.failed) + len(mules.failed)
-            if not (complaints.opened or complaints.failed or mules.opened or mules.failed):
+            attempted += len(complaints.tried) + len(mules.tried)
+            if not (complaints.tried or mules.tried):
                 return result(more=False)
             if not ctx.report(tried() / self.limits.max_per_run):
                 break

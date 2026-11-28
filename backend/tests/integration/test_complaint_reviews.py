@@ -405,6 +405,37 @@ def _fail_for(monkeypatch: pytest.MonkeyPatch, bad: set[UUID]) -> None:
     monkeypatch.setattr(reviews, "open_account_review", flaky)
 
 
+def test_a_candidate_lost_to_a_concurrent_open_counts_against_the_cap(
+    env: Env,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#306 CodeRabbit finding: another caller opening the review first opens nothing and fails
+    nothing here, but it's still an attempt, so a one-candidate cap tries no second one."""
+    raced = _account(env)
+    _complaint(env, raced)
+    suspect = _account(env)
+    _score(env, suspect, 0.9)
+    _credit(env, suspect, 1_000_000, days_ago=0.1)
+
+    calls: list[UUID] = []
+
+    def lost(*_args: Any, account_id: UUID, **_kw: Any) -> Any:
+        calls.append(account_id)
+        raise reviews.CaseExistsError("opened by someone else")
+
+    monkeypatch.setattr(reviews, "open_account_review", lost)
+    job = _job(env, batch=1, max_per_run=1)
+    assert job(cast(Any, _Ctx())) == {
+        "opened": 0,
+        "complaints": 0,
+        "mule_scores": 0,
+        "failed": 0,
+        "more": True,
+    }
+    assert calls == [raced]  # the suspect was not tried: the cap of one was used
+    assert _failure(env, raced) is None and _failure(env, suspect) is None
+
+
 def _failure(e: Env, account: UUID) -> Any:
     with e.owner.connect() as conn:
         return conn.execute(
