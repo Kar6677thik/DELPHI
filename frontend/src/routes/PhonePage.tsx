@@ -38,7 +38,7 @@ import {
   useStartPayment,
 } from '../api/phone';
 import type { GuardianSessionView, JobView } from '../api/types';
-import { CandidatesTable, parseCandidates } from '../components/CandidatesTable';
+import { CandidatesTable } from '../components/CandidatesTable';
 import {
   forDark,
   HypothesisBar,
@@ -758,7 +758,7 @@ function Thinking({ session, styles }: { session: GuardianSessionView; styles: H
           <div className="mt-4 overflow-x-auto">
             <CandidatesTable
               caption={`Candidates for step ${String(current.seq)}`}
-              candidates={parseCandidates(current.candidates)}
+              candidates={current.candidates}
               selectedBy={current.selected_by}
               propensity={current.propensity}
             />

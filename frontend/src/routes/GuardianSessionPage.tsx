@@ -4,7 +4,7 @@ import { API_BASE } from '../api/client';
 import { useGuardianSession, useKbDisplay } from '../api/guardian';
 import { CHANNEL_LABEL } from '../api/phone';
 import type { GuardianSessionView } from '../api/types';
-import { CandidatesTable, parseCandidates } from '../components/CandidatesTable';
+import { CandidatesTable } from '../components/CandidatesTable';
 import {
   HypothesisBar,
   type HypothesisStyles,
@@ -272,7 +272,7 @@ function SessionDetail({
                 <div className="mt-2 overflow-x-auto">
                   <CandidatesTable
                     caption={`Step ${String(run.seq)} candidates`}
-                    candidates={parseCandidates(run.candidates)}
+                    candidates={run.candidates}
                     selectedBy={run.selected_by}
                     propensity={run.propensity}
                   />

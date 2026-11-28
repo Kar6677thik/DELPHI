@@ -23,6 +23,8 @@ export type GuardianSessionSummary = Schemas['GuardianSessionSummary'];
 /** `GET /guardian/sessions/{id}` (docs/16 `GuardianSessionView`). */
 export type GuardianSessionView = Schemas['GuardianSessionView'];
 export type ProbeRunView = Schemas['ProbeRunView'];
+/** A row of a planning step's candidates table (docs/08 §6, #198). */
+export type Candidate = Schemas['ProbeCandidateView'];
 /** `GET /kb/versions/{id}`, with the version's content. */
 export type KbVersionView = Schemas['KbVersionView'];
 /** A Guardian session's lifecycle state (the `status` filter of `GET /guardian/sessions`). */
