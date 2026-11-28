@@ -30,8 +30,6 @@ guardian_sessions = Table(
     Column("open_mass", Float),
     Column("open_mass_shares", JSONB),
     Column("top_features", JSONB),
-    # MODEL or STORY_SCRIPT (migration 0021, #291): where the session's prior came from.
-    Column("prior_source", Text, nullable=False, server_default="MODEL"),
     Column("posterior", JSONB),
     Column("risk_by_decision", JSONB),
     Column("unexplained", Boolean, nullable=False),
