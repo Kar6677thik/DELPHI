@@ -42,6 +42,9 @@ guardian_sessions = Table(
     Column("baseline_decisions", JSONB),
     Column("dd_pack_complete", Boolean, nullable=False),
     Column("version", Integer, nullable=False),
+    # MODEL or STORY_SCRIPT (migration 0021, #291): where the session's prior came from. Last,
+    # where the migration's ADD COLUMN puts it.
+    Column("prior_source", Text, nullable=False, server_default="MODEL"),
 )
 
 probe_runs = Table(
