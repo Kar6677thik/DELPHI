@@ -18,8 +18,17 @@ const STEP_UP_AFTER_MS = 2_000;
 /** Staging the story is a worker job; each probe waits on the planner. */
 const STAGED_WITHIN_MS = 60_000;
 const DECIDED_WITHIN_MS = 90_000;
-/** Kamala reads Telugu: an APPROVED `te` spell-breaker if the KB has one, else English (#4). */
+/** Kamala reads Telugu: an APPROVED `te` variant if the KB has one, else English (#4). */
 const KAMALA_LANGUAGE = 'te';
+/** The yes/no questions (docs/08 §4) the Guardian may put to her; she answers "No". */
+const SPELL_BREAKER_DA = 'SPELL_BREAKER_DIGITAL_ARREST';
+const YES_NO_QUESTIONS = [SPELL_BREAKER_DA, 'SPELL_BREAKER_INVESTMENT'] as const;
+
+interface Run {
+  probe_key: string;
+  mode: string;
+  status: string;
+}
 
 /** One app switch (docs/08 §4 `visibility_hidden_count`): the page hides, then comes back. */
 async function switchAppAndBack(page: Page): Promise<void> {
@@ -44,11 +53,12 @@ test('E2E-S1 (Guardian): Kamala answers as scripted and is protected', async ({
   // From the seed: earlier journeys' S-1 runs change her history (payee saved, 24 h counts),
   // and with it the prior and the path (#291).
   await resetToSeed(page, baseURL);
-  const spellBreakerTexts = await approvedTexts(
-    page.request,
-    'SPELL_BREAKER_DIGITAL_ARREST',
-    KAMALA_LANGUAGE,
-  );
+  // The texts she may see for each yes/no question: the planner may also explore (the KB's
+  // exploration epsilon), e.g. ask the investment spell-breaker first, which she answers "No".
+  const questionTexts = new Map<string, string[]>();
+  for (const key of YES_NO_QUESTIONS) {
+    questionTexts.set(key, await approvedTexts(page.request, key, KAMALA_LANGUAGE));
+  }
 
   await page.goto('/phone?story=S1');
   await expect(page.getByText(/S-1 Kamala is staged/)).toBeVisible({ timeout: STAGED_WITHIN_MS });
@@ -86,6 +96,13 @@ test('E2E-S1 (Guardian): Kamala answers as scripted and is protected', async ({
     await act();
     await page.waitForFunction((el) => !el?.isConnected, shown, { timeout: left() });
   };
+  /** The probe the phone is showing, from the server: the one awaiting the customer. */
+  const awaiting = async (): Promise<string> => {
+    const s = (await (await page.request.get(`/api/v1/guardian/sessions/${id}`)).json()) as {
+      probe_runs: Run[];
+    };
+    return s.probe_runs.find((r) => r.status === 'AWAITING_CUSTOMER')?.probe_key ?? '';
+  };
   let spellBreakers = 0;
   while (!(await decided.isVisible())) {
     await expect(decided.or(purpose).or(no).or(sensor).or(otp).or(pause)).toBeVisible({
@@ -94,11 +111,12 @@ test('E2E-S1 (Guardian): Kamala answers as scripted and is protected', async ({
     if (await purpose.isVisible()) {
       await answer(purpose, PURPOSE_AFTER_MS, () => purpose.click());
     } else if (await no.isVisible()) {
+      const key = await awaiting();
       const heading = (await phone.getByRole('heading', { level: 2 }).innerText())
         .replace(/\s+/g, ' ')
         .trim();
-      expect(spellBreakerTexts, 'an APPROVED spell-breaker variant').toContain(heading);
-      spellBreakers += 1;
+      expect(questionTexts.get(key), `an APPROVED variant of ${key}`).toContain(heading);
+      if (key === SPELL_BREAKER_DA) spellBreakers += 1;
       await answer(no, SPELL_BREAKER_AFTER_MS, async () => {
         await switchAppAndBack(page);
         await no.click();
@@ -119,16 +137,13 @@ test('E2E-S1 (Guardian): Kamala answers as scripted and is protected', async ({
     }
   }
   await expect(protectedScreen).toBeVisible();
-  expect(spellBreakers, 'the spell-breaker was asked (ENG-S1)').toBeGreaterThanOrEqual(1);
+  expect(spellBreakers, 'the DA spell-breaker was asked (ENG-S1)').toBeGreaterThanOrEqual(1);
 
   const view = await page.request.get(`/api/v1/guardian/sessions/${id}`);
   expect(view.ok()).toBe(true);
-  const session = (await view.json()) as {
-    decision: string | null;
-    probe_runs: { probe_key: string; mode: string }[];
-  };
+  const session = (await view.json()) as { decision: string | null; probe_runs: Run[] };
   expect(session.decision).toBe('PROTECTIVE_HOLD');
-  // Every spell-breaker shown was the English one (counted above), and recorded.
-  const shown = session.probe_runs.filter((r) => r.probe_key === 'SPELL_BREAKER_DIGITAL_ARREST');
+  // Every DA spell-breaker she answered (counted above) is recorded.
+  const shown = session.probe_runs.filter((r) => r.probe_key === SPELL_BREAKER_DA);
   expect(shown).toHaveLength(spellBreakers);
 });
