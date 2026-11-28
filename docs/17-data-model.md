@@ -55,7 +55,8 @@ devices(id, customer_id → customers, fingerprint, os, first_seen_at)
 payees(id, customer_id, account_id, label, added_at, unique(customer_id, account_id))
 payments(id, payer_account_id, payee_account_id, amount_paise > 0, channel, initiated_at,
          device_id null, status, origin, executed_at null, scheduled_by null, created_at,
-         story_local_time null)  -- a DEMO_STORY payment's scripted IST "HH:MM" (doc 14 §10)
+         story_local_time null,  -- a DEMO_STORY payment's scripted IST "HH:MM" (doc 14 §10)
+         story null)             -- the demo story it plays (S1…S4): its scripted prior (#291)
    idx: (payer_account_id, initiated_at), (payee_account_id, initiated_at), (status)
 ledger_entries(id bigint identity, account_id, payment_id, delta_paise, balance_after_paise, at)
    idx: (account_id, at)
