@@ -362,11 +362,14 @@ These priors are fixtures (`prior_override`) for the ENG-S1/ENG-S2 tests (doc 21
 respect u ≥ 0.02. **A live story run starts from them too** (owner decision 2026-11-28, #291):
 the trained prior gives Kamala's and Arjun's story payments a few tenths of a percent of their
 story's hypothesis, a share that swings ~15× between trainings, so a live story's path was a
-coin flip. A payment carrying `story` (doc 14 §10) gets its story's scripted prior
+coin flip. A payment carrying `story` (set only by the server, from the `DEMO_STORY` job that
+staged it, doc 14 §10) gets its story's scripted prior
 (`sim/config/personas.yaml` `scripted_prior`, equal to the values below), recorded on the
-session as `prior_source = STORY_SCRIPT` and shown as "scripted prior", and plays greedily
-(no exploration, as ENG-S1/S2 do), so the live story takes the path they pin. Every other payment,
-including free play on the mock phone, keeps the trained model's prior.
+session as `prior_source = STORY_SCRIPT`, shown as "scripted prior" in every view and in the DD
+pack ("Prior: scripted for demo story S-1"), and plays greedily (its runs are GREEDY with no
+propensity, so off-policy evaluation never counts them; no exploration, as ENG-S1/S2 do), so
+the live story takes the path they pin. Every other payment, including free play on the mock
+phone, the simulator's traffic, evaluation and replay, keeps the trained model's prior.
 
 - **Arjun** (prior G .69 / ATO .20 / DA .04 / INV .03 / MULE .02 / ∅ .02, ₹1,80,000, passive:
   CLEAN_KNOWN_ENTITY, LOW_OR_UNKNOWN, NEW_DEVICE, NORMAL, NOT_ON_CALL).

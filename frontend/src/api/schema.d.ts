@@ -1815,8 +1815,8 @@ export interface components {
             telemetry?: components["schemas"]["TelemetryIn"] | null;
             /** Story Local Time */
             story_local_time?: string | null;
-            /** Story */
-            story?: ("S1" | "S2" | "S3" | "S4") | null;
+            /** Story Job Id */
+            story_job_id?: string | null;
         };
         /** PaymentSummary */
         PaymentSummary: {

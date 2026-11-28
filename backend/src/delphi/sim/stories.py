@@ -190,8 +190,10 @@ def _write_truth(conn: Connection, story: Story, name: str, payment_id: UUID, at
     )
 
 
-def _payment_body(request: PaymentRequest) -> dict[str, Any]:
-    """The `POST /guardian/sessions` `payment` the phone pays with (docs/16)."""
+def _payment_body(request: PaymentRequest, job_id: UUID) -> dict[str, Any]:
+    """The `POST /guardian/sessions` `payment` the phone pays with (docs/16). It names the job
+    that staged it (`story_job_id`): the server checks the payment against this job's result and
+    only then plays it as the story (#291); a client cannot ask for a story itself."""
     body: dict[str, Any] = {
         "payer_account_id": str(request.payer_account_id),
         "payee_account_id": str(request.payee_account_id),
@@ -203,8 +205,7 @@ def _payment_body(request: PaymentRequest) -> dict[str, Any]:
         body["telemetry"] = asdict(request.telemetry)
     if request.story_local_time is not None:
         body["story_local_time"] = request.story_local_time
-    if request.story is not None:
-        body["story"] = request.story
+    body["story_job_id"] = str(job_id)
     return body
 
 
@@ -234,7 +235,7 @@ class DemoStoryJob:
             "customer_id": str(staged.customer_id),
         }
         if params.mode == "interactive":
-            return {**result, "payment": _payment_body(staged.request)}
+            return {**result, "payment": _payment_body(staged.request, ctx.job.id)}
         self.customer.script(payment_id, scripted_steps(story.answers))
         session_id = self.submit(payment_id)
         return {**result, "payment_id": str(payment_id), "session_id": str(session_id)}

@@ -63,6 +63,18 @@ def _vulnerable(session: Session, customer_id: UUID | None) -> bool:
     )
 
 
+def _prior_source(source: str, story: str | None) -> dict[str, Any]:
+    """Where the session's prior came from (docs/06 §17, #291): a demo story's scripted prior
+    is said so, so nobody reads a scripted run as the model's output."""
+    if source != "STORY_SCRIPT":
+        return {"source": "MODEL"}
+    name = f"S-{story[1:]}" if story else "a demo story"
+    return {
+        "source": "STORY_SCRIPT",
+        "note": f"Prior: scripted for demo story {name} (docs/06 §17), not the trained model's.",
+    }
+
+
 def _top(probs: Mapping[str, float] | None, n: int) -> list[dict[str, Any]]:
     ranked = sorted((probs or {}).items(), key=lambda kv: (-kv[1], kv[0]))[:n]
     return [{"hypothesis": h, "probability": round(p, 6)} for h, p in ranked]
@@ -190,6 +202,7 @@ def _build(session: Session, row: SessionRow) -> DdPack:
             "top_features": list(row.top_features)[:TOP_FEATURES],
             "anomaly_percentile": row.anomaly_percentile,
             "open_mass": row.open_mass,
+            **_prior_source(row.prior_source, payment.story),
         }
         if row.prior is not None
         else None
