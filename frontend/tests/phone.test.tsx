@@ -91,6 +91,7 @@ function view(overrides: Partial<GuardianSessionView> = {}): GuardianSessionView
       anomaly_percentile: null,
       open_mass: null,
       top_features: [],
+      source: 'MODEL',
     },
     risk_by_decision: null,
     probe_runs: [
@@ -418,6 +419,7 @@ describe('/phone demo stories', () => {
           device_id: 'd-story',
           telemetry: STORY_TELEMETRY,
           story_local_time: '23:40',
+          story_job_id: JOB,
         },
       },
       error: null,
@@ -481,9 +483,36 @@ describe('/phone demo stories', () => {
         channel: 'IMPS',
         device_id: 'd-story',
         story_local_time: '23:40',
+        story_job_id: JOB,
         telemetry: { on_call: true, call_counterparty_known: false },
       },
     });
+  });
+
+  it('says when a story starts from its scripted prior (#291)', async () => {
+    const scripted = (): GuardianSessionView => {
+      const v = view();
+      return { ...v, prior: { ...v.prior, source: 'STORY_SCRIPT' } };
+    };
+    setMockSession('investigator');
+    const sent = mockApi();
+    server.use(
+      http.post('/api/v1/admin/demo/scenarios/S1/run', () =>
+        HttpResponse.json(storyJob({ status: 'QUEUED', result: null }), { status: 202 }),
+      ),
+      http.get(`/api/v1/jobs/${JOB}`, () => HttpResponse.json(storyJob())),
+      http.post('/api/v1/guardian/sessions', async ({ request }) => {
+        sent.payment = await request.json();
+        return HttpResponse.json(scripted(), { status: 201 });
+      }),
+      http.get(`/api/v1/guardian/sessions/${SESSION}`, () => HttpResponse.json(scripted())),
+    );
+    const { user } = renderApp('/phone?story=S1');
+    await screen.findByText(/S-1 Kamala is staged/);
+    const phone = screen.getByRole('region', { name: 'Customer’s phone' });
+    await user.click(within(phone).getByRole('button', { name: /Pay/ }));
+    expect(await screen.findByText(/Scripted prior: the demo story starts/)).toBeVisible();
+    expect(sent.payment).toMatchObject({ payment: { story_job_id: JOB } });
   });
 
   it('clears the story for free play', async () => {

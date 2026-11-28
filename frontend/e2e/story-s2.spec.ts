@@ -2,10 +2,10 @@ import { expect, type Locator, test } from '@playwright/test';
 
 import { resetToSeed } from './demo';
 
-// E2E-S2 (docs/21 §4, #101): Arjun pays a hospital from a new phone with the real sensing
-// prior, answering as his persona script does, and the payment is sent within 30 s after at
-// most two active probes. Which step-up runs follows the live prior (R-01, #281): ENG-S2 pins
-// the biometric-over-OTP choice on the fixture prior.
+// E2E-S2 (docs/21 §4, #101): Arjun pays a hospital from a new phone, answering as his persona
+// script does; the story starts from its scripted prior (docs/06 §17, #291), so the Guardian
+// chooses the biometric over the OTP, as ENG-S2 pins, and the payment is sent within 30 s
+// after at most two active probes.
 // The stack needs the demo dataset with its personas and trained models (ci.yml e2e job).
 const USERNAME = process.env.E2E_USERNAME ?? 'admin';
 const PASSWORD = process.env.E2E_PASSWORD ?? 'dev-only-admin-pw';
@@ -21,6 +21,7 @@ const PURPOSE_AFTER_MS = 5_000;
 const STAGED_WITHIN_MS = 60_000;
 
 interface SessionView {
+  prior: { source: string };
   status: string;
   decision: string | null;
   probe_runs: { probe_key: string; mode: string; status: string; outcome: string | null }[];
@@ -108,7 +109,10 @@ test('E2E-S2: Arjun answers as scripted and the payment is sent', async ({ page,
   expect(session.decision).toBe('RELEASE');
   const active = session.probe_runs.filter((r) => r.mode === 'ACTIVE');
   expect(active.length).toBeLessThanOrEqual(MAX_ACTIVE_PROBES);
-  // STEP_UP_AUTH is exclusive (docs/06 §17): never both the biometric and the OTP.
-  const stepUps = active.filter((r) => ['BIOMETRIC_STEP_UP', 'OTP_STEP_UP'].includes(r.probe_key));
-  expect(stepUps.length).toBeLessThanOrEqual(1);
+  // The story starts from its scripted prior and plays greedily (docs/06 §17, #291), so it
+  // takes ENG-S2's path: the biometric, never the OTP (STEP_UP_AUTH is exclusive).
+  expect(session.prior.source).toBe('STORY_SCRIPT');
+  const keys = active.map((r) => r.probe_key);
+  expect(keys).toContain('BIOMETRIC_STEP_UP');
+  expect(keys).not.toContain('OTP_STEP_UP');
 });
