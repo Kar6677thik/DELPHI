@@ -72,9 +72,15 @@ Permission names refer to doc 19 §3.
   risk_by_decision: {...}, unexplained: bool, started_at, decided_at,
   probe_runs: [ { id, seq, probe_key, mode, status, selected_by, propensity, outcome,
                   posterior_before, posterior_after, info_yield_bits, voi_myopic_paise,
-                  net_value_paise, cost_paise, candidates: [...], started_at, completed_at } ],
+                  net_value_paise, cost_paise, candidates: [ProbeCandidateView], started_at,
+                  completed_at } ],
   baselines: { B1: decision, B2: decision }, case_id, dd_pack_complete, version }
 ```
+
+`ProbeCandidateView` is one row of a planning step's candidates table (doc 08 §6), as
+`probe_runs.candidates` stores it: `{source_key, eligible, ineligible_reason, cost_paise,
+voi_myopic_paise, net_value_paise, settle_pct, selected}`. `ineligible_reason` is one of the
+engine's `Ineligible` reasons, or null; money is integer paise (#198).
 
 `baselines` (doc 08 §6, doc 22 §2) are computed when the prior is built, from what the bank knew
 at initiation, and stored in `guardian_sessions.baseline_decisions`. B1 is `RELEASE`,

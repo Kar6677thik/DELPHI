@@ -33,6 +33,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from delphi.api.idempotency import IdempotencyKey, RawBody, run_idempotent_async
 from delphi.api.routers import API_PREFIX
 from delphi.api.security import Permission, Principal, require
+from delphi.engine import Ineligible
 from delphi.guardian.api import (
     ClientSignals,
     LiveGuardian,
@@ -100,6 +101,20 @@ class Baselines(BaseModel):
     B2: str
 
 
+class ProbeCandidateView(BaseModel):
+    """One row of a planning step's candidates table (docs/08 §6), as the Guardian stores it in
+    `probe_runs.candidates` (`guardian.service._candidates`). Money is integer paise."""
+
+    source_key: str
+    eligible: bool
+    ineligible_reason: Ineligible | None = None
+    cost_paise: int | None = None
+    voi_myopic_paise: int | None = None
+    net_value_paise: int | None = None
+    settle_pct: float | None = None  # "expected to settle X% of the remaining uncertainty"
+    selected: bool
+
+
 class ProbeRunView(BaseModel):
     id: UUID
     seq: int
@@ -115,7 +130,7 @@ class ProbeRunView(BaseModel):
     voi_myopic_paise: int | None
     net_value_paise: int | None
     cost_paise: int | None
-    candidates: list[dict[str, Any]]
+    candidates: list[ProbeCandidateView]
     started_at: datetime
     completed_at: datetime | None
 
@@ -208,7 +223,7 @@ def _probe_run(r: Any) -> ProbeRunView:
         voi_myopic_paise=r.voi_myopic_paise,
         net_value_paise=r.net_value_paise,
         cost_paise=r.cost_paise,
-        candidates=list(r.candidates or []),
+        candidates=[ProbeCandidateView.model_validate(c) for c in r.candidates or []],
         started_at=r.started_at,
         completed_at=r.completed_at,
     )

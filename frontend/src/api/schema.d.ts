@@ -1553,6 +1553,12 @@ export interface components {
              */
             started_at: string;
         };
+        /**
+         * Ineligible
+         * @description Why a source cannot be chosen now (docs/06 §8). Persisted in candidates tables.
+         * @enum {string}
+         */
+        Ineligible: "ALREADY_OBSERVED" | "DISABLED" | "WRONG_CONTEXT" | "WRONG_CHANNEL" | "ACTIVE_PROBE_IN_PASSIVE_PHASE" | "PASSIVE_PROBE_IN_ACTIVE_PHASE" | "NO_CONSENT" | "NO_LANGUAGE_VARIANT" | "FAIRNESS_CAP" | "EXCLUSIVE_GROUP" | "ACTIVE_BUDGET" | "MEDIUM_BUDGET";
         /** JobPage */
         JobPage: {
             /** Items */
@@ -1966,6 +1972,28 @@ export interface components {
             }[];
         };
         /**
+         * ProbeCandidateView
+         * @description One row of a planning step's candidates table (docs/08 §6), as the Guardian stores it in
+         *     `probe_runs.candidates` (`guardian.service._candidates`). Money is integer paise.
+         */
+        ProbeCandidateView: {
+            /** Source Key */
+            source_key: string;
+            /** Eligible */
+            eligible: boolean;
+            ineligible_reason?: components["schemas"]["Ineligible"] | null;
+            /** Cost Paise */
+            cost_paise?: number | null;
+            /** Voi Myopic Paise */
+            voi_myopic_paise?: number | null;
+            /** Net Value Paise */
+            net_value_paise?: number | null;
+            /** Settle Pct */
+            settle_pct?: number | null;
+            /** Selected */
+            selected: boolean;
+        };
+        /**
          * ProbeResponseRequest
          * @description docs/08 §4: one answer to the probe on the phone's screen.
          */
@@ -2069,9 +2097,7 @@ export interface components {
             /** Cost Paise */
             cost_paise: number | null;
             /** Candidates */
-            candidates: {
-                [key: string]: unknown;
-            }[];
+            candidates: components["schemas"]["ProbeCandidateView"][];
             /**
              * Started At
              * Format: date-time

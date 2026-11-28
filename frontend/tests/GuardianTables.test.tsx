@@ -13,7 +13,12 @@ describe('CandidatesTable (docs/18 §3)', () => {
         selectedBy="EXPLORE"
         propensity={0.15}
         candidates={[
-          { source_key: 'OTP_STEP_UP', eligible: false, ineligible_reason: 'COERCION_DEFEATS' },
+          {
+            source_key: 'OTP_STEP_UP',
+            eligible: false,
+            ineligible_reason: 'EXCLUSIVE_GROUP',
+            selected: false,
+          },
           {
             source_key: 'SPELL_BREAKER_POLICE',
             eligible: true,
@@ -23,7 +28,12 @@ describe('CandidatesTable (docs/18 §3)', () => {
             settle_pct: 62,
             selected: true,
           },
-          { source_key: 'PURPOSE_QUESTION', eligible: true, net_value_paise: 10_000_00 },
+          {
+            source_key: 'PURPOSE_QUESTION',
+            eligible: true,
+            net_value_paise: 10_000_00,
+            selected: false,
+          },
         ]}
       />,
     );
@@ -36,7 +46,7 @@ describe('CandidatesTable (docs/18 §3)', () => {
       'OTP step up',
     ]);
     expect(screen.getByText('₹1,23,456.00')).toBeInTheDocument();
-    expect(screen.getByText('No: Coercion defeats')).toBeInTheDocument();
+    expect(screen.getByText('No: Exclusive group')).toBeInTheDocument();
     expect(screen.getByText('EXPLORE · p=0.15')).toBeInTheDocument();
     expect(screen.getByText('62%')).toBeInTheDocument();
   });

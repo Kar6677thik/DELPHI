@@ -97,7 +97,12 @@ function view(overrides: Partial<GuardianSessionView> = {}): GuardianSessionView
             net_value_paise: 12_341_600,
             selected: true,
           },
-          { source_key: 'OTP_STEP_UP', eligible: false, ineligible_reason: 'COERCION_DEFEATS' },
+          {
+            source_key: 'OTP_STEP_UP',
+            eligible: false,
+            ineligible_reason: 'EXCLUSIVE_GROUP',
+            selected: false,
+          },
         ],
       }),
     ],
