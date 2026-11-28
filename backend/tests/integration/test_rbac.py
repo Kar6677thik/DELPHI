@@ -74,6 +74,8 @@ ACCESS: dict[tuple[str, str], str | Permission] = {
     ("POST", "/api/v1/chase/operations/{operation_id}/close"): Permission.CHASE_WRITE,
     ("GET", "/api/v1/scout/queue"): Permission.VIEW,
     ("POST", "/api/v1/scout/queue/{item_id}/dismiss"): Permission.FDE,
+    ("POST", "/api/v1/scout/runs"): Permission.FDE,
+    ("GET", "/api/v1/scout/clusters"): Permission.VIEW,
     ("POST", "/api/v1/guardian/sessions"): Permission.DEMO_DRIVE,
     ("POST", "/api/v1/guardian/sessions/{session_id}/probe-responses"): Permission.DEMO_DRIVE,
     ("POST", "/api/v1/guardian/sessions/{session_id}/cancel"): Permission.DEMO_DRIVE,

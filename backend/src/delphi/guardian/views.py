@@ -12,7 +12,21 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import Connection, Select, and_, func, literal, null, or_, select
+from sqlalchemy import (
+    Connection,
+    Float,
+    Select,
+    Text,
+    and_,
+    cast,
+    column,
+    func,
+    literal,
+    null,
+    or_,
+    select,
+    true,
+)
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Session
 
@@ -161,3 +175,45 @@ def unexplained_sessions_query(since: datetime | None = None) -> Select[Any]:
     if since is not None:
         query = query.where(gs.decided_at >= since)
     return query
+
+
+def attributed_sessions_query(since: datetime | None = None) -> Select[Any]:
+    """docs/11 §2, the Scout's reference set: decided sessions attributed to a known typology
+    (the posterior's argmax, taken in SQL, is neither GENUINE nor UNEXPLAINED, and the session
+    is not flagged unexplained), with the queue source's columns. The caller bounds it."""
+    gs = guardian_sessions.c
+    h = (
+        func.jsonb_each_text(gs.posterior)
+        .table_valued(column("key", Text), column("value", Text))
+        .render_derived(name="h")
+    )
+    top = select(h.c.key).order_by(cast(h.c.value, Float).desc(), h.c.key).limit(1).lateral("top")
+    query = (
+        select(
+            literal("GUARDIAN_SESSION").label("subject_type"),
+            gs.id.label("subject_id"),
+            gs.decided_at.label("entered_at"),
+            func.coalesce(gs.posterior["UNEXPLAINED"].as_float(), 0.0).label("p_unexplained"),
+            gs.payment_id.label("payment_id"),
+            null().cast(PG_UUID(as_uuid=True)).label("account_id"),
+        )
+        .select_from(guardian_sessions.join(top, true()))
+        .where(
+            ~gs.unexplained,  # not IS false: it must match the reference index (#255 review)
+            gs.decided_at.is_not(None),
+            gs.posterior.is_not(None),
+            top.c.key.not_in(("GENUINE", "UNEXPLAINED")),
+        )
+    )
+    if since is not None:
+        query = query.where(gs.decided_at >= since)
+    return query
+
+
+def observed_outcomes(conn: Connection | Session, session_id: UUID) -> dict[str, str]:
+    """The session's completed probe outcomes, source → outcome (docs/11 §2)."""
+    pr = probe_runs.c
+    rows = conn.execute(
+        select(pr.probe_key, pr.outcome).where(pr.session_id == session_id, pr.outcome.is_not(None))
+    )
+    return {r.probe_key: r.outcome for r in rows}

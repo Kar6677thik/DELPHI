@@ -18,6 +18,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import select, true, tuple_
 from sqlalchemy.orm import Session
 
 from delphi.api.idempotency import IdempotencyKey, RawBody, run_idempotent
@@ -25,8 +26,16 @@ from delphi.api.routers import API_PREFIX
 from delphi.api.security import Permission, Principal, require
 from delphi.kb.store import active_version
 from delphi.platform.errors import DelphiError, ProblemCode
+from delphi.platform.jobs import JobType, enqueue
 from delphi.platform.wiring import Platform
-from delphi.scout.api import QueueCursor, QueueItem, dismiss, queue_items
+from delphi.scout.api import (
+    QueueCursor,
+    QueueItem,
+    dismiss,
+    queue_items,
+    scout_clusters,
+    typology_drafts,
+)
 
 router = APIRouter(prefix=API_PREFIX, tags=["scout"])
 
@@ -78,9 +87,13 @@ def _item(i: QueueItem) -> QueueItemView:
     )
 
 
-def _encode_cursor(item: QueueItem) -> str:
-    raw = json.dumps({"at": item.entered_at.isoformat(), "id": str(item.subject_id)})
+def _encode_keyset(at: datetime, item_id: UUID) -> str:
+    raw = json.dumps({"at": at.isoformat(), "id": str(item_id)})
     return base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
+
+
+def _encode_cursor(item: QueueItem) -> str:
+    return _encode_keyset(item.entered_at, item.subject_id)
 
 
 def _decode_cursor(cursor: str) -> QueueCursor:
@@ -132,3 +145,100 @@ def dismiss_item(
         return HTTPStatus.OK, _item(item).model_dump(mode="json")
 
     return run_idempotent(request, raw, principal, key, run)
+
+
+class RunRequested(BaseModel):
+    job_id: UUID
+    created: bool
+
+
+class ClusterView(BaseModel):
+    id: UUID
+    run_id: UUID
+    size: int
+    member_refs: list[dict[str, str]]
+    distinguishing_features: dict[str, Any]
+    outcome_profile: dict[str, Any]
+    created_at: datetime
+    draft_id: UUID | None
+    draft_status: str | None
+    suggested_name: str | None
+
+
+@router.post("/scout/runs", status_code=202, response_model=RunRequested)
+def request_run(
+    *,
+    principal: Annotated[Principal, Depends(require(Permission.FDE))],
+    raw: RawBody,
+    key: IdempotencyKey,
+    request: Request,
+) -> JSONResponse:
+    """docs/11 §2: a manual Scout run, as a `RUN_SCOUT` job (docs/16 "→ job")."""
+    platform = _platform(request)
+
+    def run(session: Session) -> tuple[int, Any]:
+        job = enqueue(
+            session,
+            platform.clock,
+            JobType.RUN_SCOUT,
+            idempotency_key=f"scout-manual:{key}",
+            params={"trigger": "manual"},
+            created_by=principal.user_id,
+        )
+        return HTTPStatus.ACCEPTED, {"job_id": str(job.job_id), "created": job.created}
+
+    return run_idempotent(request, raw, principal, key, run)
+
+
+class ClusterPage(BaseModel):
+    items: list[ClusterView]
+    next_cursor: str | None
+
+
+@router.get("/scout/clusters")
+def read_clusters(
+    request: Request,
+    _principal: Annotated[Principal, Depends(require(Permission.VIEW))],
+    limit: Annotated[int, Query(ge=1, le=MAX_LIMIT)] = DEFAULT_LIMIT,
+    cursor: Annotated[str | None, Query()] = None,
+) -> ClusterPage:
+    """The clusters of every run, newest first, each with its latest typology draft; docs/16
+    keyset paging (``limit`` ≤ 200, ``cursor``), on the ``(created_at, id)`` index."""
+    c, t = scout_clusters.c, typology_drafts.c
+    draft = (  # a cluster's latest draft, so a cluster with several drafts appears once
+        select(t.id.label("draft_id"), t.status, t.spec)
+        .where(t.cluster_id == c.id)
+        .order_by(t.updated_at.desc(), t.id.desc())
+        .limit(1)
+        .lateral("draft")
+    )
+    query = (
+        select(scout_clusters, draft.c.draft_id, draft.c.status, draft.c.spec)
+        .outerjoin(draft, true())
+        .order_by(c.created_at.desc(), c.id.desc())
+        .limit(limit + 1)
+    )
+    if cursor:
+        after = _decode_cursor(cursor)
+        query = query.where(tuple_(c.created_at, c.id) < tuple_(after.entered_at, after.subject_id))
+    with _platform(request).sessions() as session:
+        rows = session.execute(query).all()
+    page, more = rows[:limit], len(rows) > limit
+    return ClusterPage(
+        items=[
+            ClusterView(
+                id=r.id,
+                run_id=r.run_id,
+                size=r.size,
+                member_refs=r.member_refs,
+                distinguishing_features=r.distinguishing_features,
+                outcome_profile=r.outcome_profile,
+                created_at=r.created_at,
+                draft_id=r.draft_id,
+                draft_status=r.status,
+                suggested_name=(r.spec or {}).get("name"),
+            )
+            for r in page
+        ],
+        next_cursor=_encode_keyset(page[-1].created_at, page[-1].id) if more and page else None,
+    )

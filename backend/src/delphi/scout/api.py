@@ -11,6 +11,8 @@ from delphi.scout.queue import (
     queue_item,
     queue_items,
 )
+from delphi.scout.run import run_scout
+from delphi.scout.tables import scout_clusters, typology_drafts
 
 __all__ = [
     "QueueCursor",
@@ -20,4 +22,7 @@ __all__ = [
     "dismiss",
     "queue_item",
     "queue_items",
+    "run_scout",
+    "scout_clusters",
+    "typology_drafts",
 ]
