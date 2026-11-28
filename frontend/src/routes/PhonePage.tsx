@@ -434,6 +434,7 @@ function PayScreen({
       channel: PayChannel;
       device_id: string;
       story_local_time?: string;
+      story_job_id?: string;
     },
     sessionSeconds: number,
   ) => void;
@@ -468,6 +469,7 @@ function PayScreen({
               channel,
               device_id: deviceId,
               ...(story?.story_local_time ? { story_local_time: story.story_local_time } : {}),
+              ...(story?.story_job_id ? { story_job_id: story.story_job_id } : {}),
             },
             elapsedSeconds(openedAt.current),
           );
@@ -687,6 +689,11 @@ function Thinking({ session, styles }: { session: GuardianSessionView; styles: H
             {CHANNEL_LABEL[session.payment.channel] ?? humanise(session.payment.channel)}
           </p>
         </div>
+        {session.prior.source === 'STORY_SCRIPT' && (
+          <p className="mt-2 text-[12px] text-warning">
+            Scripted prior: the demo story starts from its scripted belief, not the trained model’s.
+          </p>
+        )}
         {leading && leadShare !== null && (
           <p className="mt-5 flex flex-wrap items-baseline gap-x-4">
             <span className="figure text-[40px] font-medium leading-none">

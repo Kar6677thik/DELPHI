@@ -102,6 +102,9 @@ class Story(_Frozen):
     # simulated customer answers the probes the script leaves out from this scenario's model.
     scenario: ScenarioType | None = None
     coached: bool = False
+    # The story's scripted prior (docs/06 §17, #291), over the KB's hypotheses with UNEXPLAINED:
+    # a live run of the story starts from it, as ENG-S1/S2 do.
+    scripted_prior: dict[str, float] | None = None
 
 
 class PersonaConfig(_Frozen):
