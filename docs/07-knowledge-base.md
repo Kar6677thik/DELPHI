@@ -321,6 +321,8 @@ scout:
   shadow_min_sessions_demo: 10            # used when DELPHI_TIME_MODE=DEMO
   # cluster_selection_epsilon: 1.0       # docs/11 §2; a model default (#117), so KB v1 omits it and
                                           # keeps its hash; a later version may set it
+  # f3_window_h: 24                      # docs/11 §2: the customer events read for an item's F3
+                                          # stages; a model default (#255), like the one above
 time:
   demo_time_scale: 0.0333333333           # 1/30: time-scaled durations shrink 30× when DELPHI_TIME_MODE=DEMO
 elicitation:
