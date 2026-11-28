@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import Connection, select
 from sqlalchemy.orm import Session
 
 from delphi.platform.clock import Clock
@@ -18,6 +18,9 @@ from delphi.platform.errors import DelphiError, InvalidStateTransitionError, Pro
 from delphi.platform.jobs import Enqueued, JobRecord, JobStatus, JobType, enqueue, list_jobs
 from delphi.platform.tables import jobs
 from delphi.sensing.artifacts import ArtifactKind, StoredArtifact, active_artifacts
+from delphi.sensing.config import FeatureConfig, load_sensing_config
+from delphi.sensing.features import build_payment_features
+from delphi.sensing.history import load_payment_snapshot
 from delphi.sensing.inference import PriorInputs, SensingInference
 from delphi.sensing.mule_scores import MuleScores
 from delphi.sensing.prior import with_payer_mule
@@ -25,6 +28,7 @@ from delphi.sim.api import current_dataset
 
 __all__ = [
     "ArtifactKind",
+    "FeatureConfig",
     "Initialisation",
     "MuleScores",
     "PriorInputs",
@@ -33,6 +37,8 @@ __all__ = [
     "active_artifacts",
     "initialisation",
     "request_training",
+    "scout_feature_config",
+    "scout_features",
     "with_payer_mule",
 ]
 
@@ -104,3 +110,23 @@ def initialisation(session: Session) -> Initialisation:
         active=active_artifacts(session),
         seed_job=latest[0] if latest else None,
     )
+
+
+def scout_features(
+    conn: Connection, payment_id: UUID, config: FeatureConfig | None = None
+) -> dict[str, float] | None:
+    """docs/13 §3's payment features marked ``scout`` (all of them), as of the payment's
+    initiation, for the Scout (docs/11 §2). The channel one-hot is left out: the Scout encodes the
+    channel itself. ``None`` for a payment the bank cannot build features for. A caller scoring
+    many payments passes ``config`` (``scout_feature_config()``), so the YAML is parsed once."""
+    config = config or scout_feature_config()
+    try:
+        payment, history = load_payment_snapshot(conn, payment_id, config)
+    except LookupError:
+        return None
+    features = build_payment_features(payment, history, config)
+    return {k: v for k, v in features.items() if not k.startswith("channel_")}
+
+
+def scout_feature_config() -> FeatureConfig:
+    return load_sensing_config().features
