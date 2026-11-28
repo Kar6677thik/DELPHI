@@ -60,6 +60,8 @@ class PaymentRequest:
     telemetry: PhoneTelemetry | None = None
     # A demo story's scripted local time, IST "HH:MM" (docs/14 §10): only a story sets it.
     story_local_time: str | None = None
+    # The demo story it plays (S1, S2): the Guardian uses its scripted prior (#291).
+    story: str | None = None
 
 
 def _invalid(message: str) -> DelphiError:
@@ -128,6 +130,7 @@ def initiate_payment(
             status=PaymentStatus.PENDING_GUARDIAN.value,
             origin=DEMO_ORIGIN,
             story_local_time=request.story_local_time,
+            story=request.story,
         )
     )
     if request.telemetry is not None:

@@ -286,6 +286,7 @@ class GuardianService:
             open_mass=built.open_mass,
             open_mass_shares=built.open_mass_shares,
             top_features=[dict(f) for f in inputs.top_features],
+            prior_source=inputs.source,
             posterior=ctx.as_dict(prior),
             risk_by_decision=_risks(profile, risks),
         )
@@ -451,7 +452,9 @@ class GuardianService:
                 ran=ran,
                 active=active,
                 rng_seed=ctx.record.rng_seed,
-                explore=self._explore,
+                # A demo story plays its script (docs/06 §17, #291): no exploration, as in
+                # ENG-S1/S2, so the live story takes the path they pin.
+                explore=self._explore and ctx.payment.story is None,
             )
             if plan.is_stop:
                 decided = self._decide(s, ctx, ctx.belief, stop_reason(plan), plan=plan)
@@ -887,6 +890,15 @@ class GuardianService:
         return compiled
 
     def _load(self, s: Session, session_id: UUID) -> _Context:
+        # Every step reads its session under the row lock (#268, docs/05 §2: one writer at a
+        # time). Two steps on one session then take turns, so the later reads what the earlier
+        # committed: a cancel during the passive step either wins before the results apply or
+        # ends the session after them, and neither sees "changed underneath this step".
+        s.execute(
+            select(guardian_sessions.c.id)
+            .where(guardian_sessions.c.id == session_id)
+            .with_for_update()
+        )
         current = get_session(s, session_id)
         if current is None:
             raise NotFoundError(f"No Guardian session {session_id}.")

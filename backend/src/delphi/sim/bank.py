@@ -115,6 +115,9 @@ payments = Table(
     _ts("created_at"),
     # A demo story's scripted IST "HH:MM" (docs/14 §10, #291): the prior's hour features use it.
     Column("story_local_time", Text),
+    # The demo story the payment plays (S1, S2): the Guardian starts it from the story's
+    # scripted prior (docs/06 §17, #291).
+    Column("story", Text),
 )
 
 ledger_entries = Table(
