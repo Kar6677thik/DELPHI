@@ -26,6 +26,7 @@ from sqlalchemy import Engine, text
 
 from delphi.api.app import create_app
 from delphi.api.contract import OPENAPI_FILE, openapi_document
+from delphi.chase.jobs import register_chase_jobs
 from delphi.guardian.api import (
     LiveGuardian,
     WorkerGuardian,
@@ -304,6 +305,12 @@ def worker_registry(
         sessions=platform.sessions,
         clock=platform.clock,
         mule_sweep=MuleSweepLimits.of(settings),
+    )
+    register_chase_jobs(
+        registry,
+        sessions=platform.sessions,
+        clock=platform.clock,
+        tickets_per_run=settings.chase_tickets_per_run,
     )
     llm = LlmService(
         platform.sessions,
