@@ -1015,7 +1015,7 @@ def _plan_window(
     balances: Mapping[UUID, int],
     coached_share: float,
 ) -> _WindowPlan:
-    """The window's fraud victims (and UPI_COLLECT_REFUND), at their rates against the
+    """The window's fraud victims (and PRIZE_ADVANCE_FEE), at their rates against the
     window's genuine sessions made: a dry run settles them against running balances, as the
     history's dry run does."""
     pop = planner.pop

@@ -14,12 +14,12 @@ class ScenarioType(StrEnum):
     APP_DIGITAL_ARREST = "APP_DIGITAL_ARREST"
     APP_INVESTMENT = "APP_INVESTMENT"
     MULE_FORWARDING = "MULE_FORWARDING"
-    UPI_COLLECT_REFUND = "UPI_COLLECT_REFUND"
+    PRIZE_ADVANCE_FEE = "PRIZE_ADVANCE_FEE"
 
 
 # h(s): the ground-truth hypothesis key each scenario enacts (docs/14 §4). The hidden
-# collect-refund scenario enacts APP_COLLECT_REFUND, the key the S-4 script promotes (docs/11
-# §7); it is not in KB v1, so its answers are explicit (docs/14 §5.2).
+# prize advance-fee scenario (S-4's stand-in since v18) enacts APP_PRIZE_ADVANCE_FEE, the key the
+# S-4 script promotes (docs/11 §7); it is not in KB v1, so its answers are explicit (docs/14 §5.2).
 SCENARIO_HYPOTHESIS: dict[ScenarioType, str] = {
     ScenarioType.GENUINE_ROUTINE: "GENUINE",
     ScenarioType.GENUINE_UNUSUAL: "GENUINE",
@@ -27,7 +27,7 @@ SCENARIO_HYPOTHESIS: dict[ScenarioType, str] = {
     ScenarioType.APP_DIGITAL_ARREST: "APP_DIGITAL_ARREST",
     ScenarioType.APP_INVESTMENT: "APP_INVESTMENT",
     ScenarioType.MULE_FORWARDING: "MULE",
-    ScenarioType.UPI_COLLECT_REFUND: "APP_COLLECT_REFUND",
+    ScenarioType.PRIZE_ADVANCE_FEE: "APP_PRIZE_ADVANCE_FEE",
 }
 
 # The scenario whose answers stand for P_true(GENUINE) in the coached-victim mix and the

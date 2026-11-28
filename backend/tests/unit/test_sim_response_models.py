@@ -31,7 +31,7 @@ DA = ScenarioType.APP_DIGITAL_ARREST
 INV = ScenarioType.APP_INVESTMENT
 ROUTINE = ScenarioType.GENUINE_ROUTINE
 UNUSUAL = ScenarioType.GENUINE_UNUSUAL
-REFUND = ScenarioType.UPI_COLLECT_REFUND
+PRIZE = ScenarioType.PRIZE_ADVANCE_FEE
 ACTIVE_PROBES = (
     "OTP_STEP_UP",
     "BIOMETRIC_STEP_UP",
@@ -97,32 +97,33 @@ def test_answers_are_perturbed_not_copied_from_the_kb(
             assert 0.0 < distance < 0.5, (scenario, key, distance)
 
 
-def test_collect_refund_answers_are_exactly_as_specified(
+def test_prize_advance_fee_answers_are_exactly_as_specified(
     kb: KnowledgeBase, config: ResponseModelConfig
 ) -> None:
-    rows = freeze(kb, config).answers[REFUND]
-    assert rows["PURPOSE_QUESTION"] == (0.15, 0.03, 0.12, 0.70)
-    assert rows["SPELL_BREAKER_DIGITAL_ARREST"] == (0.10, 0.02, 0.88)
-    assert rows["SPELL_BREAKER_INVESTMENT"] == (0.10, 0.02, 0.88)
+    rows = freeze(kb, config).answers[PRIZE]
+    # v18 (#36): S-4's stand-in, as the owner approved ("receiving" 0.80).
+    assert rows["PURPOSE_QUESTION"] == (0.08, 0.08, 0.04, 0.80)
+    assert rows["SPELL_BREAKER_DIGITAL_ARREST"] == (0.15, 0.10, 0.75)
+    assert rows["SPELL_BREAKER_INVESTMENT"] == (0.15, 0.20, 0.65)
     assert rows["OTP_STEP_UP"] == rows["BIOMETRIC_STEP_UP"] == (0.97, 0.03)
-    assert rows["COOLING_OFF"] == (0.15, 0.25, 0.60)
+    assert rows["COOLING_OFF"] == (0.45, 0.15, 0.40)
     assert rows["COLLECT_INTENT_CHECK"] == (0.88, 0.12)
     # Same as APP_INVESTMENT: the victim realises once a verified bank caller explains.
     assert rows["CUSTOMER_OUTREACH_CALL"] == (0.50, 0.25, 0.05, 0.20)
 
 
 def test_ground_truth_keys(kb: KnowledgeBase) -> None:
-    """The hidden scenario enacts APP_COLLECT_REFUND, the key S-4 promotes (docs/11 §7)."""
-    assert ground_truth_key(REFUND) == "APP_COLLECT_REFUND"
-    assert "APP_COLLECT_REFUND" not in kb.hypotheses  # unknown to KB v1
+    """The hidden scenario enacts APP_PRIZE_ADVANCE_FEE, the key S-4 promotes (docs/11 §7)."""
+    assert ground_truth_key(PRIZE) == "APP_PRIZE_ADVANCE_FEE"
+    assert "APP_PRIZE_ADVANCE_FEE" not in kb.hypotheses  # unknown to KB v1
     assert ground_truth_key(DA) == "APP_DIGITAL_ARREST"
     assert ground_truth_key(ScenarioType.MULE_FORWARDING) == "MULE"
 
 
 def test_a_missing_explicit_row_is_an_error(kb: KnowledgeBase, config: ResponseModelConfig) -> None:
-    rows = dict(config.explicit_answers[REFUND])
+    rows = dict(config.explicit_answers[PRIZE])
     del rows["CUSTOMER_OUTREACH_CALL"]
-    broken = config.model_copy(update={"explicit_answers": {REFUND: rows}})
+    broken = config.model_copy(update={"explicit_answers": {PRIZE: rows}})
     with pytest.raises(ValueError, match="no CUSTOMER_OUTREACH_CALL row"):
         freeze(kb, broken)
 
@@ -131,7 +132,7 @@ def test_a_scenario_without_kb_or_explicit_rows_is_an_error(
     kb: KnowledgeBase, config: ResponseModelConfig
 ) -> None:
     broken = config.model_copy(update={"explicit_answers": {}})
-    with pytest.raises(ValueError, match="APP_COLLECT_REFUND has no KB row"):
+    with pytest.raises(ValueError, match="APP_PRIZE_ADVANCE_FEE has no KB row"):
         freeze(kb, broken)
 
 
@@ -214,9 +215,9 @@ def test_sample_answer_follows_the_distribution() -> None:
     models = load_response_models()
     rng = np.random.Generator(np.random.PCG64(7))
     n = 20_000
-    draws = [models.sample_answer(rng, REFUND, "PURPOSE_QUESTION") for _ in range(n)]
+    draws = [models.sample_answer(rng, PRIZE, "PURPOSE_QUESTION") for _ in range(n)]
     share = draws.count("BELIEVES_RECEIVING_MONEY") / n
-    assert share == pytest.approx(0.70, abs=0.015)
+    assert share == pytest.approx(0.80, abs=0.015)
 
 
 def test_coaching_adaptation_moves_answers_toward_genuine_over_the_ramp() -> None:
@@ -301,26 +302,26 @@ def _broken(config: ResponseModelConfig, **update: object) -> ResponseModelConfi
         (
             lambda c: {
                 "explicit_answers": {
-                    REFUND: {**c.explicit_answers[REFUND], "COOLING_OFF": (0.5, 0.5)}
+                    PRIZE: {**c.explicit_answers[PRIZE], "COOLING_OFF": (0.5, 0.5)}
                 }
             },
-            "explicit_answers.UPI_COLLECT_REFUND.COOLING_OFF: 2 values for 3 outcomes",
+            "explicit_answers.PRIZE_ADVANCE_FEE.COOLING_OFF: 2 values for 3 outcomes",
         ),
         (
             lambda c: {
                 "explicit_answers": {
-                    REFUND: {**c.explicit_answers[REFUND], "COOLING_OFF": (0.5, 0.25, 0.20)}
+                    PRIZE: {**c.explicit_answers[PRIZE], "COOLING_OFF": (0.5, 0.25, 0.20)}
                 }
             },
-            "explicit_answers.UPI_COLLECT_REFUND.COOLING_OFF: not a distribution",
+            "explicit_answers.PRIZE_ADVANCE_FEE.COOLING_OFF: not a distribution",
         ),
         (
             lambda c: {
                 "explicit_answers": {
-                    REFUND: {**c.explicit_answers[REFUND], "PURPOSE_QUESTON": (0.5, 0.5)}
+                    PRIZE: {**c.explicit_answers[PRIZE], "PURPOSE_QUESTON": (0.5, 0.5)}
                 }
             },
-            "explicit_answers.UPI_COLLECT_REFUND.PURPOSE_QUESTON: not an answered source",
+            "explicit_answers.PRIZE_ADVANCE_FEE.PURPOSE_QUESTON: not an answered source",
         ),
         (
             lambda c: {
@@ -341,10 +342,8 @@ def _broken(config: ResponseModelConfig, **update: object) -> ResponseModelConfi
             "pins must be ≥ 0 and sum below 1",
         ),
         (
-            lambda c: {
-                "pinned_outcomes": {REFUND: {"PURPOSE_QUESTION": {"TIMING_ANOMALOUS": 0.1}}}
-            },
-            "UPI_COLLECT_REFUND has explicit answers, nothing is drawn",
+            lambda c: {"pinned_outcomes": {PRIZE: {"PURPOSE_QUESTION": {"TIMING_ANOMALOUS": 0.1}}}},
+            "PRIZE_ADVANCE_FEE has explicit answers, nothing is drawn",
         ),
         (
             lambda c: {
@@ -375,7 +374,7 @@ def test_validation_lists_every_problem_at_once(
     with pytest.raises(ValueError) as error:
         validate_config(kb, broken)
     text = str(error.value)
-    assert "APP_COLLECT_REFUND has no KB row" in text
+    assert "APP_PRIZE_ADVANCE_FEE has no KB row" in text
     assert "unknown outcome(s) NOPE" in text
 
 

@@ -39,7 +39,7 @@ customers:
     tenure_years: 8             # gap
     opening_balance_inr: 800000   # gap: covers ₹3,00,000
 
-# docs/14 §6, §8: 15 collect-refund victims created at seed time, with no history of the scam;
+# docs/14 §6, §8: 15 prize advance-fee victims (S-4) created at seed time, with no history of the scam;
 # otherwise drawn like any customer.
 s4_victims: {count: 15, key_prefix: S4_VICTIM}
 

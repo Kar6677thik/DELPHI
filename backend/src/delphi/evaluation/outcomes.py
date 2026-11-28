@@ -82,7 +82,7 @@ class PaymentOutcome:
     @property
     def is_fraud(self) -> bool:
         """docs/22 §4: F is every payment whose scenario enacts a fraud hypothesis, the hidden
-        UPI_COLLECT_REFUND (APP_COLLECT_REFUND) included; G is the rest."""
+        PRIZE_ADVANCE_FEE (APP_PRIZE_ADVANCE_FEE) included; G is the rest."""
         return self.true_hypothesis != GENUINE
 
     @property

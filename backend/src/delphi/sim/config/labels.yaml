@@ -8,7 +8,7 @@ report_probability:
   APP_INVESTMENT: 0.70
   ATO: 0.90
   MULE_FORWARDING: 0.0
-  UPI_COLLECT_REFUND: 0.60
+  PRIZE_ADVANCE_FEE: 0.60
 
 # Delays are log-normal: median · exp(label_delay_sigma · z), z ~ N(0, 1) (docs/14 §7).
 label_delay_sigma: 0.8

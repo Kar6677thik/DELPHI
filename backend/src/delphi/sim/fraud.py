@@ -114,6 +114,7 @@ class _Planner:
         self.older = [i for i, c in customers if c.age >= older]
         self.younger = [i for i, c in customers if c.age < older]
         self.rings = [r for r in network.rings if r.persona_key is None]
+        self._unlisted: list[tuple[UUID, UUID]] | None = None  # see _unlisted_mules
 
     def _mule(self, rng: np.random.Generator) -> tuple[UUID, UUID]:
         """A ring, and one of its layer-1 accounts."""
@@ -346,20 +347,36 @@ class _Planner:
             )
         return deposits + fees
 
-    def collect_refund(self, rng: np.random.Generator) -> int:
-        """The hidden UPI_COLLECT_REFUND scenario (docs/14 §4): the victim approves a collect
-        request from a layer-1 mule, believing it is a refund; ₹2k–₹50k, log-uniform."""
-        cfg = self.config.collect_refund
+    def _unlisted_mules(self) -> list[tuple[UUID, UUID]]:
+        """Every (ring, layer-1 account) the sim registry never lists: the registry's own
+        per-account draw (``mule_listing``, docs/14 §7) says no, so the account stays
+        CLEAN_UNKNOWN to Guardian's beneficiary check (v18, #36)."""
+        if self._unlisted is None:
+            share = self.config.forwarding.registry_listing_share
+            self._unlisted = [
+                (ring.id, account)
+                for ring in self.rings
+                for account in ring.layers[0]
+                if keyed_rng(self.seed, "mule_listing", str(account)).random() >= share
+            ]
+        return self._unlisted
+
+    def prize_advance_fee(self, rng: np.random.Generator) -> int:
+        """The hidden PRIZE_ADVANCE_FEE scenario (docs/14 §4, S-4's stand-in): told they won a
+        prize, the victim pays its "tax" by UPI push to a fresh, never-listed layer-1 mule;
+        ₹15k–₹1.5L, log-uniform."""
+        cfg = self.config.prize_advance_fee
         index = self.victims[int(rng.integers(len(self.victims)))]
         customer = self.pop.customers[index]
-        at = self._timed(ScenarioType.UPI_COLLECT_REFUND, index, between(rng, self.start, self.end))
-        ring, mule = self._mule(rng)
-        instance = self._instance(ScenarioType.UPI_COLLECT_REFUND, customer, ring, at)
+        at = self._timed(ScenarioType.PRIZE_ADVANCE_FEE, index, between(rng, self.start, self.end))
+        unlisted = self._unlisted_mules()
+        ring, mule = unlisted[int(rng.integers(len(unlisted)))] if unlisted else self._mule(rng)
+        instance = self._instance(ScenarioType.PRIZE_ADVANCE_FEE, customer, ring, at)
         low, high = math.log(cfg.amount_inr.min), math.log(cfg.amount_inr.max)
         rupees = math.exp(low + (high - low) * rng.random())
         self.sessions.append(
             FraudSession(
-                ScenarioType.UPI_COLLECT_REFUND,
+                ScenarioType.PRIZE_ADVANCE_FEE,
                 index,
                 mule,
                 at,
@@ -405,7 +422,7 @@ def plan_fraud(
     Without ``window`` this plans the history, plus the customers' background CRM events up to
     ``crm_until`` (the end of the window, so they run on through it; #55). With
     ``window`` (start, end) it plans the live/eval window instead, from ``"window"``-prefixed
-    streams, and adds the window-only UPI_COLLECT_REFUND scenario."""
+    streams, and adds the window-only PRIZE_ADVANCE_FEE scenario."""
     span = window or (population.history_start, population.history_end)
     stream = "window" if window else "history"
     planner = _Planner(config, population, network, span, stream)
@@ -414,12 +431,12 @@ def plan_fraud(
     if window is None:
         planner.background_crm(crm_until or span[1])
     scenarios = (
-        (*_VICTIM_SCENARIOS, ScenarioType.UPI_COLLECT_REFUND) if window else _VICTIM_SCENARIOS
+        (*_VICTIM_SCENARIOS, ScenarioType.PRIZE_ADVANCE_FEE) if window else _VICTIM_SCENARIOS
     )
     for scenario in scenarios:
         rate = (
-            config.collect_refund.rate_per_10k
-            if scenario is ScenarioType.UPI_COLLECT_REFUND
+            config.prize_advance_fee.rate_per_10k
+            if scenario is ScenarioType.PRIZE_ADVANCE_FEE
             else config.fraud.rate_per_10k[scenario.value]
         )
         target = round(genuine_sessions * rate / config.fraud.genuine_rate_per_10k)
@@ -434,7 +451,7 @@ def plan_fraud(
             elif scenario is ScenarioType.APP_INVESTMENT:
                 planned += planner.investment(rng, coached_share)
             else:
-                planned += planner.collect_refund(rng)
+                planned += planner.prize_advance_fee(rng)
     return FraudPlan(
         sessions=tuple(planner.sessions),
         instances=tuple(planner.instances),

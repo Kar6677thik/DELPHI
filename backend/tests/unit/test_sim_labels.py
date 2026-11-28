@@ -71,7 +71,7 @@ def test_config_matches_the_spec(config: LabelConfig) -> None:
         ScenarioType.APP_INVESTMENT: 0.70,
         ScenarioType.ATO: 0.90,
         ScenarioType.MULE_FORWARDING: 0.0,
-        ScenarioType.UPI_COLLECT_REFUND: 0.60,
+        ScenarioType.PRIZE_ADVANCE_FEE: 0.60,
     }
     assert config.label_delay_sigma == 0.8
     assert config.complaint_median_hours(ScenarioType.APP_INVESTMENT) == 48
@@ -171,7 +171,7 @@ def test_unreported_fraud_is_labelled_genuine_at_maturity(
     for scenario in (
         ScenarioType.ATO,
         ScenarioType.APP_INVESTMENT,
-        ScenarioType.UPI_COLLECT_REFUND,
+        ScenarioType.PRIZE_ADVANCE_FEE,
     ):
         labels = _schedule(_payment(scenario), never_reported, maturity)
         assert [(x.hypothesis_key, x.label_source, x.due_at) for x in labels] == [
@@ -192,7 +192,7 @@ def test_mule_forwarding_is_never_reported_by_a_victim(config: LabelConfig) -> N
         (ScenarioType.APP_DIGITAL_ARREST, 0.70),
         (ScenarioType.APP_INVESTMENT, 0.70),
         (ScenarioType.ATO, 0.90),
-        (ScenarioType.UPI_COLLECT_REFUND, 0.60),
+        (ScenarioType.PRIZE_ADVANCE_FEE, 0.60),
     ],
 )
 def test_report_rates_and_noise_rates(
@@ -288,20 +288,20 @@ def test_complaints_outside_the_active_kb_are_fraud_other() -> None:
     assert observed_hypothesis(matured, KB_V1) == GENUINE
 
 
-def test_collect_refund_complaints_name_the_promoted_key_only_after_promotion(
+def test_prize_advance_fee_complaints_name_the_promoted_key_only_after_promotion(
     config: LabelConfig,
 ) -> None:
-    """The scenario's ground truth is APP_COLLECT_REFUND (docs/11 §7, docs/14 §4): FRAUD_OTHER
+    """The scenario's ground truth is APP_PRIZE_ADVANCE_FEE (docs/11 §7, docs/14 §4): FRAUD_OTHER
     under KB v1, the new typology once the Scout has promoted it."""
     complaints = [
         label
-        for labels in _many(ScenarioType.UPI_COLLECT_REFUND, config)[:200]
+        for labels in _many(ScenarioType.PRIZE_ADVANCE_FEE, config)[:200]
         for label in labels
         if label.label_source is LabelSource.CUSTOMER_COMPLAINT
     ]
     assert complaints
-    assert {c.hypothesis_key for c in complaints} == {"APP_COLLECT_REFUND"}
-    promoted = KB_V1 | {"APP_COLLECT_REFUND"}
+    assert {c.hypothesis_key for c in complaints} == {"APP_PRIZE_ADVANCE_FEE"}
+    promoted = KB_V1 | {"APP_PRIZE_ADVANCE_FEE"}
     for c in complaints:
         assert observed_hypothesis(c, KB_V1) == FRAUD_OTHER
-        assert observed_hypothesis(c, promoted) == "APP_COLLECT_REFUND"
+        assert observed_hypothesis(c, promoted) == "APP_PRIZE_ADVANCE_FEE"

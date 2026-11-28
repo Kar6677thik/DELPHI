@@ -59,29 +59,31 @@ def test_the_window_is_undecided(long_window: Dataset) -> None:
     assert ScenarioType.MULE_FORWARDING not in set(_kinds(long_window).values())
 
 
-def test_collect_refund_runs_in_the_window_only(
+def test_prize_advance_fee_runs_in_the_window_only(
     long_window: Dataset, config: GeneratorConfig
 ) -> None:
     history = long_window.history
     kinds = {i.id: i.scenario_type for i in history.scenario_instances}
     assert not any(
-        kinds[t.scenario_instance_id] == "UPI_COLLECT_REFUND" for t in history.payment_truth
+        kinds[t.scenario_instance_id] == "PRIZE_ADVANCE_FEE" for t in history.payment_truth
     )
     assert history.window is not None
-    refunds = [
+    fees = [
         p
         for p in history.window.payments
-        if _kinds(long_window)[p.id] is ScenarioType.UPI_COLLECT_REFUND
+        if _kinds(long_window)[p.id] is ScenarioType.PRIZE_ADVANCE_FEE
     ]
-    assert refunds
+    assert fees
     mules = {a for ring in long_window.network.rings for a in ring.layers[0]}
-    for p in refunds:
-        assert p.channel == "UPI_COLLECT_APPROVAL"
-        assert 0 < p.amount_paise <= 5_000_000  # ₹2k–₹50k, at most 90% of the balance
-        assert p.payee_account_id in mules
+    listed = {listing.account_id for listing in history.registry_listings}
+    for p in fees:
+        assert p.channel == "UPI_PUSH"
+        assert 0 < p.amount_paise <= 15_000_000  # ₹15k–₹1.5L, at most 90% of the balance
+        # v18: a fresh layer-1 mule the registry never lists (CLEAN_UNKNOWN to Guardian).
+        assert p.payee_account_id in mules and p.payee_account_id not in listed
     truth = {t.payment_id: t for t in history.window.payment_truth}
     assert all(
-        truth[p.id].is_fraud and truth[p.id].hypothesis_key == "APP_COLLECT_REFUND" for p in refunds
+        truth[p.id].is_fraud and truth[p.id].hypothesis_key == "APP_PRIZE_ADVANCE_FEE" for p in fees
     )
 
 
@@ -143,14 +145,14 @@ def test_eval_matches_the_configured_rates_within_ten_percent(
 ) -> None:
     """#17 acceptance (FR-SIM-02): the `eval` stats report within ±10% of the configured
     rates. History: every history scenario, MULE_FORWARDING and the 40% listing share. Window:
-    every scenario it holds, UPI_COLLECT_REFUND included."""
+    every scenario it holds, PRIZE_ADVANCE_FEE included."""
     assert os.environ.get("DELPHI_RUN_SLOW") == "1"
     dataset = generate_dataset(config, "eval", kb=kb)
     assert not _sim_swaps_without_a_report(dataset)  # #55, on eval too
     report = dataset_stats(dataset, config)
     print(format_report(report))
     for rate in report.rates:
-        if rate.scenario is not ScenarioType.UPI_COLLECT_REFUND:
+        if rate.scenario is not ScenarioType.PRIZE_ADVANCE_FEE:
             assert rate.history_per_10k == pytest.approx(rate.configured_per_10k, rel=0.10), rate
         if rate.scenario is not ScenarioType.MULE_FORWARDING:
             assert rate.window_per_10k == pytest.approx(rate.configured_per_10k, rel=0.10), rate

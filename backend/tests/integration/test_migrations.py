@@ -136,3 +136,53 @@ def test_hash_columns_must_be_sha256_sized(owner_engine: Engine) -> None:
             text(INSERT_AUDIT),
             {"p": HASH, "h": b"short"},
         )
+
+
+def test_0021_renames_the_s4_stand_ins_ground_truth(create_database: Callable[[], str]) -> None:
+    """v18 (#36): ground truth stored as the old collect-refund scenario reads as the prize
+    advance-fee one after the upgrade; both names pass the CHECK until the contract step."""
+    url = create_database()
+    upgrade(url, "0020")
+    owner = engine_as(url)
+    instance, payment = uuid.uuid4(), uuid.uuid4()
+    with owner.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO sim_truth.scenario_instances (id, scenario_type, hypothesis_key,"
+                " started_at) VALUES (:i, 'UPI_COLLECT_REFUND', 'APP_COLLECT_REFUND', now())"
+            ),
+            {"i": instance},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO sim_truth.label_schedule (subject_type, subject_id, hypothesis_key,"
+                " label_source, due_at) VALUES ('PAYMENT', :p, 'APP_COLLECT_REFUND',"
+                " 'CUSTOMER_COMPLAINT', now())"
+            ),
+            {"p": payment},
+        )
+    upgrade(url)
+    with owner.begin() as conn:
+        assert (
+            conn.execute(
+                text("SELECT scenario_type FROM sim_truth.scenario_instances WHERE id = :i"),
+                {"i": instance},
+            ).scalar_one()
+            == "PRIZE_ADVANCE_FEE"
+        )
+        assert (
+            conn.execute(
+                text("SELECT hypothesis_key FROM sim_truth.label_schedule WHERE subject_id = :p"),
+                {"p": payment},
+            ).scalar_one()
+            == "APP_PRIZE_ADVANCE_FEE"
+        )
+        # Expand: a v17 worker writing the old name during the rollout is still accepted.
+        conn.execute(
+            text(
+                "INSERT INTO sim_truth.scenario_instances (id, scenario_type, hypothesis_key,"
+                " started_at) VALUES (:i, 'UPI_COLLECT_REFUND', 'APP_COLLECT_REFUND', now())"
+            ),
+            {"i": uuid.uuid4()},
+        )
+    owner.dispose()

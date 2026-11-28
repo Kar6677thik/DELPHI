@@ -139,7 +139,7 @@ def test_a_question_without_the_wanted_option_is_refused(kb: KnowledgeBase) -> N
             "BELIEVES_RECEIVING_MONEY",
             keyed_rng(1, "x"),
             kb.config.classifiers,
-            scenario=ScenarioType.UPI_COLLECT_REFUND,
+            scenario=ScenarioType.PRIZE_ADVANCE_FEE,
             options=("FAMILY_OR_FRIEND", "MEDICAL"),  # no RECEIVING_REFUND_OR_PRIZE offered
             otp_code=None,
             timeout_s=TIMEOUT_S,

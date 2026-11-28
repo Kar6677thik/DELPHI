@@ -88,7 +88,7 @@ def _micro_stream() -> tuple[list[PaymentOutcome], list[LabelRecord]]:
     )
     refund = _payment(
         C3,
-        ScenarioType.UPI_COLLECT_REFUND,
+        ScenarioType.PRIZE_ADVANCE_FEE,
         6_000,
         Decision.DECLINE,
         FinalStatus.DECLINED,
@@ -122,7 +122,7 @@ def test_the_point_values_follow_the_docs22_definitions() -> None:
     # Held decisions: the arrest (no label), the unusual payment (2 days), the refund (8 days).
     assert m["label_coverage_held"] == pytest.approx(1 / 3)
     assert m["dd_pack_completeness"] is None  # no DD packs: a baseline
-    # The refund scam's APP_COLLECT_REFUND is not a KB v1 hypothesis, so only the arrest counts.
+    # The refund scam's APP_PRIZE_ADVANCE_FEE is not a KB v1 hypothesis, so only the arrest counts.
     assert m["typology_attribution_accuracy"] == 1.0
     assert m["info_yield_bits[CALLER_CHECK]"] == pytest.approx(0.5)  # unobserved probes skipped
 

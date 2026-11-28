@@ -348,8 +348,9 @@ class FraudConfig(_Frozen):
         return self
 
 
-class CollectRefundConfig(_Frozen):
-    """The hidden UPI_COLLECT_REFUND scenario, live/eval window only (docs/14 §4)."""
+class PrizeAdvanceFeeConfig(_Frozen):
+    """The hidden PRIZE_ADVANCE_FEE scenario, S-4's stand-in, live/eval window only (docs/14 §4,
+    §5.4): a victim told they won a prize pays the "tax" to release it."""
 
     rate_per_10k: float = Field(gt=0)
     amount_inr: Range
@@ -430,7 +431,7 @@ class GeneratorConfig(_Frozen):
     genuine_unusual: GenuineUnusualConfig
     mule_rings: MuleRingConfig
     fraud: FraudConfig
-    collect_refund: CollectRefundConfig
+    prize_advance_fee: PrizeAdvanceFeeConfig
     forwarding: ForwardingConfig
     crm: CrmConfig
     external_systems: ExternalSystemsConfig

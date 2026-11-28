@@ -7,7 +7,7 @@ items, with no I/O. The ``RUN_SCOUT`` job loads the items and stores what this r
   24 h.
 - **Clustering:** scikit-learn ``HDBSCAN`` with the KB's ``scout.min_cluster_size`` and
   ``min_samples`` (Euclidean), allowing a single cluster: a queue that holds one pattern (the
-  Scout's main case, e.g. S-4's collect-refund scams) gives that one cluster, not all noise.
+  Scout's main case, e.g. S-4's prize advance-fee scams) gives that one cluster, not all noise.
   In that case HDBSCAN keeps only the pattern's densest members unless a
   ``selection_epsilon`` (its ``cluster_selection_epsilon``) is given; the caller passes the
   KB's value (docs/11 §2). Noise (-1) stays in the queue.

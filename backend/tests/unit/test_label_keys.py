@@ -26,4 +26,4 @@ def test_a_key_outside_the_active_kb_is_fraud_other_whatever_the_source(
     source: LabelSource,
 ) -> None:
     """Only complaints carry hidden keys today; the guard pins it for every source."""
-    assert stored_key(_label("UPI_COLLECT_REFUND", source), KB) == FRAUD_OTHER
+    assert stored_key(_label("PRIZE_ADVANCE_FEE", source), KB) == FRAUD_OTHER

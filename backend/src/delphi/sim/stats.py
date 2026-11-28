@@ -55,7 +55,7 @@ def configured_rates(config: GeneratorConfig) -> dict[ScenarioType, float]:
         ScenarioType.GENUINE_UNUSUAL: unusual.rate_per_10k,
         **{ScenarioType(s): r for s, r in config.fraud.rate_per_10k.items()},
         ScenarioType.MULE_FORWARDING: config.forwarding.rate_per_10k,
-        ScenarioType.UPI_COLLECT_REFUND: config.collect_refund.rate_per_10k,
+        ScenarioType.PRIZE_ADVANCE_FEE: config.prize_advance_fee.rate_per_10k,
     }
     return {s: rates[s] for s in ScenarioType}
 

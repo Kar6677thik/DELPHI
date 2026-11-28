@@ -1,23 +1,29 @@
-"""S-4 calibration of the collect-refund scenario (docs/14 §5.4, docs/21 §3 ENG-S4).
+"""S-4 calibration of the prize advance-fee scenario (docs/14 §5.4, docs/21 §3 ENG-S4; #36, v18).
 
-Under KB v1, at least 70% of UPI_COLLECT_REFUND sessions must end with P(UNEXPLAINED) at or
-above the Scout routing threshold (0.35). The sessions' prior comes from the trained sensing
-model (docs/13 §4) and the anomaly percentile (§5). Both modules exist (#89, #90); the check runs
-once #36 wires them into ``_sensing_prior`` (``SENSING_PRIOR_WIRED``). Until then it is skipped,
-and the harness itself is exercised with a fixture prior.
+Under KB v1, at least 70% of PRIZE_ADVANCE_FEE sessions must end with P(UNEXPLAINED) at or above
+the Scout routing threshold (0.35). Each session's prior comes from sensing models trained here on
+the `demo` profile, as docs/14 §5.4 says, by the same code as ``TRAIN_SENSING``: the prior model
+(docs/13 §4) on the labels the seed delivers, and the anomaly forest (§5) on the prior's GENUINE
+training rows. Each S-4 victim's payment is inserted into the bank and read back with the live
+``load_payment_snapshot``, as the Guardian scores it, then rolled back.
 
-If the check fails, tune only the collect-refund telemetry and answers in ``sim/config`` (never
-the KB) and record it in the generator changelog (docs/14 §5.4).
+Training on `demo` takes several minutes, so the check is `slow` (nightly, owner decision on #36).
+PR CI runs the same pipeline on the `test` prior as a smoke check that asserts only that it runs.
+If the check fails, tune only the scenario's telemetry and answers in ``sim/config`` (never the
+KB) and record it in the generator changelog (docs/14 §5.4).
 """
 
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Mapping
-from types import ModuleType
+from collections.abc import Callable, Iterator, Mapping
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime, timedelta
+from uuid import UUID, uuid4
 
 import numpy as np
 import pytest
+from sqlalchemy import Engine, insert, select
 
 from delphi.engine import (
     CompiledProfile,
@@ -28,25 +34,46 @@ from delphi.engine import (
     plan_next,
     update,
 )
-from delphi.kb.model import UNEXPLAINED, KnowledgeBase
+from delphi.kb.model import GENUINE, UNEXPLAINED, KnowledgeBase
+from delphi.sensing.anomaly import AnomalyModel, train_anomaly_matrix
+from delphi.sensing.config import load_sensing_config
+from delphi.sensing.features import build_payment_features
+from delphi.sensing.history import load_payment_snapshot
+from delphi.sensing.prior import PriorModel, train_prior
+from delphi.sensing.trainers import load_prior_data
+from delphi.sim import api as bank
+from delphi.sim.api import DatasetInfo
+from delphi.sim.dataset import generate_dataset
+from delphi.sim.delivery import deliver_labels
+from delphi.sim.generator_config import load_generator_config
 from delphi.sim.response_models import (
     ResponseModels,
     SignalDraw,
     draw_signals,
     load_response_models,
 )
+from delphi.sim.rng import keyed_rng
 from delphi.sim.scenarios import ScenarioType
+from delphi.sim.writer import write_dataset
 
-REFUND = ScenarioType.UPI_COLLECT_REFUND
-SESSIONS = 15  # docs/14 §6: 15 collect-refund victims on `demo`
+from ..integration._db import engine_as, upgrade
+from ..integration.conftest import admin_url, create_database  # noqa: F401 - fixtures
+
+PRIZE = ScenarioType.PRIZE_ADVANCE_FEE
+SESSIONS = 15  # docs/14 §6: 15 S-4 victims on `demo`
 REQUIRED_SHARE = 0.70
-AMOUNT_INR = (2_000, 50_000)  # docs/14 §4, log-uniform
-CHANNEL = "UPI_COLLECT_APPROVAL"
 SEED = 20261031  # the `demo` profile seed (docs/14 §2)
+DEMO_CREATED_AT = datetime(2026, 11, 1, tzinfo=UTC)  # a fixed `demo` seed time, for determinism
 
 # (p_model, anomaly percentile q) for one session.
 PriorInputs = tuple[Mapping[str, float], float]
 PriorFn = Callable[[np.random.Generator, float], PriorInputs]
+
+
+def _scenario() -> tuple[tuple[float, float], str]:
+    """The scenario's amount range (₹) and channel, from the generator config (docs/14 §4)."""
+    cfg = load_generator_config().prize_advance_fee
+    return (cfg.amount_inr.min, cfg.amount_inr.max), cfg.channel
 
 
 def _passive_outcomes(signals: SignalDraw) -> dict[str, str]:
@@ -68,21 +95,22 @@ def _passive_outcomes(signals: SignalDraw) -> dict[str, str]:
     }
 
 
-def run_collect_refund_sessions(
+def run_prize_advance_fee_sessions(
     profile: CompiledProfile, models: ResponseModels, prior_fn: PriorFn
 ) -> list[float]:
     """Terminal P(UNEXPLAINED) of each S-4 session: passive phase, then planned probes answered
-    from the frozen collect-refund response model."""
+    from the frozen prize advance-fee response model."""
+    (low, high), channel = _scenario()
     rng = np.random.Generator(np.random.PCG64(SEED))
     unexplained = profile.hypotheses.index(UNEXPLAINED)
-    facts = SessionFacts(channel=CHANNEL, consents=frozenset({"call_status"}))
+    facts = SessionFacts(channel=channel, consents=frozenset({"call_status"}))
     results = []
     for _ in range(SESSIONS):
-        amount_inr = math.exp(rng.uniform(math.log(AMOUNT_INR[0]), math.log(AMOUNT_INR[1])))
+        amount_inr = math.exp(rng.uniform(math.log(low), math.log(high)))
         p_model, q = prior_fn(rng, amount_inr)
         belief = build_prior(profile, p_model, q)
         observed: set[str] = set()
-        passive = _passive_outcomes(draw_signals(rng, models.telemetry_targets[REFUND]))
+        passive = _passive_outcomes(draw_signals(rng, models.telemetry_targets[PRIZE]))
         for key, outcome in passive.items():
             src = profile.sources[key]
             belief = update(belief, src.likelihood[src.outcomes.index(outcome)])
@@ -102,7 +130,7 @@ def run_collect_refund_sessions(
             if plan.is_stop:
                 break
             src = profile.sources[plan.action]
-            answer = models.sample_answer(rng, REFUND, plan.action)
+            answer = models.sample_answer(rng, PRIZE, plan.action)
             belief = update(belief, src.likelihood[src.outcomes.index(answer)])
             observed.add(plan.action)
             budgets = budgets.after(src)
@@ -110,29 +138,164 @@ def run_collect_refund_sessions(
     return results
 
 
-# #36 sets this once ``_sensing_prior`` returns the trained models' p_model and q.
-SENSING_PRIOR_WIRED = False
+@dataclass(frozen=True)
+class Sensing:
+    """Sensing models trained on one profile's seeded bank, and what an S-4 payment needs."""
+
+    engine: Engine  # the seeded bank (owner role), to insert and read back each payment
+    prior: PriorModel
+    anomaly: AnomalyModel
+    anomaly_features: tuple[str, ...]
+    victims: tuple[UUID, ...]  # the S-4 victims' accounts, in persona order
+    payee: UUID  # a never-listed layer-1 mule (CLEAN_UNKNOWN), as the generator picks
+    start: datetime  # the live window opens when the history ends
 
 
-def _sensing_prior(sensing: ModuleType) -> PriorFn:
-    """The trained sensing model's p_model and q for a collect-refund session (docs/13)."""
-    raise NotImplementedError(
-        f"wire {sensing.__name__} into the S-4 calibration (docs/14 §5.4) when M3 lands (#36)"
+def _train_sensing(create_db: Callable[[], str], kb: KnowledgeBase, profile: str) -> Sensing:
+    url = create_db()
+    upgrade(url)
+    settings = load_sensing_config()
+    created_at = DEMO_CREATED_AT if profile == "demo" else None
+    config = load_generator_config()
+    dataset = generate_dataset(config, profile, kb=kb, personas=True, created_at=created_at)
+    assert dataset.personas is not None
+    window = bank.history_window(DatasetInfo(uuid4(), profile, 1, created_at or datetime.now(UTC)))
+    sim = engine_as(url, "delphi_sim")
+    with sim.begin() as conn:  # the bank as the seed leaves it: the history's labels delivered
+        write_dataset(conn, dataset)
+        deliver_labels(
+            conn, until=window.end, active_hypotheses=frozenset(kb.hypotheses), now=window.end
+        )
+    sim.dispose()
+    app = engine_as(url, "delphi_app")
+    with app.connect() as conn:
+        data = load_prior_data(conn, window, settings)
+    app.dispose()
+    prior, _gate = train_prior(
+        data.train, data.validation, data.test, data.feature_list, settings.prior, profile=profile
+    )
+    # docs/13 §5, as `train_anomaly_artifact`: the prior's GENUINE training rows and features.
+    genuine = data.train.features[data.train.labels == settings.prior.classes.index(GENUINE)]
+    anomaly = train_anomaly_matrix(genuine, data.feature_list, settings.anomaly)
+    # The scenario's payee rule (`fraud._unlisted_mules`): a layer-1 mule the registry never lists.
+    seed = config.profiles[profile].seed
+    share = config.forwarding.registry_listing_share
+    unlisted = [
+        account
+        for ring in dataset.network.rings
+        if ring.persona_key is None
+        for account in ring.layers[0]
+        if keyed_rng(seed, "mule_listing", str(account)).random() >= share
+    ]
+    victims = tuple(
+        dataset.personas.accounts[key]
+        for key in sorted(dataset.personas.accounts)
+        if key.startswith("S4_VICTIM")
+    )
+    assert len(victims) == SESSIONS and unlisted
+    return Sensing(
+        engine_as(url),
+        prior,
+        anomaly,
+        tuple(data.feature_list),
+        victims,
+        unlisted[0],
+        window.end,
     )
 
 
-def test_s4_collect_refund_sessions_reach_unexplained(
-    kb: KnowledgeBase, guardian: CompiledProfile
+@pytest.fixture(scope="session")
+def demo_sensing(
+    create_database: Callable[[], str],  # noqa: F811
+    kb: KnowledgeBase,
+) -> Iterator[Sensing]:
+    """Trained once per test session, so any other test that needs `demo` models shares it."""
+    sensing = _train_sensing(create_database, kb, "demo")
+    yield sensing
+    sensing.engine.dispose()
+
+
+@pytest.fixture(scope="session")
+def test_sensing(
+    create_database: Callable[[], str],  # noqa: F811
+    kb: KnowledgeBase,
+) -> Iterator[Sensing]:
+    sensing = _train_sensing(create_database, kb, "test")
+    yield sensing
+    sensing.engine.dispose()
+
+
+def sensing_prior(sensing: Sensing) -> PriorFn:
+    """p_model and q for each S-4 session, as the live Guardian gets them (docs/13 §1).
+
+    Session i is victim i paying the scenario's payee by the scenario's channel, i hours into the
+    live window: the payment is inserted, read back with ``load_payment_snapshot`` (the payer's
+    real history, the payee's age and mule score) and rolled back. The session's duration is the
+    generator's median, standing in for its telemetry. It draws nothing from ``rng``, so the
+    harness's own draws are unchanged."""
+    settings = load_sensing_config()
+    median_s = load_generator_config().telemetry.session_duration_s.median
+    _amounts, channel = _scenario()
+    sessions = iter(range(SESSIONS))
+
+    def prior_fn(_rng: np.random.Generator, amount_inr: float) -> PriorInputs:
+        i = next(sessions)
+        payment_id = uuid4()
+        with sensing.engine.connect() as conn:
+            tx = conn.begin()
+            conn.execute(
+                insert(bank.payments).values(
+                    id=payment_id,
+                    payer_account_id=sensing.victims[i],
+                    payee_account_id=sensing.payee,
+                    amount_paise=round(amount_inr * 100),
+                    channel=channel,
+                    initiated_at=sensing.start + timedelta(hours=i + 1),
+                    status="PENDING_GUARDIAN",
+                    origin="DEMO",
+                )
+            )
+            payment, history = load_payment_snapshot(conn, payment_id, settings.features)
+            tx.rollback()
+        payment = replace(payment, session_duration_s=median_s)
+        features = build_payment_features(payment, history, settings.features)
+        p_model = sensing.prior.predict({k: features[k] for k in sensing.prior.feature_list})
+        q = sensing.anomaly.percentile({k: features[k] for k in sensing.anomaly_features})
+        return p_model, q
+
+    return prior_fn
+
+
+@pytest.mark.slow
+def test_s4_prize_advance_fee_sessions_reach_unexplained(
+    kb: KnowledgeBase, guardian: CompiledProfile, demo_sensing: Sensing
 ) -> None:
-    sensing = pytest.importorskip(
-        "delphi.sensing.prior", reason="needs the sensing model's prior: M3, #36 (docs/14 §5.4)"
-    )
-    if not SENSING_PRIOR_WIRED:
-        pytest.skip("the trained prior and q are not wired into the S-4 harness yet: #36")
+    """ENG-S4 (docs/21 §3): on the `demo` prior, as docs/14 §5.4 specifies."""
     threshold = kb.config.engine.unexplained_routing_threshold
-    results = run_collect_refund_sessions(guardian, load_response_models(), _sensing_prior(sensing))
+    results = run_prize_advance_fee_sessions(
+        guardian, load_response_models(), sensing_prior(demo_sensing)
+    )
+    print("S-4 P(UNEXPLAINED) on the demo prior:", [round(p, 3) for p in results])
     share = sum(p >= threshold for p in results) / len(results)
     assert share >= REQUIRED_SHARE, results
+
+
+def test_s4_pipeline_runs_on_the_test_prior(
+    guardian: CompiledProfile, test_sensing: Sensing
+) -> None:
+    """The PR-CI smoke check (owner decision on #36): the same pipeline on the `test` prior
+    runs end to end. Only that it runs is asserted; the 70% check is `demo`'s, nightly."""
+    with test_sensing.engine.connect() as conn:
+        found = conn.execute(
+            select(bank.accounts.c.id).where(bank.accounts.c.id == test_sensing.payee)
+        ).scalar_one()
+    assert found == test_sensing.payee
+    results = run_prize_advance_fee_sessions(
+        guardian, load_response_models(), sensing_prior(test_sensing)
+    )
+    print("S-4 P(UNEXPLAINED) on the test prior:", [round(p, 3) for p in results])
+    assert len(results) == SESSIONS
+    assert all(0.0 <= p <= 1.0 for p in results)
 
 
 def _fixture_prior(_rng: np.random.Generator, _amount_inr: float) -> PriorInputs:
@@ -148,14 +311,13 @@ def _fixture_prior(_rng: np.random.Generator, _amount_inr: float) -> PriorInputs
 def test_harness_is_deterministic_with_a_fixture_prior(
     kb: KnowledgeBase, guardian: CompiledProfile
 ) -> None:
-    """The harness runs today; only the prior waits for sensing."""
     models = load_response_models()
-    first = run_collect_refund_sessions(guardian, models, _fixture_prior)
-    assert first == run_collect_refund_sessions(guardian, models, _fixture_prior)
+    first = run_prize_advance_fee_sessions(guardian, models, _fixture_prior)
+    assert first == run_prize_advance_fee_sessions(guardian, models, _fixture_prior)
     assert len(first) == SESSIONS
     assert all(0.0 <= p <= 1.0 for p in first)
-    # Believing money is coming in is the collect-refund signature: no known typology explains
-    # it, so some sessions must already lean UNEXPLAINED with a plain prior.
+    # Believing money is coming in is the scenario's signature: no known typology explains it,
+    # so some sessions must already lean UNEXPLAINED with a plain prior.
     assert max(first) > kb.config.engine.unexplained_routing_threshold
 
 

@@ -2,7 +2,7 @@
 # The frozen answer distributions are generated from this file and KB v1 into
 # response_models.generated.yaml by `uv run delphi sim freeze-response-models`.
 # A change to either file is a new generator_version (record it in CHANGELOG.md).
-generator_version: 17
+generator_version: 18
 
 # §5.2: P_true(· | s, a) ~ Dirichlet(concentration · P_kb(· | h(s), a)), sampled once, each
 # row from its own stream derived from freeze_seed and the (scenario, source) names.
@@ -20,7 +20,9 @@ telemetry_targets:
   APP_DIGITAL_ARREST: { on_call_unknown_number: 0.80, remote_access_active: 0.25, paste_or_long_dwell: 0.50, cadence_mismatch: 0.04 }
   APP_INVESTMENT: { on_call_unknown_number: 0.40, remote_access_active: 0.10, paste_or_long_dwell: 0.35, cadence_mismatch: 0.04 }
   MULE_FORWARDING: { on_call_unknown_number: 0.12, remote_access_active: 0.04, paste_or_long_dwell: 0.50, cadence_mismatch: 0.10 }
-  UPI_COLLECT_REFUND: { on_call_unknown_number: 0.60, remote_access_active: 0.05, paste_or_long_dwell: 0.30, cadence_mismatch: 0.03 }
+  # v18 (#36): the "prize official" stays on the line, the victim uses their own phone, and pastes
+  # the account sent on WhatsApp about a third of the time.
+  PRIZE_ADVANCE_FEE: { on_call_unknown_number: 0.95, remote_access_active: 0.03, paste_or_long_dwell: 0.35, cadence_mismatch: 0.03 }
 
 # §5.2 well-coached victims: this share of DA and INV instances answers these probes from
 # genuine_weight · P_true(GENUINE) + (1 − genuine_weight) · P_true(own).
@@ -38,13 +40,20 @@ pinned_outcomes:
 # §5.2: scenarios with no KB v1 row take these distributions exactly, in the KB outcome order.
 # Every answered source needs a row; a missing one fails the freeze.
 explicit_answers:
-  UPI_COLLECT_REFUND:
+  # v18 (#36, owner decision): S-4's stand-in. The victim pays a "tax" to release a prize.
+  PRIZE_ADVANCE_FEE:
     OTP_STEP_UP: [0.97, 0.03]
     BIOMETRIC_STEP_UP: [0.97, 0.03]
-    PURPOSE_QUESTION: [0.15, 0.03, 0.12, 0.70]
-    SPELL_BREAKER_DIGITAL_ARREST: [0.10, 0.02, 0.88]
-    SPELL_BREAKER_INVESTMENT: [0.10, 0.02, 0.88]
-    COOLING_OFF: [0.15, 0.25, 0.60]
+    # "I am receiving a refund or prize" names it: 0.80 (the low end of what passed on `demo`);
+    # the rest a government fee or bills, or a slow answer.
+    PURPOSE_QUESTION: [0.08, 0.08, 0.04, 0.80]
+    # Hesitation, YES, NO. "Keep this payment secret" is true for some.
+    SPELL_BREAKER_DIGITAL_ARREST: [0.15, 0.10, 0.75]
+    # "Asked you to pay a fee or tax before you can withdraw" is true for some.
+    SPELL_BREAKER_INVESTMENT: [0.15, 0.20, 0.65]
+    # Persisted, cancelled, waited: the caller presses ("the prize expires today").
+    COOLING_OFF: [0.45, 0.15, 0.40]
+    # A push payment never reaches this probe; the row is required by the freeze.
     COLLECT_INTENT_CHECK: [0.88, 0.12]
     # Same as APP_INVESTMENT: the victim realises once a verified bank caller explains.
     CUSTOMER_OUTREACH_CALL: [0.50, 0.25, 0.05, 0.20]
