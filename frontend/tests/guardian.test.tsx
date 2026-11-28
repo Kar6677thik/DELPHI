@@ -77,6 +77,7 @@ function view(overrides: Partial<GuardianSessionView> = {}): GuardianSessionView
       anomaly_percentile: 0.95,
       open_mass: 0.11,
       top_features: [],
+      source: 'MODEL',
     },
     risk_by_decision: { RELEASE: 43_210_000, HOLD_FOR_REVIEW: 632_300, PROTECTIVE_HOLD: 176_100 },
     probe_runs: [

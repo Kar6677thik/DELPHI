@@ -49,13 +49,13 @@ engine and KB v1 independently of the trained sensing model. The E2E tests (§4)
 stories with the real model's prior. If an E2E story diverges because of the prior, that is
 risk R-01: fix it in the persona or simulator, never by tuning KB v1 to the test.
 
-**S-2 and the step-up (#281, owner decision delegated, 2026-11-24).** ENG-S2's fixture prior puts
-20% on ATO, so the biometric wins over the OTP. The live prior model leaves the device to
-DEVICE_POSTURE (doc 13 §3), and on `demo` it gives Arjun's hospital payment about 0.1–0.5% ATO,
-so OTP and biometric are close to a tie and the planner picks either. A simulator change (local
-attackers, merchant cash-outs) did not move it: the prior cannot see the new phone. So E2E-S2
-checks the outcome the story is about (a quick release after at most one step-up and ≤ 2 active
-probes), and the biometric-over-OTP choice stays pinned at engine level by ENG-S2.
+**Story runs start from the scripted prior (#291, owner decision 2026-11-28).** The trained
+prior gives the personas' story payments a few tenths of a percent of their story's hypothesis,
+a share that swings ~15× between trainings, so E2E story paths were a coin flip (#281, #291). A
+story payment now starts from its story's docs/06 §17 prior, the one ENG-S1/S2 pin, recorded as
+`prior_source = STORY_SCRIPT` (doc 06 §17). The E2E story journeys therefore assert ENG-S1/S2's
+paths live: Kamala's purpose question, then the digital-arrest spell-breaker, then
+PROTECTIVE_HOLD; Arjun's biometric chosen over the OTP, then RELEASE.
 
 | ID | Setup (demo dataset personas, KB v1, scripted responses) | Assertions |
 |---|---|---|

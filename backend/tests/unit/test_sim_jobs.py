@@ -11,6 +11,7 @@ from sqlalchemy import create_engine
 from delphi.cli import worker_registry
 from delphi.guardian.api import WorkerGuardian
 from delphi.guardian.store import Runner
+from delphi.guardian.story_prior import StoryPrior
 from delphi.kb.loader import load_and_validate
 from delphi.kb.model import KnowledgeBase
 from delphi.platform.clock import SystemClock
@@ -58,7 +59,9 @@ def test_the_worker_registers_generate_dataset_only_with_its_sim_pool() -> None:
         assert JobType.RETENTION_SWEEP in parts.registry.handlers  # the platform's are kept
         # the WORKER Guardian runner, with the sensing prior, and the story runner (#95, #101)
         assert isinstance(parts.guardian, WorkerGuardian)
-        assert isinstance(parts.guardian.runner._service._prior, SensingInference)
+        prior = parts.guardian.runner._service._prior
+        assert isinstance(prior, StoryPrior)  # a story's scripted prior, else the sensing one
+        assert isinstance(prior.inner, SensingInference)
         assert parts.guardian.runner._runner is Runner.WORKER
         assert JobType.DEMO_STORY in parts.registry.handlers
     finally:

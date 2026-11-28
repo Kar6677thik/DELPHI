@@ -35,6 +35,7 @@ from delphi.guardian.api import (
     worker_guardian,
 )
 from delphi.guardian.service import GuardianService
+from delphi.guardian.story_prior import StoryPrior
 from delphi.kb.canonical import content_sha256
 from delphi.kb.issues import KbValidationError
 from delphi.kb.loader import load_and_validate
@@ -76,7 +77,7 @@ from delphi.sensing.api import SensingInference
 from delphi.sensing.config import load_sensing_config
 from delphi.sensing.jobs import register_sensing_jobs
 from delphi.sensing.mule_scores import MuleSweepLimits
-from delphi.sim.api import PROFILES, dataset_exists, request_dataset
+from delphi.sim.api import PROFILES, dataset_exists, request_dataset, scripted_priors
 from delphi.sim.customer import LiveCustomer
 from delphi.sim.dataset import generate_dataset
 from delphi.sim.generator_config import load_generator_config
@@ -247,10 +248,12 @@ def _guardian_service(
         telemetry,
     )
     executor = passive_executor(settings.passive_probe_threads)
+    # A demo story's payment starts from the story's scripted prior (docs/06 §17, #291).
+    prior = StoryPrior(inference, scripted_priors())
     service = GuardianService(
         platform.sessions,
         platform.clock,
-        inference,
+        prior,
         fetchers,
         executor,
         otp_key=settings.otp_key,

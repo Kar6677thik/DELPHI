@@ -286,6 +286,11 @@ def test_s1_autoplay_reaches_the_protective_hold(seeded: Bank, kb: KnowledgeBase
             )
         ).scalar_one()
     assert scripted == "23:40"
+    with seeded.owner.connect() as conn:  # the story it plays: its scripted prior (#291)
+        played = conn.execute(
+            select(bank.payments.c.story).where(bank.payments.c.id == decided["payment_id"])
+        ).scalar_one()
+    assert played == "S1"
 
 
 def test_the_story_job_is_idempotent(seeded: Bank, kb: KnowledgeBase) -> None:
@@ -441,6 +446,7 @@ def test_interactive_mode_gives_the_phone_a_payment_its_runner_drives(
     payment = result["payment"]
     assert payment["amount_paise"] == 180_000 * 100 and payment["telemetry"]["on_call"] is False
     assert "story_local_time" not in payment  # S-2 has no scripted time
+    assert payment["story_job_id"] == str(job["id"])  # the server derives the story (#291)
     with seeded.sessions() as s:
         assert (
             s.execute(
