@@ -656,7 +656,8 @@ Details where the scripts are silent:
   How it does it (`delphi.sim.reset`, #101; owner decisions delegated 2026-11-24):
   - **What is deleted.** The bank's rows, the Guardian sessions and probe runs, cases and
     everything on them, Chase operations (#113: their candidates, liens and tickets go with
-    them), labels, KB versions other than v1, and ground truth, each table by its
+    them), the Scout's runs, clusters, drafts and queue dismissals (#117), labels, KB versions
+    other than v1, and ground truth, each table by its
     creation time (`created_at`, `at` for event logs, `started_at` for sessions). The platform's
     own tables stay: users and sign-in sessions, jobs (the reset's own among them), the audit
     chain (append-only, and the reset is audited in it), the outbox, idempotency keys, LLM
