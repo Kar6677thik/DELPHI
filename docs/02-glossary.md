@@ -50,6 +50,7 @@ needed, add it here first.
 | **KB version status** | `kb_status` | `CANDIDATE`, `SHADOW`, `ACTIVE`, `RETIRED`, `REJECTED` |
 | **Shadow** | `SHADOW` | A KB version that is evaluated alongside the active one on live traffic but never drives decisions |
 | **Typology draft** | `typology_draft` | An editable proposal for a new typology. It becomes part of a KB version on promotion |
+| **Typology draft status** | `typology_draft_status` | `CANDIDATE` (from `RUN_SCOUT`), `DRAFT`, `BACKTESTED`, `IN_SHADOW`, `PROMOTED`, `REJECTED`, `SUPERSEDED` (a `CANDIDATE` a later Scout run replaced) |
 | **Scout cluster** | `scout_cluster` | A cluster of unexplained cases found by the Typology Scout |
 | **Label** | `label` | The ground-truth hypothesis for a payment or account as the bank *observes* it, with a source and a time |
 | **Label source** | `label_source` | How a label became known: `CUSTOMER_COMPLAINT`, `NO_COMPLAINT_60D`, `OUTREACH_CONFIRMED`, `INVESTIGATOR_DISPOSITION`, `REGISTRY_LISTING` |

@@ -59,6 +59,11 @@ ACCESS: dict[tuple[str, str], str | Permission] = {
     ("GET", "/api/v1/guardian/sessions"): Permission.VIEW,
     ("GET", "/api/v1/guardian/sessions/{session_id}"): Permission.VIEW,
     ("GET", "/api/v1/guardian/sessions/{session_id}/dd-pack"): Permission.VIEW,
+    ("POST", "/api/v1/chase/operations"): Permission.CHASE_WRITE,
+    ("GET", "/api/v1/chase/operations/{operation_id}"): Permission.VIEW,
+    ("POST", "/api/v1/chase/operations/{operation_id}/liens"): Permission.CHASE_WRITE,
+    ("GET", "/api/v1/scout/queue"): Permission.VIEW,
+    ("POST", "/api/v1/scout/queue/{item_id}/dismiss"): Permission.FDE,
     ("POST", "/api/v1/guardian/sessions"): Permission.DEMO_DRIVE,
     ("POST", "/api/v1/guardian/sessions/{session_id}/probe-responses"): Permission.DEMO_DRIVE,
     ("POST", "/api/v1/guardian/sessions/{session_id}/cancel"): Permission.DEMO_DRIVE,
@@ -140,6 +145,8 @@ def test_access(
         .replace("{user_id}", str(uuid4()))
         .replace("{version_id}", "999")
         .replace("{case_id}", str(uuid4()))
+        .replace("{operation_id}", str(uuid4()))
+        .replace("{item_id}", str(uuid4()))
         .replace("{action}", "send")
         .replace("{session_id}", str(uuid4()))
         .replace("{story}", "S1")

@@ -17,7 +17,8 @@ from enum import StrEnum
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import Connection, Float, and_, cast, func, or_, select
+from sqlalchemy import Connection, Float, Select, and_, cast, func, literal, null, or_, select
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -366,3 +367,27 @@ def list_cases(
             query = query.where(or_(key < after.at, and_(key == after.at, cases.c.id < after.id)))
     order = (key.asc(), cases.c.id.asc()) if ascending else (key.desc(), cases.c.id.desc())
     return [CaseRecord.of(r) for r in conn.execute(query.order_by(*order).limit(limit))]
+
+
+def unexplained_reviews_query(*, threshold: float, since: datetime | None = None) -> Select[Any]:
+    """docs/11 §1, the Scout's queue source: disposed ACCOUNT_REVIEW cases with P(UNEXPLAINED)
+    ≥ ``threshold`` at disposition, filtered in SQL, as ``(subject_type, subject_id, entered_at,
+    p_unexplained, payment_id, account_id)``. A PAYMENT_HOLD case is left out: its Guardian
+    session is the queue item already."""
+    c = cases.c
+    p_unexplained = func.coalesce(c.posterior["UNEXPLAINED"].as_float(), 0.0)
+    query = select(
+        literal("CASE").label("subject_type"),
+        c.id.label("subject_id"),
+        c.disposed_at.label("entered_at"),
+        p_unexplained.label("p_unexplained"),
+        null().cast(PG_UUID(as_uuid=True)).label("payment_id"),
+        c.subject_account_id.label("account_id"),
+    ).where(
+        c.type == CaseType.ACCOUNT_REVIEW.value,
+        c.status == CaseStatus.DISPOSED.value,
+        p_unexplained >= threshold,
+    )
+    if since is not None:
+        query = query.where(c.disposed_at >= since)
+    return query
