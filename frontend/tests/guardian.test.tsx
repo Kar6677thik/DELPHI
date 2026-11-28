@@ -77,6 +77,7 @@ function view(overrides: Partial<GuardianSessionView> = {}): GuardianSessionView
       anomaly_percentile: 0.95,
       open_mass: 0.11,
       top_features: [],
+      source: 'MODEL',
     },
     risk_by_decision: { RELEASE: 43_210_000, HOLD_FOR_REVIEW: 632_300, PROTECTIVE_HOLD: 176_100 },
     probe_runs: [
@@ -276,6 +277,23 @@ describe('Guardian monitor (docs/18 §2 /guardian)', () => {
 });
 
 describe('Guardian session detail (docs/18 §2 /guardian/:id)', () => {
+  it('names a demo story’s scripted prior (#291)', async () => {
+    setMockSession('viewer');
+    serveKb();
+    const scripted = view();
+    server.use(
+      http.get(`/api/v1/guardian/sessions/${SESSION_ID}`, () =>
+        HttpResponse.json({ ...scripted, prior: { ...scripted.prior, source: 'STORY_SCRIPT' } }),
+      ),
+    );
+    renderApp(`/guardian/${SESSION_ID}`);
+    const timeline = await screen.findByRole('list', { name: 'Posterior by step' });
+    expect(within(timeline).getAllByRole('list')[0]).toHaveAttribute(
+      'aria-label',
+      'Prior (scripted for the story)',
+    );
+  });
+
   it('shows the timeline, the risk table, the baselines, the candidates and the DD pack link', async () => {
     setMockSession('viewer');
     serveKb();

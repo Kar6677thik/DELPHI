@@ -1757,6 +1757,146 @@
         }
       }
     },
+    "/api/v1/chase/operations/{operation_id}/liens/{lien_id}/release": {
+      "post": {
+        "tags": [
+          "chase"
+        ],
+        "summary": "Release",
+        "description": "docs/05 §6: a PLACED lien is released, with the reason; 409 for any other status.",
+        "operationId": "release_api_v1_chase_operations__operation_id__liens__lien_id__release_post",
+        "parameters": [
+          {
+            "name": "operation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Operation Id"
+            }
+          },
+          {
+            "name": "lien_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Lien Id"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReleaseLien"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChaseView"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An RFC 9457 problem (docs/16 §1)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/chase/operations/{operation_id}/close": {
+      "post": {
+        "tags": [
+          "chase"
+        ],
+        "summary": "Close",
+        "description": "docs/10 §5 step 7: a manual close, at any time; 409 once closed.",
+        "operationId": "close_api_v1_chase_operations__operation_id__close_post",
+        "parameters": [
+          {
+            "name": "operation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Operation Id"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChaseView"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An RFC 9457 problem (docs/16 §1)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/scout/queue": {
       "get": {
         "tags": [
@@ -5737,6 +5877,29 @@
               }
             ],
             "title": "Review Due At"
+          },
+          "released_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Released At"
+          },
+          "release_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Release Reason"
           }
         },
         "type": "object",
@@ -5752,7 +5915,9 @@
           "approved_by",
           "approved_at",
           "placed_at",
-          "review_due_at"
+          "review_due_at",
+          "released_at",
+          "release_reason"
         ],
         "title": "LienView"
       },
@@ -6056,6 +6221,18 @@
               }
             ],
             "title": "Story Local Time"
+          },
+          "story_job_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Story Job Id"
           }
         },
         "additionalProperties": false,
@@ -6413,6 +6590,14 @@
             },
             "type": "array",
             "title": "Top Features"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "MODEL",
+              "STORY_SCRIPT"
+            ],
+            "title": "Source"
           }
         },
         "type": "object",
@@ -6421,7 +6606,8 @@
           "p_model",
           "anomaly_percentile",
           "open_mass",
-          "top_features"
+          "top_features",
+          "source"
         ],
         "title": "PriorView"
       },
@@ -7027,6 +7213,22 @@
           "checks"
         ],
         "title": "ReadinessView"
+      },
+      "ReleaseLien": {
+        "properties": {
+          "reason": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Reason"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "reason"
+        ],
+        "title": "ReleaseLien"
       },
       "Role": {
         "type": "string",

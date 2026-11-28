@@ -68,6 +68,7 @@ class SessionRow:
     anomaly_percentile: float | None
     open_mass: float | None
     top_features: Sequence[Mapping[str, Any]]
+    prior_source: str  # MODEL or STORY_SCRIPT (#291)
     posterior: Mapping[str, float] | None
     risk_by_decision: Mapping[str, float] | None
     unexplained: bool
@@ -93,6 +94,7 @@ def _row(row: Any, payment: bank.PaymentView) -> SessionRow:
         anomaly_percentile=row.anomaly_percentile,
         open_mass=row.open_mass,
         top_features=row.top_features or (),
+        prior_source=row.prior_source,
         posterior=row.posterior,
         risk_by_decision=row.risk_by_decision,
         unexplained=row.unexplained,

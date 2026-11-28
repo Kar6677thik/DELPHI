@@ -10,6 +10,7 @@ from delphi.chase.operations import (
     create_operation,
 )
 from delphi.chase.tables import cfcfrms_tickets, chase_candidates, chase_operations, liens
+from delphi.chase.tickets import close_operation, release_lien
 
 __all__ = [
     "CandidateSource",
@@ -19,6 +20,8 @@ __all__ = [
     "cfcfrms_tickets",
     "chase_candidates",
     "chase_operations",
+    "close_operation",
     "create_operation",
     "liens",
+    "release_lien",
 ]
