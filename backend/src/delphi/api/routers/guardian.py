@@ -101,7 +101,7 @@ class Baselines(BaseModel):
     B2: str
 
 
-class CandidateView(BaseModel):
+class ProbeCandidateView(BaseModel):
     """One row of a planning step's candidates table (docs/08 §6), as the Guardian stores it in
     `probe_runs.candidates` (`guardian.service._candidates`). Money is integer paise."""
 
@@ -130,7 +130,7 @@ class ProbeRunView(BaseModel):
     voi_myopic_paise: int | None
     net_value_paise: int | None
     cost_paise: int | None
-    candidates: list[CandidateView]
+    candidates: list[ProbeCandidateView]
     started_at: datetime
     completed_at: datetime | None
 
@@ -223,7 +223,7 @@ def _probe_run(r: Any) -> ProbeRunView:
         voi_myopic_paise=r.voi_myopic_paise,
         net_value_paise=r.net_value_paise,
         cost_paise=r.cost_paise,
-        candidates=[CandidateView.model_validate(c) for c in r.candidates or []],
+        candidates=[ProbeCandidateView.model_validate(c) for c in r.candidates or []],
         started_at=r.started_at,
         completed_at=r.completed_at,
     )
