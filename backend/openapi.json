@@ -5332,22 +5332,17 @@
             ],
             "title": "Story Local Time"
           },
-          "story": {
+          "story_job_id": {
             "anyOf": [
               {
                 "type": "string",
-                "enum": [
-                  "S1",
-                  "S2",
-                  "S3",
-                  "S4"
-                ]
+                "format": "uuid"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Story"
+            "title": "Story Job Id"
           }
         },
         "additionalProperties": false,

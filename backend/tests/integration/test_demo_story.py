@@ -446,7 +446,7 @@ def test_interactive_mode_gives_the_phone_a_payment_its_runner_drives(
     payment = result["payment"]
     assert payment["amount_paise"] == 180_000 * 100 and payment["telemetry"]["on_call"] is False
     assert "story_local_time" not in payment  # S-2 has no scripted time
-    assert payment["story"] == "S2"  # the phone pays it as S-2: its scripted prior (#291)
+    assert payment["story_job_id"] == str(job["id"])  # the server derives the story (#291)
     with seeded.sessions() as s:
         assert (
             s.execute(

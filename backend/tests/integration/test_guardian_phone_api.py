@@ -25,11 +25,10 @@ import pytest
 import uvicorn
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select, text
+from sqlalchemy import create_engine, func, select, text, update
 
 from delphi.api.app import create_app
 from delphi.api.security import Principal, current_principal
-from delphi.guardian import service as service_module
 from delphi.guardian.active import Ui
 from delphi.guardian.api import LiveGuardian, live_guardian
 from delphi.guardian.phone import PhoneChannel, PhoneHub
@@ -43,7 +42,9 @@ from delphi.platform.accounts import Role, create_user
 from delphi.platform.audit import ActorType
 from delphi.platform.clock import FixedClock
 from delphi.platform.db import make_session_factory, migration_head
+from delphi.platform.jobs import JobStatus, JobType, enqueue
 from delphi.platform.settings import Settings
+from delphi.platform.tables import jobs
 from delphi.platform.wiring import Platform
 from delphi.probes.registry import CLASSIFIER_NAMES
 from delphi.sim import api as bank
@@ -419,15 +420,44 @@ def test_a_story_payment_keeps_its_scripted_local_time(env: Env) -> None:
     assert scripted == ["23:40"]
 
 
-def test_a_story_payment_starts_from_its_scripted_prior(env: Env) -> None:
-    """docs/06 §17, #291: a story payment (S1) starts from the story's scripted prior, and the
-    session says so; a payment without a story keeps the trained model's."""
+def _staged(env: Env, payment: dict[str, Any], *, story: str = "S1", **result: Any) -> UUID:
+    """An interactive DEMO_STORY job that staged ``payment`` (docs/14 §10), as the worker
+    leaves it: SUCCEEDED, its result the phone's payment body."""
+    body = {k: payment[k] for k in ("payer_account_id", "payee_account_id", "amount_paise")}
+    body |= {"channel": payment["channel"], "device_id": payment["device_id"]}
+    with env.sessions.begin() as s:
+        job = enqueue(
+            s,
+            env.clock,
+            JobType.DEMO_STORY,
+            idempotency_key=f"test-story-{uuid4()}",
+            params={"story": story, "mode": "interactive"},
+        ).job_id
+        s.execute(
+            update(jobs)
+            .where(jobs.c.id == job)
+            .values(
+                status=JobStatus.SUCCEEDED.value,
+                result={"story": story, "mode": "interactive", "payment": body} | result,
+            )
+        )
+    return job
+
+
+def test_a_staged_story_payment_starts_from_its_scripted_prior(env: Env) -> None:
+    """docs/06 §17, #291: a payment the story's job staged starts from the story's scripted
+    prior, and the session and its DD pack say so; the server sets the story, never the
+    client."""
     p = _persona(env)
     live = _live(env, StoryPrior(FixedPrior(GENUINE_SURE, p_mule=None), scripted_priors()), CLEAN)
+    payment = _payment(p)
+    job = _staged(env, payment)
     with TestClient(_app(env, _user(env, Role.INVESTIGATOR), live), headers=BROWSER) as client:
-        story = client.post(API, json={"payment": _payment(p, story="S1")}, headers=_key())
+        story = client.post(
+            API, json={"payment": payment | {"story_job_id": str(job)}}, headers=_key()
+        )
         plain = client.post(API, json={"payment": _payment(p, 3_000)}, headers=_key())
-        unknown = client.post(API, json={"payment": _payment(p, story="S9")}, headers=_key())
+        pack = client.get(f"{API}/{story.json()['id']}/dd-pack")
     assert story.status_code == 201, story.text
     scripted = story.json()["prior"]
     assert scripted["source"] == "STORY_SCRIPT"
@@ -436,43 +466,39 @@ def test_a_story_payment_starts_from_its_scripted_prior(env: Env) -> None:
         {"feature": "scripted_prior", "value": "S1", "contribution": 0.0}
     ]
     assert plain.status_code == 201 and plain.json()["prior"]["source"] == "MODEL"
-    assert unknown.status_code == 422
+    assert pack.status_code == 200, pack.text
+    assert "scripted for demo story S-1" in pack.text
     with env.owner.connect() as conn:
         stories = conn.execute(select(bank.payments.c.story)).scalars().all()
     assert sorted(stories, key=str) == sorted(["S1", None], key=str)
 
 
-def test_a_story_payment_does_not_explore(env: Env, monkeypatch: pytest.MonkeyPatch) -> None:
-    """#291: a story plays its script, so its plan never explores (ENG-S1/S2 run greedy);
-    any other payment may."""
-    seen: list[bool] = []
-    real = service_module.plan_step
-
-    def spy(*args: Any, **kwargs: Any) -> Any:
-        seen.append(bool(kwargs["explore"]))
-        return real(*args, **kwargs)
-
-    monkeypatch.setattr(service_module, "plan_step", spy)
+def test_a_client_cannot_ask_for_a_scripted_prior(env: Env) -> None:
+    """#291: only the job that staged the payment makes it a story: naming a story, an unknown
+    job, another job type, or a payment the job did not stage is a 422, and nothing is
+    written."""
     p = _persona(env)
-    prior = StoryPrior(story_prior(KAMALA_PRIOR), scripted_priors())
-    live = live_guardian(env.service(prior, KAMALA_PASSIVE), env.sessions, env.clock)
+    live = _live(env, StoryPrior(FixedPrior(GENUINE_SURE, p_mule=None), scripted_priors()), CLEAN)
+    payment = _payment(p)
+    staged = _staged(env, payment)
+    with env.sessions.begin() as s:
+        other = enqueue(s, env.clock, JobType.TRAIN_SENSING, idempotency_key="test-train").job_id
+    autoplay = _staged(env, payment, mode="autoplay")
+    attempts = {
+        "a story by name": payment | {"story": "S1"},
+        "an unknown job": payment | {"story_job_id": str(uuid4())},
+        "another job type": payment | {"story_job_id": str(other)},
+        "an autoplay job": payment | {"story_job_id": str(autoplay)},
+        "another amount": _payment(p, 480_001) | {"story_job_id": str(staged)},
+    }
     with TestClient(_app(env, _user(env, Role.INVESTIGATOR), live), headers=BROWSER) as client:
-
-        def planned(body: dict[str, Any]) -> list[bool]:
-            seen.clear()
-            created = client.post(API, json={"payment": body}, headers=_key())
-            assert created.status_code == 201, created.text
-            sid = created.json()["id"]
-            _until(
-                lambda: dict(client.get(f"{API}/{sid}").json()),
-                lambda v: v["status"] in ("AWAITING_CUSTOMER", "DECIDED"),
-            )
-            return list(seen)
-
-        story = planned(_payment(p, story="S1"))
-        plain = planned(_payment(p, 3_000))
-    assert story and not any(story)
-    assert plain and all(plain)
+        replies = {
+            why: client.post(API, json={"payment": body}, headers=_key())
+            for why, body in attempts.items()
+        }
+    assert {why: r.status_code for why, r in replies.items()} == dict.fromkeys(attempts, 422)
+    with env.owner.connect() as conn:
+        assert conn.execute(select(func.count()).select_from(bank.payments)).scalar_one() == 0
 
 
 # ---------------------------------------------------------------- answering and cancelling

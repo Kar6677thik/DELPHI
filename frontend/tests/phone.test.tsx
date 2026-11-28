@@ -419,7 +419,7 @@ describe('/phone demo stories', () => {
           device_id: 'd-story',
           telemetry: STORY_TELEMETRY,
           story_local_time: '23:40',
-          story: 'S1',
+          story_job_id: JOB,
         },
       },
       error: null,
@@ -483,7 +483,7 @@ describe('/phone demo stories', () => {
         channel: 'IMPS',
         device_id: 'd-story',
         story_local_time: '23:40',
-        story: 'S1',
+        story_job_id: JOB,
         telemetry: { on_call: true, call_counterparty_known: false },
       },
     });

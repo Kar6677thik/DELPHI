@@ -640,8 +640,9 @@ Details where the scripts are silent:
   script's `local_time` (S-1: 23:40 IST) goes on the payment instead (`story_local_time`, #291):
   the job writes it in autoplay and returns it in the interactive `payment` body, and the prior's
   hour features read it (doc 13 §3). Everything else about the payment is real time.
-- **The story's prior is scripted** (#291): the job also puts the story's name on the payment
-  (`story`), and the Guardian starts the session from the story's `scripted_prior`
+- **The story's prior is scripted** (#291): the job puts the story's name on the payment
+  (`story`): on the autoplay payment it makes, and, for the phone, the server sets it once the
+  payment matches the job that staged it (its `story_job_id`, doc 16). The Guardian starts the session from the story's `scripted_prior`
   (`personas.yaml`, doc 06 §17) instead of the trained model's, recorded as
   `prior_source = STORY_SCRIPT`. The trained prior's share of the story's hypothesis is a few
   tenths of a percent and swings ~15× between trainings.

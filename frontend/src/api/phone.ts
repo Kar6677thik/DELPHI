@@ -120,8 +120,8 @@ export interface PaymentDraft {
   device_id: string;
   /** A demo story's scripted local time, IST "HH:MM" (docs/14 §10): the story's job sets it. */
   story_local_time?: string;
-  /** The demo story it plays (S1, S2): the Guardian starts from its scripted prior (#291). */
-  story?: 'S1' | 'S2' | 'S3' | 'S4';
+  /** The DEMO_STORY job that staged it: the server checks it and plays the story (#291). */
+  story_job_id?: string;
 }
 
 /**
