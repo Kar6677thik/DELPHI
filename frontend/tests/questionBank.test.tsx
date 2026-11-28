@@ -47,18 +47,64 @@ const HI = variant({
   text: 'यह भुगतान किसलिए है?',
 });
 
+/** The ACTIVE KB's question probes, from which "Draft new variants" picks (not a fixed list). */
+const QUESTION_SOURCE = (description: string) => ({
+  kind: 'PROBE',
+  mode: 'ACTIVE',
+  friction_tier: 'LOW',
+  outcomes: ['A', 'B'],
+  description,
+  question: true,
+});
+const EN = (text: string) => ({
+  variants: [{ language: 'en', status: 'APPROVED', text, options: ORIGINAL.options }],
+});
+const KB_CONTENT = {
+  name: 'KB v1',
+  description: '',
+  hypothesis_order: [],
+  hypotheses: {},
+  sources: {
+    PURPOSE_QUESTION: QUESTION_SOURCE('The purpose question.'),
+    COLLECT_INTENT_CHECK: QUESTION_SOURCE('Collect intent.'),
+    CALL_STATUS: { ...QUESTION_SOURCE('Call status.'), mode: 'PASSIVE', question: false },
+  },
+  question_bank: {
+    PURPOSE_QUESTION: EN(ORIGINAL.text),
+    COLLECT_INTENT_CHECK: EN('Are you expecting to receive money?'),
+  },
+};
+const KB_VERSION = {
+  id: 1,
+  status: 'ACTIVE',
+  parent_id: null,
+  change_summary: 'Seed.',
+  created_by: null,
+  created_at: '2026-11-08T00:00:00Z',
+  activated_at: null,
+  content_sha256: 'abc123def4567890',
+};
+
 interface Seen {
   reviews: { id: string; body: unknown }[];
   generated: unknown[];
   batches: number;
+  lists: string[];
 }
 
 function serve(pending: QuestionVariantView[], approved: QuestionVariantView[] = []): Seen {
-  const seen: Seen = { reviews: [], generated: [], batches: 0 };
+  const seen: Seen = { reviews: [], generated: [], batches: 0, lists: [] };
   server.use(
+    http.get('/api/v1/kb/versions', () =>
+      HttpResponse.json({ items: [KB_VERSION], next_cursor: null }),
+    ),
+    http.get('/api/v1/kb/versions/1', () =>
+      HttpResponse.json({ ...KB_VERSION, content: KB_CONTENT }),
+    ),
     http.get('/api/v1/question-bank/variants', ({ request }) => {
-      const status = new URL(request.url).searchParams.get('status');
-      const items = status === 'APPROVED' ? approved : pending;
+      const params = new URL(request.url).searchParams;
+      seen.lists.push(params.toString());
+      const items = params.get('status') === 'APPROVED' ? approved : pending;
       return HttpResponse.json({ items, next_cursor: null });
     }),
     http.post('/api/v1/question-bank/variants/:id/review', async ({ params, request }) => {
@@ -129,12 +175,56 @@ describe('the question bank review', () => {
     expect(await within(te).findByRole('alert')).toHaveTextContent(
       'The variant is already APPROVED.',
     );
+    // The refusal doesn't refresh the queue, so the card and its message stay until asked.
+    expect(within(te).getByRole('button', { name: 'Refresh the queue' })).toBeVisible();
+    expect(within(te).getByRole('button', { name: 'Edit' })).toBeEnabled();
+  });
+
+  it('pages the review queue with the cursor', async () => {
+    serve([]);
+    server.use(
+      http.get('/api/v1/question-bank/variants', ({ request }) => {
+        const cursor = new URL(request.url).searchParams.get('cursor');
+        return HttpResponse.json(
+          cursor === 'page-2'
+            ? { items: [HI], next_cursor: null }
+            : { items: [TE], next_cursor: 'page-2' },
+        );
+      }),
+    );
+    const { user } = renderApp('/kb/questions');
+    expect(await screen.findByRole('article', { name: /Telugu/ })).toBeVisible();
+    expect(screen.queryByRole('article', { name: /Hindi/ })).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Load more' }));
+    expect(await screen.findByRole('article', { name: /Hindi/ })).toBeVisible();
+  });
+
+  it('counts the waiting variants on the server, not page 1', async () => {
+    const seen = serve([]);
+    server.use(
+      http.get('/api/v1/question-bank/variants', ({ request }) => {
+        const params = new URL(request.url).searchParams;
+        seen.lists.push(params.toString());
+        if (params.get('status') !== 'APPROVED')
+          return HttpResponse.json({ items: [], next_cursor: null });
+        return HttpResponse.json({ items: [variant({ status: 'APPROVED' })], next_cursor: 'more' });
+      }),
+    );
+    renderApp('/kb/questions');
+    expect(await screen.findByText(/More than 1 approved variants are waiting/)).toBeVisible();
+    expect(
+      seen.lists.some((q) => q.includes('status=APPROVED') && q.includes('included=false')),
+    ).toBe(true);
+    expect(screen.getByRole('button', { name: 'Approve batch' })).toBeEnabled();
   });
 
   it('asks for drafts in the languages chosen', async () => {
     const seen = serve([]);
     const { user } = renderApp('/kb/questions');
     expect(await screen.findByText('No draft is waiting for review.')).toBeVisible();
+    // The choices are the ACTIVE KB's question probes, so they arrive with it.
+    expect(await screen.findByRole('option', { name: 'Collect intent check' })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: 'Call status' })).toBeNull();
     await user.selectOptions(screen.getByLabelText('Question'), 'COLLECT_INTENT_CHECK');
     await user.click(screen.getByRole('checkbox', { name: 'Hindi' }));
     await user.click(screen.getByRole('button', { name: 'Draft' }));

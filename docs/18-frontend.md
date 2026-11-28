@@ -41,13 +41,17 @@ ADR-0008. React 18 + TypeScript (strict) + Vite, served as static files by the a
 | `/admin` | Admin | `admin` | users, datasets, sensing training, demo story runner, demo reset, jobs |
 
 **Question bank review (#110):** `/kb/questions` lists `GET /question-bank/variants?status=PENDING_REVIEW`
-oldest first, one card per draft: the probe and language, an "AI-drafted" badge for the
+oldest first, 100 at a time with "Load more" (`next_cursor`), one card per draft: the probe and language, an "AI-drafted" badge for the
 model's drafts, and the ACTIVE KB's English original (text and options) beside the draft, each
 text marked with its `lang`. An FDE approves, edits the question then approves, or rejects each
-one (`POST …/review`); a refused review (409, 422) shows the problem on its card. "Draft new
-variants" picks a question probe and languages and starts `LLM_QUESTION_VARIANTS`; the drafts
-appear when the job ends (`job.updated` invalidates `['question-bank']`). "Approve batch" counts
-the approved variants not yet in a KB version and makes the CANDIDATE, named in its result.
+one (`POST …/review`); Edit is disabled while a review is pending. A refused review (409, 422)
+shows the problem on its card, and the queue isn't refreshed until the reviewer presses "Refresh
+the queue", so the message doesn't vanish with the card. "Draft new variants" picks one of the
+ACTIVE KB's question probes (its sources with `question: true`) and languages and starts
+`LLM_QUESTION_VARIANTS`; the drafts appear when the job ends (`job.updated` invalidates
+`['question-bank']`). "Approve batch" counts what the server says the batch would take
+(`status=APPROVED&included=false`, "more than N" when there's a next page) and makes the
+CANDIDATE, named in its result.
 Everyone with `view` reads the queue; the controls render only with `fde`.
 
 **M4 case stub (#97):** `/cases` lists the first page of `GET /cases`, soonest SLA first: the SLA

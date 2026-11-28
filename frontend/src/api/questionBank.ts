@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 import { apiFetch, getJson } from './client';
 import type {
@@ -14,15 +14,24 @@ import type {
 /** The question bank review's queries share this key, so every action refreshes them. */
 export const QUESTION_BANK_KEY = ['question-bank'] as const;
 
-/** One page of the review queue: oldest first, as the reviewers work through it. */
+/** One page of a list: oldest first, as the reviewers work through it. */
 export const VARIANT_PAGE_SIZE = 100;
 
-/** `GET /question-bank/variants` (docs/16 "KB"): each one beside the English original. */
-export function useVariants(status: VariantStatus) {
-  const params = new URLSearchParams({ status, limit: String(VARIANT_PAGE_SIZE) });
-  return useQuery({
-    queryKey: [...QUESTION_BANK_KEY, 'variants', status],
-    queryFn: () => getJson<QuestionVariantPage>(`/question-bank/variants?${params.toString()}`),
+/**
+ * `GET /question-bank/variants` (docs/16 "KB"), each one beside the English original, a page at
+ * a time. `included: false` with `APPROVED` is what "Approve batch" would take.
+ */
+export function useVariants(status: VariantStatus, included?: boolean) {
+  return useInfiniteQuery({
+    queryKey: [...QUESTION_BANK_KEY, 'variants', status, included ?? null],
+    queryFn: ({ pageParam }) => {
+      const params = new URLSearchParams({ status, limit: String(VARIANT_PAGE_SIZE) });
+      if (included !== undefined) params.set('included', String(included));
+      if (pageParam) params.set('cursor', pageParam);
+      return getJson<QuestionVariantPage>(`/question-bank/variants?${params.toString()}`);
+    },
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.next_cursor ?? undefined,
   });
 }
 
@@ -34,14 +43,26 @@ async function post<T>(path: string, body: unknown, idempotent: boolean): Promis
   return (await response.json()) as T;
 }
 
-function useBankMutation<I, O>(run: (input: I) => Promise<O>) {
+/** Refreshes the lists after the action. ``refreshOnError: false`` leaves them as they were, so
+ * a refused review's message stays on its card until the reviewer refreshes. */
+function useBankMutation<I, O>(run: (input: I) => Promise<O>, refreshOnError = true) {
   const client = useQueryClient();
+  const refresh = () => {
+    void client.invalidateQueries({ queryKey: QUESTION_BANK_KEY });
+  };
   return useMutation({
     mutationFn: run,
-    onSettled: () => {
-      void client.invalidateQueries({ queryKey: QUESTION_BANK_KEY });
-    },
+    onSuccess: refresh,
+    onError: refreshOnError ? refresh : undefined,
   });
+}
+
+/** Refreshes every question bank list, e.g. after a refused review. */
+export function useRefreshQuestionBank() {
+  const client = useQueryClient();
+  return () => {
+    void client.invalidateQueries({ queryKey: QUESTION_BANK_KEY });
+  };
 }
 
 /** `POST /question-bank/generate`: an `LLM_QUESTION_VARIANTS` job; drafts arrive as it ends. */
@@ -53,8 +74,10 @@ export function useGenerateVariants() {
 
 /** `POST /question-bank/variants/{id}/review`: 409 once someone else reviewed it. */
 export function useReviewVariant() {
-  return useBankMutation(({ id, ...body }: ReviewRequest & { id: string }) =>
-    post<QuestionVariantView>(`/question-bank/variants/${id}/review`, body, false),
+  return useBankMutation(
+    ({ id, ...body }: ReviewRequest & { id: string }) =>
+      post<QuestionVariantView>(`/question-bank/variants/${id}/review`, body, false),
+    false,
   );
 }
 

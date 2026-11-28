@@ -1,8 +1,10 @@
 import { useState } from 'react';
 
+import { useKbContent, useKbVersions } from '../api/kb';
 import {
   useApproveBatch,
   useGenerateVariants,
+  useRefreshQuestionBank,
   useReviewVariant,
   useVariants,
 } from '../api/questionBank';
@@ -27,13 +29,16 @@ const SECONDARY =
   'rounded-full border border-control px-4 py-1.5 text-[13px] text-soft transition-colors hover:border-soft hover:text-ink disabled:opacity-50';
 const MAX_CHARS = 300;
 
-/** The question probes KB v1 asks (docs/07 §9). */
-export const QUESTION_PROBES = [
-  'PURPOSE_QUESTION',
-  'SPELL_BREAKER_DIGITAL_ARREST',
-  'SPELL_BREAKER_INVESTMENT',
-  'COLLECT_INTENT_CHECK',
-] as const;
+/** The question probes of the ACTIVE KB version: the sources the customer answers (docs/07 §9). */
+function useQuestionProbes() {
+  const versions = useKbVersions();
+  const active = versions.data?.items.find((v) => v.status === 'ACTIVE')?.id;
+  const kb = useKbContent(active);
+  const probes = (kb.data?.content.sources ?? [])
+    .filter((src) => src.question !== null)
+    .map((src) => src.key);
+  return { probes, error: versions.error ?? kb.error };
+}
 
 export const LANGUAGES = [
   { code: 'hi', name: 'Hindi' },
@@ -70,7 +75,9 @@ export function QuestionBankPage() {
 
 function Draft() {
   const generate = useGenerateVariants();
-  const [probe, setProbe] = useState<string>(QUESTION_PROBES[0]);
+  const questions = useQuestionProbes();
+  const [chosen, setProbe] = useState<string | null>(null);
+  const probe = chosen ?? questions.probes[0] ?? '';
   const [languages, setLanguages] = useState<ReadonlySet<LanguageCode>>(new Set(['te']));
   return (
     <div className="mt-6 rounded-md bg-surface p-6">
@@ -90,7 +97,7 @@ function Draft() {
             setProbe(e.target.value);
           }}
         >
-          {QUESTION_PROBES.map((p) => (
+          {questions.probes.map((p) => (
             <option key={p} value={p}>
               {keyText(p)}
             </option>
@@ -117,7 +124,7 @@ function Draft() {
         <button
           type="button"
           className={PRIMARY}
-          disabled={generate.isPending || languages.size === 0}
+          disabled={generate.isPending || languages.size === 0 || probe === ''}
           onClick={() => {
             generate.mutate({ probe_key: probe, languages: [...languages] });
           }}
@@ -125,6 +132,11 @@ function Draft() {
           Draft
         </button>
       </div>
+      {questions.error && (
+        <div className="mt-3">
+          <ProblemAlert error={questions.error} title="Could not load the questions" />
+        </div>
+      )}
       {generate.isError && (
         <div className="mt-3">
           <ProblemAlert error={generate.error} title="Could not start the drafting" />
@@ -141,7 +153,7 @@ function Draft() {
 
 function Queue() {
   const pending = useVariants('PENDING_REVIEW');
-  const items = pending.data?.items ?? [];
+  const items = pending.data?.pages.flatMap((p) => p.items) ?? [];
   return (
     <div className="mt-6">
       <h2 className="text-[20px] text-muted">Waiting for review</h2>
@@ -161,6 +173,18 @@ function Queue() {
           </li>
         ))}
       </ul>
+      {pending.hasNextPage && (
+        <button
+          type="button"
+          className={`mt-4 ${SECONDARY}`}
+          disabled={pending.isFetchingNextPage}
+          onClick={() => {
+            void pending.fetchNextPage();
+          }}
+        >
+          {pending.isFetchingNextPage ? 'Loading…' : 'Load more'}
+        </button>
+      )}
     </div>
   );
 }
@@ -179,6 +203,7 @@ function OptionList({ options }: { options: QuestionVariantView['options'] }) {
 
 function VariantCard({ variant }: { variant: QuestionVariantView }) {
   const review = useReviewVariant();
+  const refresh = useRefreshQuestionBank();
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(variant.text);
   const titleId = `variant-${variant.id}`;
@@ -217,6 +242,7 @@ function VariantCard({ variant }: { variant: QuestionVariantView }) {
               </label>
               <textarea
                 id={`edit-${variant.id}`}
+                disabled={review.isPending}
                 lang={variant.language}
                 className="mt-1 w-full rounded-md border border-control bg-raised p-2 text-[14px]"
                 rows={3}
@@ -255,6 +281,7 @@ function VariantCard({ variant }: { variant: QuestionVariantView }) {
             <button
               type="button"
               className={SECONDARY}
+              disabled={review.isPending}
               onClick={() => {
                 setEditing(true);
               }}
@@ -276,7 +303,11 @@ function VariantCard({ variant }: { variant: QuestionVariantView }) {
       </RoleGate>
       {review.isError && (
         <div className="mt-3">
+          {/* The lists are not refreshed on a refusal, so this stays until the reviewer does. */}
           <ProblemAlert error={review.error} title="Could not record the review" />
+          <button type="button" className={`mt-2 ${SECONDARY}`} onClick={refresh}>
+            Refresh the queue
+          </button>
         </div>
       )}
     </article>
@@ -284,16 +315,20 @@ function VariantCard({ variant }: { variant: QuestionVariantView }) {
 }
 
 function Batch() {
-  const approved = useVariants('APPROVED');
+  // What the batch would take, counted by the server (`included=false`), not page 1 filtered here.
+  const approved = useVariants('APPROVED', false);
   const batch = useApproveBatch();
-  const waiting = (approved.data?.items ?? []).filter((v) => v.included_in_kb_version === null);
+  const waiting = approved.data?.pages.flatMap((p) => p.items) ?? [];
+  const more = approved.hasNextPage;
   return (
     <div className="mt-8 rounded-md bg-surface p-6">
       <h2 className="text-[16px] text-ink">Approve batch</h2>
       <p className="mt-1 text-[12px] text-muted">
-        {waiting.length === 1
-          ? '1 approved variant is waiting for a KB version.'
-          : `${String(waiting.length)} approved variants are waiting for a KB version.`}{' '}
+        {more
+          ? `More than ${String(waiting.length)} approved variants are waiting for a KB version.`
+          : waiting.length === 1
+            ? '1 approved variant is waiting for a KB version.'
+            : `${String(waiting.length)} approved variants are waiting for a KB version.`}{' '}
         The batch becomes a candidate version, to be promoted on the KB page.
       </p>
       <button
