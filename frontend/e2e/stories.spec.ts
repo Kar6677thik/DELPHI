@@ -1,5 +1,6 @@
 import { type APIRequestContext, expect, type Page, test } from '@playwright/test';
 
+import { type Job, POLL_MS, runJob } from './demo';
 import { ADMIN, ADMIN_PASSWORD, signIn, writeHeaders } from './session';
 
 // The journeys that need data (docs/21 §4), in order: the admin seeds `test` with the personas
@@ -14,32 +15,8 @@ const JOB_TIMEOUT_MS = 120_000;
 const CASE_WAIT_MS = 60_000; // S-1 autoplay opens its case in about 20 s
 const CASE_ATTEMPTS = 3;
 
-interface Job {
-  id: string;
-  status: string;
-  result: Record<string, unknown> | null;
-  error: string | null;
-}
-
-async function job(request: APIRequestContext, id: string): Promise<Job> {
-  let found: Job | undefined;
-  await expect
-    .poll(
-      async () => {
-        found = (await (await request.get(`/api/v1/jobs/${id}`)).json()) as Job;
-        return found.status;
-      },
-      { timeout: JOB_TIMEOUT_MS, message: `job ${id}` },
-    )
-    .toMatch(/^(SUCCEEDED|FAILED)$/);
-  expect(found?.status, found?.error ?? '').toBe('SUCCEEDED');
-  return found as Job;
-}
-
 async function post(page: Page, baseURL: string | undefined, path: string, data: object) {
-  const response = await page.request.post(path, { headers: writeHeaders(baseURL), data });
-  expect(response.status(), `${path}: ${await response.text()}`).toBe(202);
-  return job(page.request, ((await response.json()) as Job).id);
+  return runJob(page, baseURL, path, data);
 }
 
 async function caseIds(request: APIRequestContext): Promise<string[]> {
@@ -93,7 +70,11 @@ test.beforeAll(async ({ browser, baseURL }) => {
         };
         return s.dataset_ready && s.models_ready;
       },
-      { timeout: JOB_TIMEOUT_MS, message: 'the dataset and the sensing models are ready' },
+      {
+        timeout: JOB_TIMEOUT_MS,
+        intervals: [POLL_MS],
+        message: 'the dataset and the sensing models are ready',
+      },
     )
     .toBe(true);
   const created = await page.request.post('/api/v1/admin/users', {
