@@ -20,6 +20,7 @@ import asyncio
 import base64
 import binascii
 import json
+from dataclasses import replace
 from datetime import datetime
 from enum import StrEnum
 from http import HTTPStatus
@@ -56,6 +57,7 @@ from delphi.sim.api import (
     PhoneTelemetry,
     initiate_payment,
     refuse_during_reset,
+    story_of_job,
 )
 
 router = APIRouter(prefix=API_PREFIX, tags=["guardian"])
@@ -90,6 +92,8 @@ class PriorView(BaseModel):
     anomaly_percentile: float | None
     open_mass: float | None
     top_features: list[dict[str, Any]]
+    # MODEL (the sensing layer) or STORY_SCRIPT (a demo story's scripted prior, #291)
+    source: Literal["MODEL", "STORY_SCRIPT"]
 
 
 class Baselines(BaseModel):
@@ -327,6 +331,7 @@ def _view(platform: Platform, session_id: UUID) -> GuardianSessionView:
             anomaly_percentile=row.anomaly_percentile,
             open_mass=row.open_mass,
             top_features=[dict(f) for f in row.top_features],
+            source="STORY_SCRIPT" if row.prior_source == "STORY_SCRIPT" else "MODEL",
         ),
         risk_by_decision=(
             {d: round(v) for d, v in row.risk_by_decision.items()} if row.risk_by_decision else None
@@ -401,6 +406,10 @@ class PaymentIn(BaseModel):
     telemetry: TelemetryIn | None = None
     # A demo story's scripted IST "HH:MM" (docs/14 §10): the DEMO_STORY job's result carries it.
     story_local_time: Annotated[str, Field(pattern=STORY_LOCAL_TIME)] | None = None
+    # The interactive DEMO_STORY job that staged this payment (docs/14 §10, #291): the server
+    # checks the payment against it and then plays the job's story (its scripted prior). A
+    # client cannot name a story itself.
+    story_job_id: UUID | None = None
 
     @model_validator(mode="after")
     def _one_payee(self) -> PaymentIn:
@@ -486,20 +495,20 @@ def _initiate(platform: Platform, payment: PaymentIn) -> UUID:
         if active_version(session) is None:
             raise DelphiError("No ACTIVE KB version.", code=ProblemCode.NOT_INITIALISED)
         refuse_during_reset(session)  # a payment now would race the reset's deletes
-        return initiate_payment(
-            session,
-            PaymentRequest(
-                payer_account_id=payment.payer_account_id,
-                amount_paise=payment.amount_paise,
-                channel=payment.channel,
-                device_id=payment.device_id,
-                payee_account_id=payment.payee_account_id,
-                payee_vpa=payment.new_payee.vpa if payment.new_payee else None,
-                telemetry=PhoneTelemetry(**t.model_dump()) if t else None,
-                story_local_time=payment.story_local_time,
-            ),
-            platform.clock.now(),
+        request = PaymentRequest(
+            payer_account_id=payment.payer_account_id,
+            amount_paise=payment.amount_paise,
+            channel=payment.channel,
+            device_id=payment.device_id,
+            payee_account_id=payment.payee_account_id,
+            payee_vpa=payment.new_payee.vpa if payment.new_payee else None,
+            telemetry=PhoneTelemetry(**t.model_dump()) if t else None,
+            story_local_time=payment.story_local_time,
         )
+        if payment.story_job_id is not None:  # the server, not the client, sets the story
+            story = story_of_job(session, payment.story_job_id, request)
+            request = replace(request, story=story)
+        return initiate_payment(session, request, platform.clock.now())
 
 
 def _with_etag(reply: JSONResponse) -> JSONResponse:

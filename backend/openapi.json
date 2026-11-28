@@ -5331,6 +5331,18 @@
               }
             ],
             "title": "Story Local Time"
+          },
+          "story_job_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Story Job Id"
           }
         },
         "additionalProperties": false,
@@ -5688,6 +5700,14 @@
             },
             "type": "array",
             "title": "Top Features"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "MODEL",
+              "STORY_SCRIPT"
+            ],
+            "title": "Source"
           }
         },
         "type": "object",
@@ -5696,7 +5716,8 @@
           "p_model",
           "anomaly_percentile",
           "open_mass",
-          "top_features"
+          "top_features",
+          "source"
         ],
         "title": "PriorView"
       },

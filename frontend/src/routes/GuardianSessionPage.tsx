@@ -20,7 +20,12 @@ import { BeliefView, hasWebGL } from '../theatre/BeliefView';
 /** The prior, then the posterior after each completed observation (docs/08 §6). */
 function steps(session: GuardianSessionView) {
   const out: { label: string; probs: Record<string, number> }[] = [];
-  if (session.prior.probs) out.push({ label: 'Prior', probs: session.prior.probs });
+  if (session.prior.probs) {
+    // A demo story's session starts from its scripted prior (docs/06 §17, #291).
+    const label =
+      session.prior.source === 'STORY_SCRIPT' ? 'Prior (scripted for the story)' : 'Prior';
+    out.push({ label, probs: session.prior.probs });
+  }
   for (const run of session.probe_runs) {
     if (run.posterior_after) {
       const outcome = run.outcome ? `: ${humanise(run.outcome)}` : '';
