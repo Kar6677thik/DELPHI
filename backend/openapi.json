@@ -2149,6 +2149,118 @@
         }
       }
     },
+    "/api/v1/scout/runs": {
+      "post": {
+        "tags": [
+          "scout"
+        ],
+        "summary": "Request Run",
+        "description": "docs/11 §2: a manual Scout run, as a `RUN_SCOUT` job (docs/16 \"→ job\").",
+        "operationId": "request_run_api_v1_scout_runs_post",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunRequested"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An RFC 9457 problem (docs/16 §1)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/scout/clusters": {
+      "get": {
+        "tags": [
+          "scout"
+        ],
+        "summary": "Read Clusters",
+        "description": "The clusters of every run, newest first, each with its latest typology draft; docs/16\nkeyset paging (``limit`` ≤ 200, ``cursor``), on the ``(created_at, id)`` index.",
+        "operationId": "read_clusters_api_v1_scout_clusters_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An RFC 9457 problem (docs/16 §1)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/guardian/sessions": {
       "get": {
         "tags": [
@@ -3982,6 +4094,125 @@
           "answered_at_ms"
         ],
         "title": "ClientSignalsIn"
+      },
+      "ClusterPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ClusterView"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "ClusterPage"
+      },
+      "ClusterView": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "run_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Run Id"
+          },
+          "size": {
+            "type": "integer",
+            "title": "Size"
+          },
+          "member_refs": {
+            "items": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Member Refs"
+          },
+          "distinguishing_features": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Distinguishing Features"
+          },
+          "outcome_profile": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Outcome Profile"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "draft_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Draft Id"
+          },
+          "draft_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Draft Status"
+          },
+          "suggested_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Suggested Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "run_id",
+          "size",
+          "member_refs",
+          "distinguishing_features",
+          "outcome_profile",
+          "created_at",
+          "draft_id",
+          "draft_status",
+          "suggested_name"
+        ],
+        "title": "ClusterView"
       },
       "CoolingOffAnswer": {
         "properties": {
@@ -6733,6 +6964,25 @@
           "ADMIN"
         ],
         "title": "Role"
+      },
+      "RunRequested": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Job Id"
+          },
+          "created": {
+            "type": "boolean",
+            "title": "Created"
+          }
+        },
+        "type": "object",
+        "required": [
+          "job_id",
+          "created"
+        ],
+        "title": "RunRequested"
       },
       "SessionMode": {
         "type": "string",
