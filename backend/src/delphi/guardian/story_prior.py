@@ -35,6 +35,11 @@ class StoryPrior:
         self._inner = inner
         self._scripted = {story: dict(p0) for story, p0 in scripted.items()}
 
+    @property
+    def inner(self) -> PriorPort:
+        """The prior every payment without a scripted story gets (the sensing inference)."""
+        return self._inner
+
     def prior_inputs(self, payment: bank.PaymentView) -> PriorInputs:
         p0 = self._scripted.get(payment.story or "")
         if p0 is None:
