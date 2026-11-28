@@ -184,6 +184,9 @@ typology_drafts(id, cluster_id null, status, revision int, spec jsonb, last_edit
                 editors uuid[] (every user who ever saved a revision),
                 backtest_report jsonb null, backtested_revision null, shadow_kb_version_id null,
                 approved_by null, rejected_reason null, created_at, updated_at, version)
+       -- status CANDIDATE|DRAFT|BACKTESTED|IN_SHADOW|PROMOTED|REJECTED|SUPERSEDED (a CHECK)
+scout_queue_dismissals(subject_type (GUARDIAN_SESSION|CASE), subject_id, reason, dismissed_by,
+                       dismissed_at, primary key(subject_type, subject_id))   -- #117, docs/11 §1
 shadow_evaluations(id bigint identity, kb_version_id, subject_type, subject_id, posterior jsonb,
                    decision, would_select_first null, agrees bool, at)
 
@@ -209,7 +212,7 @@ jobs(id, type, status (QUEUED|RUNNING|SUCCEEDED|FAILED|CANCELLED), params jsonb,
      error text null, progress real, attempts int, max_attempts int default 3,
      idempotency_key unique, locked_by null, locked_until null, run_after timestamptz,
      created_by null, created_at, started_at null, finished_at null)
-   idx (status, run_after)
+   idx (status, run_after); idx (type, finished_at) (migration 0020, the Scout auto-trigger's back-off)
 outbox_events(id bigint identity, type, entity_id, payload jsonb, at)   idx (at)
 ops_backup_runs(id bigint identity, finished_at, file_name, size_bytes, status)  -- written by the backup CronJob
 llm_calls(id, purpose, provider, model null, prompt_version, request_redacted jsonb null,
