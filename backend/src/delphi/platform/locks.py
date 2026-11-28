@@ -25,6 +25,7 @@ MULE_SWEEP_LOCK_KEY = 54  # rescoring accounts into account_scores (docs/13 §6)
 LIEN_ACCOUNT_LOCK_CLASS = 52
 # 53 is the campaign recompute's (#288), 54 MULE_SWEEP's (#252).
 SCOUT_RUN_LOCK_KEY = 55  # one RUN_SCOUT at a time (docs/11 §2)
+CHASE_RETRACE_LOCK_KEY = 56  # one CHASE_RETRACE re-trace batch at a time (docs/10 §5 step 5)
 
 ALL_LOCK_KEYS: dict[str, int] = {
     "audit": AUDIT_LOCK_KEY,
@@ -39,4 +40,5 @@ ALL_LOCK_KEYS: dict[str, int] = {
     "demo_reset": DEMO_RESET_LOCK_KEY,
     "mule_sweep": MULE_SWEEP_LOCK_KEY,
     "scout_run": SCOUT_RUN_LOCK_KEY,
+    "chase_retrace": CHASE_RETRACE_LOCK_KEY,
 }

@@ -8,6 +8,8 @@ from delphi.chase.operations import (
     TracedOnly,
     approve_liens,
     create_operation,
+    placed_lien_totals,
+    retrace_due,
 )
 from delphi.chase.tables import cfcfrms_tickets, chase_candidates, chase_operations, liens
 from delphi.chase.tickets import close_operation, release_lien
@@ -23,5 +25,7 @@ __all__ = [
     "close_operation",
     "create_operation",
     "liens",
+    "placed_lien_totals",
     "release_lien",
+    "retrace_due",
 ]

@@ -26,9 +26,11 @@ from delphi.platform.locks import DEMO_RESET_LOCK_KEY
 from delphi.platform.tables import jobs
 from delphi.platform.worker import run_job
 from delphi.sim.bank import accounts, ledger_entries, sim_schedule
+from delphi.sim.catalog import datasets
 from delphi.sim.delivery import deliver_labels
 from delphi.sim.jobs import register_sim_jobs
 from delphi.sim.reset import CASCADED_TABLES, KEPT_TABLES, RESET_TABLES, register_reset_job
+from delphi.sim.tick import advance_transfers
 from delphi.sim.truth import label_schedule
 
 from ._db import engine_as, upgrade
@@ -291,6 +293,33 @@ def test_the_reset_restores_the_seeded_bank_and_s2_runs_again(
         assert _decided(seeded, UUID(again["result"]["session_id"]))["decision"] == "RELEASE"
     finally:
         guardian.stop()
+
+
+def test_live_transfers_due_before_the_seed_are_reset_too(seeded: Bank) -> None:
+    """#114: SIM_TICK executes mule transfers that fell due before the seed finished. Their
+    payments are created after the marker, but their ledger entries carry the due time, so the
+    reset must delete those entries with their payments and restore the balances."""
+    before = _state(seeded)
+    seeded.clock.advance(timedelta(minutes=1))
+    with seeded.sim.begin() as conn:
+        moved = advance_transfers(conn, seeded.clock.now(), held=lambda _conn, _ids: {})
+    executed = [m.schedule_id for m in moved if m.moved_paise > 0]
+    assert executed
+    with seeded.owner.connect() as conn:
+        marker = conn.execute(select(datasets.c.seed_completed_at)).scalar_one()
+        stamped_before = conn.execute(
+            select(func.count())
+            .select_from(ledger_entries)
+            .where(ledger_entries.c.at <= marker, ledger_entries.c.payment_id.in_(executed))
+        ).scalar_one()
+    assert stamped_before > 0  # the case that broke the reset
+    assert _state(seeded) != before
+
+    seeded.clock.advance(timedelta(minutes=1))
+    job = _reset(seeded)
+    assert job["status"] == JobStatus.SUCCEEDED, job["error"]
+    assert _state(seeded) == before
+    assert job["result"]["schedule_rows_due_again"] == len(moved)
 
 
 def test_the_reset_drops_the_worker_sessions_it_deletes(seeded: Bank, kb: KnowledgeBase) -> None:

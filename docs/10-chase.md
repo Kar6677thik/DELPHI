@@ -167,8 +167,23 @@ stable. The 30 days, the 80% and the 3-credit minimum are the definition above, 
   request it was sent, whatever happens to the operation afterwards. A lien it places stays
   under periodic review and is released with the release endpoint.
 - **Time:** all latencies run in real time until the DEMO time mode is wired.
-- **Bank effect:** the bank does not yet hold liened money back from later debits; that is #114's
-  live movement.
+- **Re-trace and live movement (#114):**
+  - `CHASE_RETRACE` re-traces each OPEN operation once `retrace_interval_min` (its KB version's)
+    has passed since its last trace (`retrace_due`). New candidates are added, existing ones are
+    refreshed, and liens are untouched. The trace uses the dataset profile's visibility lag (§2).
+  - **Bounded after #263:** the due operations are picked in SQL (the interval per KB version),
+    least recently traced first, `FOR UPDATE SKIP LOCKED`, at most
+    `DELPHI_CHASE_RETRACE_BATCH` (10) per transaction under a 30 s statement timeout and 16 MB
+    `work_mem`, and at most `DELPHI_CHASE_RETRACE_MAX_PER_RUN` (50) per run; the next run
+    carries on. Each batch takes advisory lock 56 and the run stops while another holds it.
+  - The re-trace refreshes the operation's `metrics` (§6, `chase.metrics`), from each lien's
+    `taint_at_approval_paise`, since the re-trace overwrites the candidates' taint.
+  - `SIM_TICK` step 1 (`sim.tick`, registered when `DELPHI_SIMULATION_ENABLED`) executes the
+    ring's due transfers. A mule moves only what its balance holds beyond its PLACED liens (doc 14
+    §9), so a liened amount stays put. The tick takes the payers' lien-account locks (class 52)
+    before reading their liens, so an approval racing it waits for it.
+- **Bank effect:** the simulated bank holds liened money back from the ring's live transfers
+  (`SIM_TICK`, above). Other debits (a customer's own payments) are not held back yet.
 
 ## 6. Metrics (per operation and aggregated)
 

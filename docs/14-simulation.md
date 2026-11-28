@@ -548,6 +548,14 @@ The worker runs a `SIM_TICK` job every 10 s (wall clock). It:
    Guardian with `SimCustomerChannel` (runner `WORKER`), so the monitor always shows traffic and
    shadow mode accumulates sessions.
 
+**Implementation of step 1 (#114).** `delphi.sim.tick.advance_transfers`, as `delphi_sim`, in
+one transaction: the due TRANSFER rows, oldest first, 500 at a time (`FOR UPDATE SKIP
+LOCKED`). Each becomes an EXECUTED `SIM_LIVE` payment (its id is the row's, so a redo is exact)
+with both ledger entries at the due time, and the row is marked done. A payer's PLACED liens are
+honoured (§9): it moves `min(amount, balance − liened)`, nothing at 0, and tries once. The
+payers' lien-account locks (doc 10 §5) are taken first. `SIM_TICK` is registered whenever the
+simulator is enabled; step 2 (background payments) is not here yet.
+
 The CFCFRMS tickets (§9) are settled by `CHASE_RETRACE`, not here: it acknowledges the tickets
 whose simulated latency has elapsed and expires overdue ones (doc 10 §5, #113).
 
@@ -593,7 +601,7 @@ while the worker was down) is cleared over several runs.
 | FRI (DoT) | Phone risk per number: numbers used by fraud rings → VERY_HIGH 0.35 / HIGH-MEDIUM 0.35 / LOW 0.30; genuine numbers → VERY_HIGH 0.005 / MEDIUM-HIGH 0.03 |
 | Telco call status | From session telemetry |
 | CFCFRMS | Ticket ack latency log-normal, median 20 min (× time scale), 10% never acknowledged within 2 h |
-| External banks | Hold ledgers in the same database. Lien placement is honoured if the funds are present at acknowledgement |
+| External banks | Hold ledgers in the same database. Lien placement is honoured if the funds are present at acknowledgement, and a placed lien holds its amount back from the ring's live transfers (§8, #114) |
 | Customer outreach call | Samples `CUSTOMER_OUTREACH_CALL` from the response model (a perturbation of the KB row, as in §5.2) |
 
 `delphi.sim.external` implements these, with numbers in `generator.yaml`
@@ -673,8 +681,10 @@ Details where the scripts are silent:
     the frozen response models. A test checks that every table is in one list or the other.
     Mule scores keep any rescoring done after the seed: `MULE_SWEEP` refreshes them.
   - **The persona state.** Rows from before the marker that the demo changed are put back:
-    account balances lose the deltas of the deleted ledger entries (one `DELETE … RETURNING`),
-    and every seeded schedule row done after the marker is due again, even one that was due
+    account balances lose the deltas of the deleted ledger entries (one `DELETE … RETURNING`):
+    those after the marker, and those of every payment the reset deletes. A live mule transfer
+    that fell due before the marker is created after it while its ledger entries carry its due
+    time (#114), so both go together. And every seeded schedule row done after the marker is due again, even one that was due
     before it, so a transfer whose payment the reset deletes runs again instead of vanishing.
     Not restored yet: account statuses (Chase's freezes), and the status of a seeded payment
     decided after the marker (its ledger entries are reversed, its status stays). Nothing in the

@@ -19,16 +19,18 @@ live mule movement's (#114).
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Protocol
 from uuid import UUID
 
-from sqlalchemy import Text, cast, func, literal, select, text, update
+from sqlalchemy import Connection, Text, and_, cast, func, literal, or_, select, text, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from delphi.chase.ledger import CASH_OUT_CHANNEL, load_trace_inputs, visible_until
+from delphi.chase.metrics import LienFacts, operation_metrics
 from delphi.chase.tables import cfcfrms_tickets, chase_candidates, chase_operations, liens
 from delphi.chase.tracer import TraceResult, trace
 from delphi.kb.model import KnowledgeBase
@@ -428,3 +430,128 @@ def approve_liens(
         .values(version=op.version + 1)
     )
     return created
+
+
+def placed_lien_totals(conn: Connection, account_ids: Iterable[UUID]) -> dict[UUID, int]:
+    """Each account's liened amount: the sum of its PLACED liens (the simulator honours them,
+    docs/14 §9)."""
+    ids = list(account_ids)
+    if not ids:
+        return {}
+    lien = liens.c
+    rows = conn.execute(
+        select(lien.account_id, func.sum(lien.amount_paise))
+        .where(lien.account_id.in_(ids), lien.status == "PLACED")
+        .group_by(lien.account_id)
+    )
+    return {r[0]: int(r[1]) for r in rows}
+
+
+def current_metrics(session: Session, op: Any) -> dict[str, Any]:
+    """The operation's §6 metrics, from each lien's taint at approval: re-traces overwrite the
+    candidates' taint, so it can't come from there (#258 review)."""
+    lien = liens.c
+    rows = session.execute(
+        select(lien.amount_paise, lien.status, lien.placed_at, lien.taint_at_approval_paise).where(
+            lien.operation_id == op.id
+        )
+    ).all()
+    return dict(
+        operation_metrics(
+            reported_at=op.reported_at,
+            golden_hour_ends_at=op.golden_hour_ends_at,
+            reported_loss_paise=op.reported_loss_paise,
+            liens=[LienFacts(int(r[0]), r[1], r[2], int(r[3])) for r in rows],
+        )
+    )
+
+
+def due_for_retrace(session: Session, now: datetime, *, limit: int) -> list[Any]:
+    """The OPEN operations last traced ``retrace_interval_min`` (their KB version's) ago or more,
+    least recently traced first, at most ``limit``, locked; one another transaction holds is
+    skipped. The interval is applied in SQL, per KB version (there are few)."""
+    c = chase_operations.c
+    versions = session.execute(
+        select(c.kb_version_id).where(c.status == "OPEN").distinct()
+    ).scalars()
+    cutoffs = []
+    for version_id in versions:
+        version = get_version(session, version_id)
+        assert version is not None
+        interval = timedelta(minutes=version.kb.config.chase.retrace_interval_min)
+        cutoffs.append(and_(c.kb_version_id == version_id, c.last_traced_at <= now - interval))
+    if not cutoffs:
+        return []
+    return list(
+        session.execute(
+            select(chase_operations)
+            .where(c.status == "OPEN", or_(*cutoffs))
+            .order_by(c.last_traced_at, c.id)
+            .limit(limit)
+            .with_for_update(skip_locked=True)
+        ).all()
+    )
+
+
+def retrace_due(session: Session, clock: Clock, source: CandidateSource, *, limit: int) -> int:
+    """docs/10 §5 step 5: re-trace up to ``limit`` due OPEN operations (``due_for_retrace``), in
+    the caller's transaction, which ``bound_trace`` bounds. New candidates appear, existing ones
+    get their taint, balance and score now; liens are not changed. The operation's metrics are
+    refreshed. Their CHASE_UPDATED events are published together at the end. Returns how many
+    re-traced."""
+    now = clock.now()
+    bound_trace(session)
+    retraced: list[UUID] = []
+    for op in due_for_retrace(session, now, limit=limit):
+        version = get_version(session, op.kb_version_id)
+        assert version is not None
+        kb = version.kb
+        sources, moves = load_trace_inputs(
+            session.connection(),
+            list(op.source_payment_ids),
+            until=visible_until(now, visibility_lag(session, kb)),
+        )
+        traced = trace(
+            sources,
+            moves,
+            min_trace_paise=round(kb.config.chase.min_trace_inr * PAISE_PER_INR),
+            cash_out_channel=CASH_OUT_CHANNEL,
+        )
+        for n, c in enumerate(source.candidates(session, kb, traced, now)):
+            values = {
+                "hop": c.hop,
+                "taint_paise": c.taint_paise,
+                "balance_paise": c.balance_paise,
+                "p_present": c.p_present,
+                "p_mule": c.p_mule,
+                "erv_paise": c.erv_paise,
+                "wrongful_cost_paise": c.wrongful_cost_paise,
+                "net_paise": c.net_paise,
+                "rank": c.rank,
+                "recommended": c.recommended,
+                "traced_at": now,
+            }
+            session.execute(
+                pg_insert(chase_candidates)
+                .values(
+                    id=uuid7(unix_ms=int(now.timestamp() * 1000) + n + 1),
+                    operation_id=op.id,
+                    account_id=c.account_id,
+                    **values,
+                )
+                .on_conflict_do_update(index_elements=["operation_id", "account_id"], set_=values)
+            )
+        session.execute(
+            update(chase_operations)
+            .where(chase_operations.c.id == op.id)
+            .values(
+                last_traced_at=now, metrics=current_metrics(session, op), version=op.version + 1
+            )
+        )
+        retraced.append(op.id)
+    # Published after every trace, still in this transaction: `publish` holds the outbox lock
+    # until commit, so publishing per operation would make every other publisher wait through
+    # the rest of the batch's traces (#285, #258 review).
+    for op_id in retraced:
+        publish(session, EventType.CHASE_UPDATED, str(op_id), {"operation_id": str(op_id)})
+    return len(retraced)

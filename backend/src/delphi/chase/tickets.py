@@ -26,16 +26,23 @@ two; re-tracing open operations (step 5) joins it with the live mule movement (#
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timedelta
 from functools import cache
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import exists, select, update
+from sqlalchemy import exists, func, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
-from delphi.chase.operations import active_liens_paise, lock_lien_accounts
+from delphi.chase.operations import (
+    CandidateSource,
+    TracedOnly,
+    active_liens_paise,
+    current_metrics,
+    lock_lien_accounts,
+    retrace_due,
+)
 from delphi.chase.tables import cfcfrms_tickets, chase_operations, liens
 from delphi.kb.store import get_version
 from delphi.platform.audit import ActorType, record
@@ -43,6 +50,7 @@ from delphi.platform.clock import Clock
 from delphi.platform.errors import DelphiError, NotFoundError, ProblemCode
 from delphi.platform.events import EventType, publish
 from delphi.platform.jobs import JobContext
+from delphi.platform.locks import CHASE_RETRACE_LOCK_KEY
 from delphi.sim import api as bank
 
 AckDelay = Callable[[str], timedelta | None]
@@ -170,10 +178,12 @@ def process_tickets(
 
 
 def _close(session: Session, clock: Clock, op: Any, *, by: UUID | None, reason: str) -> None:
+    """A closed operation is never re-traced, so its metrics are computed here, from its liens
+    as they are now: a ticket acknowledged in the same transaction counts (#258 review)."""
     session.execute(
         update(chase_operations)
         .where(chase_operations.c.id == op.id)
-        .values(status="CLOSED", version=op.version + 1)
+        .values(status="CLOSED", metrics=current_metrics(session, op), version=op.version + 1)
     )
     record(
         session,
@@ -264,15 +274,40 @@ def release_lien(
 
 @dataclass(frozen=True, slots=True)
 class ChaseRetraceJob:
-    """``CHASE_RETRACE`` (docs/04 §5.4): settle due tickets, then close due operations."""
+    """``CHASE_RETRACE`` (docs/04 §5.4): settle due tickets, close due operations, then
+    re-trace the open ones whose interval has passed (#114)."""
 
     sessions: sessionmaker[Session]
     clock: Clock
     ack_delay: Callable[[Session], AckDelay | None]
     tickets_per_run: int
+    retrace_batch: int
+    retrace_max_per_run: int
     demo_time: bool = False
+    candidates: CandidateSource = field(default_factory=TracedOnly)
 
     def __call__(self, ctx: JobContext) -> Mapping[str, Any] | None:
+        counts = self._settle_and_close()
+        counts["retraced"] = 0
+        # Re-traces after #263: one transaction per batch of at most retrace_batch operations,
+        # bounded (bound_trace), under lock 56, which skips while another run holds it; at most
+        # retrace_max_per_run per run, the next run carrying on (#258 review).
+        while counts["retraced"] < self.retrace_max_per_run:
+            room = min(self.retrace_batch, self.retrace_max_per_run - counts["retraced"])
+            with self.sessions.begin() as session:
+                got = session.execute(
+                    select(func.pg_try_advisory_xact_lock(CHASE_RETRACE_LOCK_KEY))
+                ).scalar_one()
+                if not got:
+                    counts["retrace_skipped"] = "busy"
+                    break
+                done = retrace_due(session, self.clock, self.candidates, limit=room)
+            counts["retraced"] += done
+            if done < room:
+                break
+        return counts
+
+    def _settle_and_close(self) -> dict[str, Any]:
         with self.sessions.begin() as session:
             counts: dict[str, Any] = dict(
                 process_tickets(

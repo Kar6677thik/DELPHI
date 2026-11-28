@@ -26,6 +26,7 @@ from sqlalchemy import Engine, text
 
 from delphi.api.app import create_app
 from delphi.api.contract import OPENAPI_FILE, openapi_document
+from delphi.chase.api import placed_lien_totals
 from delphi.chase.jobs import register_chase_jobs
 from delphi.guardian.api import (
     LiveGuardian,
@@ -315,6 +316,8 @@ def worker_registry(
         sessions=platform.sessions,
         clock=platform.clock,
         tickets_per_run=settings.chase_tickets_per_run,
+        retrace_batch=settings.chase_retrace_batch,
+        retrace_max_per_run=settings.chase_retrace_max_per_run,
     )
     llm = LlmService(
         platform.sessions,
@@ -362,6 +365,8 @@ def worker_registry(
         kb=kb,
         allowed_profiles=settings.allowed_dataset_profiles,
         record_outreach=_outreach_recorder(platform),
+        # SIM_TICK moves the mule network only in a simulated deployment (docs/14 §8).
+        held=placed_lien_totals if settings.simulation_enabled else None,
     )
     service, free_pool = _guardian_service(platform, kb)
     customer = LiveCustomer(sim_engine, load_response_models(), kb.config.classifiers)

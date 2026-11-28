@@ -141,6 +141,10 @@ class Settings(BaseSettings):
     scout_failure_backoff_min: int = Field(default=60, ge=1, le=24 * 60)
     # CFCFRMS tickets CHASE_RETRACE settles per run, oldest sent first (docs/10 §5, #263).
     chase_tickets_per_run: int = Field(default=200, ge=1, le=10_000)
+    # Open operations CHASE_RETRACE re-traces per transaction and per run (docs/10 §5 step 5,
+    # bounded after #263): each re-trace reads the operation's ledger, so a batch is small.
+    chase_retrace_batch: int = Field(default=10, ge=1, le=200)
+    chase_retrace_max_per_run: int = Field(default=50, ge=1, le=2_000)
     # The ACCOUNT_REVIEW sweep (docs/09 §1, #109), bounded after #263: reviews opened per
     # transaction and per run, and how old a complaint may be and still open a review.
     review_sweep_batch: int = Field(default=25, ge=1, le=500)

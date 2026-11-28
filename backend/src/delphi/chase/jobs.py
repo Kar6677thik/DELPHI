@@ -15,9 +15,18 @@ def register_chase_jobs(
     sessions: sessionmaker[Session],
     clock: Clock,
     tickets_per_run: int,
+    retrace_batch: int,
+    retrace_max_per_run: int,
 ) -> None:
     # The latencies run in real time until the DEMO time mode is wired, as the Guardian's do.
     registry.register(
         JobType.CHASE_RETRACE,
-        ChaseRetraceJob(sessions, clock, simulated_ack_delay, tickets_per_run=tickets_per_run),
+        ChaseRetraceJob(
+            sessions,
+            clock,
+            simulated_ack_delay,
+            tickets_per_run=tickets_per_run,
+            retrace_batch=retrace_batch,
+            retrace_max_per_run=retrace_max_per_run,
+        ),
     )
