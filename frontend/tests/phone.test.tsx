@@ -512,7 +512,7 @@ describe('/phone demo stories', () => {
     const phone = screen.getByRole('region', { name: 'Customer’s phone' });
     await user.click(within(phone).getByRole('button', { name: /Pay/ }));
     expect(await screen.findByText(/Scripted prior: the demo story starts/)).toBeVisible();
-    expect(sent.payment).toMatchObject({ payment: { story: 'S1' } });
+    expect(sent.payment).toMatchObject({ payment: { story_job_id: JOB } });
   });
 
   it('clears the story for free play', async () => {
