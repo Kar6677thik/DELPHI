@@ -288,10 +288,16 @@ def _created_at(session: Session, ids: set[UUID]) -> dict[UUID, datetime]:
 
 
 def regroup(
-    session: Session, clock: Clock, loaded: Sequence[LoadedCase], *, window_days: float
+    session: Session,
+    clock: Clock,
+    loaded: Sequence[LoadedCase],
+    *,
+    window_days: float,
+    changed_out: set[UUID],
 ) -> dict[str, int]:
     """docs/05 §5: group ``loaded`` (a closed component) and save the campaigns, in the caller's
-    transaction (which holds the recompute lock). Returns counts of what changed."""
+    transaction (which holds the recompute lock). Returns counts of what changed, and adds the
+    changed campaigns to ``changed_out``: the caller publishes them once, as its last step."""
     now = clock.now()
     facts = [m.facts for m in loaded]
     members = groups(facts, window_days=window_days)
@@ -375,10 +381,7 @@ def regroup(
                 update(campaigns).where(c.id == campaign_id).values(**values, updated_at=now)
             )
             changed.add(campaign_id)
-    for campaign_id in sorted(changed, key=str):
-        publish(
-            session, EventType.CAMPAIGN_UPDATED, str(campaign_id), {"campaign_id": str(campaign_id)}
-        )
+    changed_out |= changed
     return {
         "cases": len(facts),
         "campaigns": len(members),
@@ -443,15 +446,24 @@ def run_batch(
             covered |= own
             groups.append(own)
     counts = dict.fromkeys(COUNT_KEYS, 0)
+    changed: set[UUID] = set()
     for group in groups:
         loaded = load_cases(session, group)
         record_entities(session, loaded)
-        for key, value in regroup(session, clock, loaded, window_days=window_days).items():
+        saved = regroup(session, clock, loaded, window_days=window_days, changed_out=changed)
+        for key, value in saved.items():
             counts[key] = counts.get(key, 0) + value
     last_at, last_case = batch[-1]
     session.execute(
         update(campaign_watermark).where(w.id == 1).values(at=last_at, case_id=last_case)
     )
+    # Last: `publish` holds the outbox lock until commit, so every other publisher would wait
+    # through the rest of the batch otherwise (docs/04 §5.5, #285).
+    for campaign_id in sorted(changed, key=str):
+        publish(
+            session, EventType.CAMPAIGN_UPDATED, str(campaign_id), {"campaign_id": str(campaign_id)}
+        )
+    counts["changed"] = len(changed)
     return counts | {"touched": len(batch), "component_cut": cuts}
 
 
