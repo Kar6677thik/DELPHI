@@ -302,6 +302,7 @@ to start, exit code 2, naming the variable, if one is missing or invalid.
 | `DELPHI_REVIEW_RETRY_BASE_S` / `DELPHI_REVIEW_RETRY_MAX_S` | `60` / `3600` | worker | doc 09 §1 (#290): a candidate whose review fails to open waits the base, doubling with each failure, at most the max |
 | `DELPHI_MULE_SWEEP_BATCH` / `DELPHI_MULE_SWEEP_MAX_PER_RUN` | `200` / `2000` | worker | doc 13 §6: accounts rescored per transaction and per `MULE_SWEEP` run |
 | `DELPHI_YIELD_RECENT_DAYS` / `DELPHI_YIELD_BASELINE_DAYS` / `DELPHI_YIELD_DRIFT_RATIO` / `DELPHI_YIELD_MIN_RECENT_COUNT` / `DELPHI_YIELD_MIN_BASELINE_COUNT` | `7` / `28` / `0.7` / `30` / `30` | worker | doc 12 §5 |
+| `DELPHI_CHASE_TICKETS_PER_RUN` | `200` | worker | doc 10 §5: CFCFRMS tickets `CHASE_RETRACE` settles per run |
 | `DELPHI_SECRET_KEY` | unset | api | Secret `delphi-app` (`openssl rand -hex 32`; 32 characters or more). Keys the Guardian's OTP digest (doc 08 §4). Required in `demo` wherever the Guardian runs; `dev` and `test` fall back to a fixed development key |
 | `DELPHI_PUBLIC_ORIGIN` | unset | api | ConfigMap: `https://delphi.karthiksurkanti.in`. The Origin that mutating requests must carry (CSRF, doc 19 §4). Unset in development: the request's own origin |
 | `DELPHI_CLIENT_IP_HEADER` | unset | api | ConfigMap: `CF-Connecting-IP`. The header with the real client IP behind the tunnel, used for the login lockout and audit. Safe because only the node (the host tunnel) can reach the api pod (§4 NetworkPolicies) |
