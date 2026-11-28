@@ -109,6 +109,16 @@ def test_devices_and_payees(demo: Population) -> None:
     assert all(p.added_at < demo.history_start for p in demo.payees)  # established
 
 
+def test_payees_are_saved_after_both_accounts_open(demo: Population) -> None:
+    opened = {a.id: a.opened_at for a in demo.accounts}
+    own = {a.customer_id: a.opened_at for a in demo.accounts if a.customer_id is not None}
+    for p in demo.payees:
+        # Nobody saves a payee before their own account, or the payee's account, exists.
+        assert p.added_at >= own[p.customer_id]
+        assert p.added_at >= opened[p.account_id]
+        assert p.added_at < demo.history_start
+
+
 def test_ids_vpas_and_phones_are_unique(demo: Population) -> None:
     for rows in (demo.customers, demo.accounts, demo.devices, demo.payees):
         ids = [r.id for r in rows]

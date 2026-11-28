@@ -188,7 +188,10 @@ draft.
   prior are filtered out in SQL. Probe runs, evidence, payments, labels and queue dismissals are
   loaded through the Guardian and Navigator facades in chunks of 1,000 ids (`= ANY(:ids)`), never
   one query per item. One backtest replays at a time (advisory lock 57): while another holds it,
-  the job raises and is retried with the platform's backoff, rather than skipping. Each is replayed twice, under ACTIVE and under ACTIVE + the draft, with
+  the job raises and is retried with the platform's backoff, rather than skipping. It gets
+  `DELPHI_SCOUT_BACKTEST_MAX_ATTEMPTS` (6) attempts, not the platform's 3, so the retries wait
+  about 15 minutes in all (30 s doubling), longer than a bounded replay takes. If they run out
+  the job ends FAILED, and asking again starts a new one. Each is replayed twice, under ACTIVE and under ACTIVE + the draft, with
   the live Guardian's own steps (`observe`, `final_decision`): comparing the two isolates the
   draft's effect. A session's observations are its completed probe runs; a case's are its
   session's probe runs (a payment case), then its current evidence records. An observation the
