@@ -610,6 +610,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/chase/operations/{operation_id}/liens/{lien_id}/release": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Release
+         * @description docs/05 §6: a PLACED lien is released, with the reason; 409 for any other status.
+         */
+        post: operations["release_api_v1_chase_operations__operation_id__liens__lien_id__release_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/chase/operations/{operation_id}/close": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Close
+         * @description docs/10 §5 step 7: a manual close, at any time; 409 once closed.
+         */
+        post: operations["close_api_v1_chase_operations__operation_id__close_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/scout/queue": {
         parameters: {
             query?: never;
@@ -1683,6 +1723,10 @@ export interface components {
             placed_at: string | null;
             /** Review Due At */
             review_due_at: string | null;
+            /** Released At */
+            released_at: string | null;
+            /** Release Reason */
+            release_reason: string | null;
         };
         /** LoginRequest */
         LoginRequest: {
@@ -1771,6 +1815,8 @@ export interface components {
             telemetry?: components["schemas"]["TelemetryIn"] | null;
             /** Story Local Time */
             story_local_time?: string | null;
+            /** Story */
+            story?: ("S1" | "S2" | "S3" | "S4") | null;
         };
         /** PaymentSummary */
         PaymentSummary: {
@@ -1920,6 +1966,11 @@ export interface components {
             top_features: {
                 [key: string]: unknown;
             }[];
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "MODEL" | "STORY_SCRIPT";
         };
         /**
          * ProbeResponseRequest
@@ -2110,6 +2161,11 @@ export interface components {
             checks: {
                 [key: string]: components["schemas"]["CheckView"];
             };
+        };
+        /** ReleaseLien */
+        ReleaseLien: {
+            /** Reason */
+            reason: string;
         };
         /**
          * Role
@@ -3319,6 +3375,77 @@ export interface operations {
                 "application/json": components["schemas"]["ApproveLiens"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChaseView"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    release_api_v1_chase_operations__operation_id__liens__lien_id__release_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                operation_id: string;
+                lien_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReleaseLien"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChaseView"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    close_api_v1_chase_operations__operation_id__close_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                operation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {

@@ -80,6 +80,9 @@ stories:
     local_time: "23:40"
     scenario: APP_DIGITAL_ARREST   # the story payment's truth (docs/14 §10)
     coached: true                  # "coached purpose answer"
+    # docs/06 §17 (ENG-S1): a live run starts here (#291); a test pins it to the golden fixture
+    scripted_prior: {GENUINE: 0.54, ATO: 0.08, APP_DIGITAL_ARREST: 0.30, APP_INVESTMENT: 0.05,
+                     MULE: 0.01, UNEXPLAINED: 0.02}
     telemetry:                  # on a call with an unknown number, typing normally
       typing_cadence_z: 0.3     # gap
       paste_on_account_field: false
@@ -99,6 +102,9 @@ stories:
     channel: UPI_PUSH           # gap
     new_device_os: ANDROID      # "new phone today" (gap: OS)
     scenario: GENUINE_UNUSUAL   # genuine, on a new phone (docs/14 §10)
+    # docs/06 §17 (ENG-S2): a live run starts here (#291); a test pins it to the golden fixture
+    scripted_prior: {GENUINE: 0.69, ATO: 0.20, APP_DIGITAL_ARREST: 0.04, APP_INVESTMENT: 0.03,
+                     MULE: 0.02, UNEXPLAINED: 0.02}
     telemetry:                  # not on a call, typing normally (ARJUN_PASSIVE)
       typing_cadence_z: 0.2     # gap
       paste_on_account_field: false

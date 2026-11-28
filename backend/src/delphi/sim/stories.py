@@ -156,6 +156,7 @@ def stage(conn: Connection, config: PersonaConfig, name: str, at: datetime) -> S
         payee_account_id=manifest.story_payees[name],
         telemetry=telemetry,
         story_local_time=story.local_time,
+        story=name,
     )
     return StagedStory(customer, request)
 
@@ -202,6 +203,8 @@ def _payment_body(request: PaymentRequest) -> dict[str, Any]:
         body["telemetry"] = asdict(request.telemetry)
     if request.story_local_time is not None:
         body["story_local_time"] = request.story_local_time
+    if request.story is not None:
+        body["story"] = request.story
     return body
 
 

@@ -54,6 +54,7 @@ from delphi.sim.api import (
     PayChannel,
     PaymentRequest,
     PhoneTelemetry,
+    StoryName,
     initiate_payment,
     refuse_during_reset,
 )
@@ -90,6 +91,8 @@ class PriorView(BaseModel):
     anomaly_percentile: float | None
     open_mass: float | None
     top_features: list[dict[str, Any]]
+    # MODEL (the sensing layer) or STORY_SCRIPT (a demo story's scripted prior, #291)
+    source: Literal["MODEL", "STORY_SCRIPT"]
 
 
 class Baselines(BaseModel):
@@ -327,6 +330,7 @@ def _view(platform: Platform, session_id: UUID) -> GuardianSessionView:
             anomaly_percentile=row.anomaly_percentile,
             open_mass=row.open_mass,
             top_features=[dict(f) for f in row.top_features],
+            source="STORY_SCRIPT" if row.prior_source == "STORY_SCRIPT" else "MODEL",
         ),
         risk_by_decision=(
             {d: round(v) for d, v in row.risk_by_decision.items()} if row.risk_by_decision else None
@@ -401,6 +405,9 @@ class PaymentIn(BaseModel):
     telemetry: TelemetryIn | None = None
     # A demo story's scripted IST "HH:MM" (docs/14 §10): the DEMO_STORY job's result carries it.
     story_local_time: Annotated[str, Field(pattern=STORY_LOCAL_TIME)] | None = None
+    # The demo story the payment plays (docs/14 §10, #291): the job's result carries it, and
+    # the Guardian starts the session from that story's scripted prior.
+    story: StoryName | None = None
 
     @model_validator(mode="after")
     def _one_payee(self) -> PaymentIn:
@@ -497,6 +504,7 @@ def _initiate(platform: Platform, payment: PaymentIn) -> UUID:
                 payee_vpa=payment.new_payee.vpa if payment.new_payee else None,
                 telemetry=PhoneTelemetry(**t.model_dump()) if t else None,
                 story_local_time=payment.story_local_time,
+                story=payment.story,
             ),
             platform.clock.now(),
         )
