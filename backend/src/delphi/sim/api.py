@@ -25,7 +25,14 @@ from sqlalchemy.orm import Session
 
 from delphi.platform.clock import Clock
 from delphi.platform.errors import DelphiError, InvalidStateTransitionError, ProblemCode
-from delphi.platform.jobs import Enqueued, JobStatus, JobType, enqueue, requeue_failed
+from delphi.platform.jobs import (
+    Enqueued,
+    JobStatus,
+    JobType,
+    enqueue,
+    get_job,
+    requeue_failed,
+)
 from delphi.platform.labels import labels  # the labels the bank has observed (#159)
 from delphi.platform.locks import DATASET_REQUEST_LOCK_KEY
 from delphi.platform.tables import jobs
@@ -46,7 +53,8 @@ from delphi.sim.bank import (
 )
 from delphi.sim.baselines import Baseline, baseline_decisions
 from delphi.sim.catalog import datasets
-from delphi.sim.generator_config import history_end, load_generator_config
+from delphi.sim.external import cfcfrms_ack_delay
+from delphi.sim.generator_config import GeneratorConfig, history_end, load_generator_config
 from delphi.sim.payments import (
     STATUS_FOR_DECISION,
     PaymentStatus,
@@ -57,6 +65,7 @@ from delphi.sim.payments import (
     get_payment,
     get_payments,
 )
+from delphi.sim.persona_config import load_persona_config
 from delphi.sim.phone import (
     PHONE_CHANNELS,
     PayChannel,
@@ -81,6 +90,7 @@ __all__ = [
     "Baseline",
     "DatasetInfo",
     "DatasetProfile",
+    "GeneratorConfig",
     "HistoryWindow",
     "PayChannel",
     "PaymentRequest",
@@ -96,6 +106,7 @@ __all__ = [
     "apply_guardian_decision",
     "baseline_decisions",
     "cancel_payment",
+    "cfcfrms_ack_delay",
     "complaints",
     "crm_events",
     "current_dataset",
@@ -109,6 +120,7 @@ __all__ = [
     "initiate_payment",
     "labels",
     "ledger_entries",
+    "load_generator_config",
     "login_events",
     "payees",
     "payments",
@@ -117,9 +129,11 @@ __all__ = [
     "request_dataset",
     "request_reset",
     "request_story",
+    "scripted_priors",
     "session_telemetry",
     "sim_phone_risk",
     "sim_registry_listings",
+    "story_of_job",
 ]
 
 # The generator's profiles (docs/14 §2); a test checks they match `generator.yaml`.
@@ -132,6 +146,53 @@ StoryName = Literal["S1", "S2", "S3", "S4"]
 STORIES: tuple[str, ...] = get_args(StoryName)
 RUNNABLE_STORIES: tuple[str, ...] = ("S1", "S2")
 StoryMode = Literal["interactive", "autoplay"]
+
+
+# What a staged story payment must match: its job's result `payment` (stories._payment_body).
+_STAGED_FIELDS = ("payer_account_id", "payee_account_id", "amount_paise", "channel", "device_id")
+
+
+def story_of_job(session: Session, job_id: UUID, request: PaymentRequest) -> str:
+    """The story a phone payment plays (docs/14 §10, #291): the story of the interactive
+    `DEMO_STORY` job that staged it. The server sets it, never the client: the job must exist,
+    have succeeded, and have staged exactly this payment (payer, payee, amount, channel and
+    device). Anything else is a 422."""
+    job = get_job(session, job_id)
+    result = job.result if job is not None else None
+    staged = result.get("payment") if result else None
+    sent = {
+        "payer_account_id": str(request.payer_account_id),
+        "payee_account_id": str(request.payee_account_id),
+        "amount_paise": request.amount_paise,
+        "channel": request.channel,
+        "device_id": str(request.device_id),
+    }
+    if (
+        job is None
+        or job.type != JobType.DEMO_STORY.value
+        or job.status != JobStatus.SUCCEEDED.value
+        or result is None
+        or result.get("mode") != "interactive"
+        or not isinstance(staged, Mapping)
+        or any(staged.get(f) != sent[f] for f in _STAGED_FIELDS)
+        or result.get("story") not in RUNNABLE_STORIES
+    ):
+        raise DelphiError(
+            "story_job_id does not name the interactive demo story that staged this payment.",
+            code=ProblemCode.VALIDATION_FAILED,
+        )
+    return str(result["story"])
+
+
+def scripted_priors() -> dict[str, dict[str, float]]:
+    """Each runnable story's scripted prior (docs/06 §17, #291), from `personas.yaml`: the
+    Guardian's composition root starts a story payment's session from it."""
+    stories = load_persona_config().stories
+    return {
+        name: dict(stories[name].scripted_prior or {})
+        for name in RUNNABLE_STORIES
+        if stories[name].scripted_prior
+    }
 
 
 def dataset_exists(session: Session) -> bool:

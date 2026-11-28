@@ -76,6 +76,8 @@ class PriorInputs:
     anomaly_percentile: float  # q
     p_mule_payer: float | None  # the payer account's mule score; None without a scorer
     top_features: tuple[Mapping[str, Any], ...] = ()
+    # Where the prior comes from (#291): the trained model, or a demo story's scripted prior.
+    source: str = "MODEL"
 
 
 class SensingInference:

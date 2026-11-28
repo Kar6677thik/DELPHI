@@ -39,6 +39,9 @@ Invariants:
 - At most one `ProbeRun` is in status `AWAITING_CUSTOMER` at a time.
 - The posterior stored on the session equals the posterior after the last completed probe run.
 - `kb_version_id` is fixed when the session is created and never changes.
+- One step at a time per session: each Guardian step reads its session under the row lock
+  (`SELECT … FOR UPDATE`), so concurrent steps (a customer's cancel racing the passive step, say)
+  take turns instead of one failing on the version check (#268).
 - Payment status transitions are driven only by the session (`RELEASE` → `RELEASED`;
   `HOLD_FOR_REVIEW`/`PROTECTIVE_HOLD` → `HELD`; `DECLINE` → `DECLINED`; cancel → `CANCELLED`).
 

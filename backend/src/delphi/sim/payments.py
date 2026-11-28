@@ -57,6 +57,7 @@ class PaymentView:
     initiated_at: datetime
     device_id: UUID | None
     status: str
+    story: str | None = None  # the demo story it plays (#291): its scripted prior applies
 
 
 def _payment_query() -> Select[Any]:
@@ -71,6 +72,7 @@ def _payment_query() -> Select[Any]:
         p.initiated_at,
         p.device_id,
         p.status,
+        p.story,
     ).join(accounts, a.id == p.payer_account_id)
 
 
@@ -85,6 +87,7 @@ def _view(row: Any) -> PaymentView:
         initiated_at=row.initiated_at,
         device_id=row.device_id,
         status=row.status,
+        story=row.story,
     )
 
 
