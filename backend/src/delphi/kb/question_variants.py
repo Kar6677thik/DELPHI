@@ -292,12 +292,17 @@ def list_variants(
     probe_key: str | None,
     limit: int,
     after: tuple[datetime, UUID] | None = None,
+    included: bool | None = None,
 ) -> list[VariantRecord]:
-    """Oldest first, keyset-paged on ``(created_at, id)``."""
+    """Oldest first, keyset-paged on ``(created_at, id)``. ``included=False`` with
+    ``status=APPROVED`` is what "Approve batch" would take."""
     q = question_variants.c
     query = select(question_variants).order_by(q.created_at, q.id).limit(limit)
     if status is not None:
         query = query.where(q.status == status.value)
+    if included is not None:
+        has_version = q.included_in_kb_version.is_not(None)
+        query = query.where(has_version if included else ~has_version)
     if probe_key is not None:
         query = query.where(q.probe_key == probe_key)
     if after is not None:
@@ -411,6 +416,8 @@ def approve_batch(
     CANDIDATE KB version, parent = ACTIVE, validated as any KB version is. 409 when there is
     none; 422 with the issues when the result breaks a KB rule."""
     q = question_variants.c
+    # No cap: every row here was approved one by one by an FDE engineer, so the set is as large
+    # as the reviews since the last batch, and the new KB version must hold all of them anyway.
     rows = session.execute(
         select(question_variants)
         .where(q.status == VariantStatus.APPROVED.value, q.included_in_kb_version.is_(None))

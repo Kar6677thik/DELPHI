@@ -1064,7 +1064,7 @@
           "kb"
         ],
         "summary": "Read Variants",
-        "description": "Drafted variants, oldest first, each with the ACTIVE KB's English original (docs/18 §2).\n``status=PENDING_REVIEW`` is the review queue.",
+        "description": "Drafted variants, oldest first, each with the ACTIVE KB's English original (docs/18 §2).\n``status=PENDING_REVIEW`` is the review queue; ``status=APPROVED&included=false`` is what\n\"Approve batch\" would take.",
         "operationId": "read_variants_api_v1_question_bank_variants_get",
         "parameters": [
           {
@@ -1098,6 +1098,22 @@
                 }
               ],
               "title": "Probe Key"
+            }
+          },
+          {
+            "name": "included",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Included"
             }
           },
           {

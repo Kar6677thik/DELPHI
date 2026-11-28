@@ -389,7 +389,8 @@ export interface paths {
         /**
          * Read Variants
          * @description Drafted variants, oldest first, each with the ACTIVE KB's English original (docs/18 §2).
-         *     ``status=PENDING_REVIEW`` is the review queue.
+         *     ``status=PENDING_REVIEW`` is the review queue; ``status=APPROVED&included=false`` is what
+         *     "Approve batch" would take.
          */
         get: operations["read_variants_api_v1_question_bank_variants_get"];
         put?: never;
@@ -3177,6 +3178,7 @@ export interface operations {
             query?: {
                 status?: components["schemas"]["VariantStatus"] | null;
                 probe_key?: string | null;
+                included?: boolean | null;
                 limit?: number;
                 cursor?: string | null;
             };
