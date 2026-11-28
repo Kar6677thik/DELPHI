@@ -219,7 +219,7 @@ A type is scheduled only once its handler is registered:
 | `SCOUT_AUTO_TRIGGER` | 5 min | enqueue `RUN_SCOUT` if ≥ `auto_trigger_new_items` new queue items and no `RUN_SCOUT` is QUEUED or RUNNING |
 | `MULE_SWEEP` | 60 s | rescore into `account_scores`, in bounded batches, the accounts whose score is missing or older than `mule_sweep_interval_min` (time-scaled), so that interval bounds a score's age; one transaction per batch, skipped while another run holds the lock, at most `DELPHI_MULE_SWEEP_MAX_PER_RUN` accounts per run (doc 13 §6) |
 | `LABEL_DELIVERY` | 60 s (DEMO), virtual in evaluation | deliver due rows from `sim_truth.label_schedule` (doc 14 §7) |
-| `ACCOUNT_REVIEW_SWEEP` | 60 s | open ACCOUNT_REVIEW cases, in bounded batches: home-bank accounts named by new complaints, and mule suspects (score ≥ `mule_sweep_threshold`, credited within `mule_credit_window_h`) from `MULE_SWEEP`'s scores (doc 09 §1) |
+| `ACCOUNT_REVIEW_SWEEP` | 60 s | open ACCOUNT_REVIEW cases, in bounded batches: home-bank accounts named by new complaints, and mule suspects (score ≥ `mule_sweep_threshold`, credited within `mule_credit_window_h`) from `MULE_SWEEP`'s scores (doc 09 §1); a candidate whose open fails backs off (#290) |
 | `PROBE_YIELD_DAILY` | daily 00:15 IST | aggregate `probe_yield_daily`; evaluate drift alerts (doc 12 §5) |
 | `RETENTION_SWEEP` | daily 01:00 IST | doc 17 §6 |
 | `AUDIT_VERIFY` | daily 02:00 IST | verify the last 24 h of the audit chain; alert on failure |

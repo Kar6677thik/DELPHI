@@ -62,6 +62,7 @@ RESET_TABLES: tuple[tuple[str, str], ...] = (
     ("delphi.cases", "created_at"),  # its sessions point back at it: DEFERRABLE (docs/17)
     ("delphi.guardian_sessions", "started_at"),  # probe_runs go with them (ON DELETE CASCADE)
     ("delphi.labels", "created_at"),
+    ("delphi.review_sweep_failures", "created_at"),
     ("delphi.kb_versions", "created_at"),
     ("sim_truth.payment_truth", "created_at"),
     ("sim_truth.scenario_instances", "created_at"),

@@ -37,6 +37,16 @@ triggers and the console come with M5 (#103, #109).
   `DELPHI_REVIEW_SWEEP_BATCH` reviews (25), each under a 30 s statement timeout and 16 MB
   `work_mem`, and at most `DELPHI_REVIEW_SWEEP_MAX_PER_RUN` reviews (100) per run; the next run
   carries on. A run that finds another one sweeping (advisory lock 50) skips.
+- **One bad account cannot block the sweep (#290).** Each candidate opens in a savepoint. If its
+  open fails (an error in the evidence fetch or the case insert, say), only that account rolls
+  back: the failure is recorded in `review_sweep_failures` (attempts, last error, next attempt)
+  and logged as a WARNING, and the batch commits the others. The candidate is skipped until its
+  next attempt: `DELPHI_REVIEW_RETRY_BASE_S` (60 s) after the first failure, doubling with each
+  failure, at most `DELPHI_REVIEW_RETRY_MAX_S` (1 h). A successful open deletes the record. The
+  per-run cap counts the candidates tried, opened or failed, and the job's result reports
+  `failed`. The mule-scorer trigger below works the same way. A connection-level error (the
+  database itself failing, `OperationalError`) also breaks the recording of the failure, so the
+  whole batch rolls back then; that is intended, since no candidate could open either.
 - It opens an ACCOUNT_REVIEW case (STANDARD, `account_review_sla_minutes`) for each, unless the
   account has an open review or a review opened after its latest complaint. So it is idempotent
   per account, and a disposed review reopens only for a newer complaint.

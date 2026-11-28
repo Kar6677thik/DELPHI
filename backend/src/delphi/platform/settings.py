@@ -146,6 +146,10 @@ class Settings(BaseSettings):
     review_sweep_batch: int = Field(default=25, ge=1, le=500)
     review_sweep_max_per_run: int = Field(default=100, ge=1, le=5_000)
     review_complaint_lookback_days: int = Field(default=30, ge=1, le=365)
+    # A candidate whose review fails to open waits retry_base_s, doubling with each failed
+    # attempt up to retry_max_s, so it cannot block the sweep (#290).
+    review_retry_base_s: int = Field(default=60, ge=1, le=86_400)
+    review_retry_max_s: int = Field(default=3_600, ge=1, le=7 * 86_400)
     # MULE_SWEEP (docs/13 §6, #252), bounded after #263: accounts rescored per transaction and
     # per run. A run rescores the accounts whose score is older than mule_sweep_interval_min.
     mule_sweep_batch: int = Field(default=200, ge=1, le=2_000)
