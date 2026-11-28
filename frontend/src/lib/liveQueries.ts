@@ -2,6 +2,7 @@ import type { QueryClient, QueryKey } from '@tanstack/react-query';
 
 import { ADMIN_QUERY_KEY } from '../api/admin';
 import { CASES_ROOT_KEY } from '../api/cases';
+import { CHASE_ROOT_KEY } from '../api/chase';
 import { GUARDIAN_QUERY_KEY } from '../api/guardian';
 import { OVERVIEW_QUERY_KEY } from '../api/overview';
 
@@ -14,6 +15,8 @@ export const LIVE_QUERIES: Readonly<Record<string, readonly QueryKey[]>> = {
   'case.opened': [CASES_ROOT_KEY, OVERVIEW_QUERY_KEY],
   'case.updated': [CASES_ROOT_KEY, OVERVIEW_QUERY_KEY],
   'evidence.narrative_ready': [CASES_ROOT_KEY],
+  'chase.updated': [CHASE_ROOT_KEY],
+  'chase.lien.updated': [CHASE_ROOT_KEY],
   'guardian.session.updated': [GUARDIAN_QUERY_KEY],
   'guardian.session.decided': [GUARDIAN_QUERY_KEY, OVERVIEW_QUERY_KEY],
   'job.updated': [OVERVIEW_QUERY_KEY, ADMIN_QUERY_KEY],
