@@ -489,6 +489,32 @@ describe('/phone demo stories', () => {
     });
   });
 
+  it('says when a story starts from its scripted prior (#291)', async () => {
+    const scripted = (): GuardianSessionView => {
+      const v = view();
+      return { ...v, prior: { ...v.prior, source: 'STORY_SCRIPT' } };
+    };
+    setMockSession('investigator');
+    const sent = mockApi();
+    server.use(
+      http.post('/api/v1/admin/demo/scenarios/S1/run', () =>
+        HttpResponse.json(storyJob({ status: 'QUEUED', result: null }), { status: 202 }),
+      ),
+      http.get(`/api/v1/jobs/${JOB}`, () => HttpResponse.json(storyJob())),
+      http.post('/api/v1/guardian/sessions', async ({ request }) => {
+        sent.payment = await request.json();
+        return HttpResponse.json(scripted(), { status: 201 });
+      }),
+      http.get(`/api/v1/guardian/sessions/${SESSION}`, () => HttpResponse.json(scripted())),
+    );
+    const { user } = renderApp('/phone?story=S1');
+    await screen.findByText(/S-1 Kamala is staged/);
+    const phone = screen.getByRole('region', { name: 'Customer’s phone' });
+    await user.click(within(phone).getByRole('button', { name: /Pay/ }));
+    expect(await screen.findByText(/Scripted prior: the demo story starts/)).toBeVisible();
+    expect(sent.payment).toMatchObject({ payment: { story: 'S1' } });
+  });
+
   it('clears the story for free play', async () => {
     setMockSession('investigator');
     mockApi();

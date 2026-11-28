@@ -25,6 +25,7 @@ const SPELL_BREAKER_DA = 'SPELL_BREAKER_DIGITAL_ARREST';
 const YES_NO_QUESTIONS = [SPELL_BREAKER_DA, 'SPELL_BREAKER_INVESTMENT'] as const;
 
 interface Run {
+  seq: number;
   probe_key: string;
   mode: string;
   status: string;
@@ -116,10 +117,12 @@ test('E2E-S1 (Guardian): Kamala answers as scripted and is protected', async ({
       `session ${s.status} ${s.decision ?? '-'}`,
       `prior ${round(s.prior.probs)} open_mass ${String(s.prior.open_mass)}`,
       `prior top features ${JSON.stringify(s.prior.top_features)}`,
-      ...s.probe_runs.map(
-        (r) =>
-          `  ${r.probe_key} ${r.mode} ${r.status} ${r.outcome ?? '-'} → ${round(r.posterior_after)}`,
-      ),
+      ...[...s.probe_runs]
+        .sort((a, b) => a.seq - b.seq)
+        .map(
+          (r) =>
+            `  ${r.probe_key} ${r.mode} ${r.status} ${r.outcome ?? '-'} → ${round(r.posterior_after)}`,
+        ),
       `posterior ${round(s.posterior)}`,
     ].join('\n');
   };
@@ -131,48 +134,67 @@ test('E2E-S1 (Guardian): Kamala answers as scripted and is protected', async ({
     return s.probe_runs.find((r) => r.status === 'AWAITING_CUSTOMER')?.probe_key ?? '';
   };
   let spellBreakers = 0;
-  while (!(await decided.isVisible())) {
-    await expect(decided.or(purpose).or(no).or(sensor).or(otp).or(pause)).toBeVisible({
-      timeout: left(),
-    });
-    if (await purpose.isVisible()) {
-      await answer(purpose, PURPOSE_AFTER_MS, () => purpose.click());
-    } else if (await no.isVisible()) {
-      const key = await awaiting();
-      const heading = (await phone.getByRole('heading', { level: 2 }).innerText())
-        .replace(/\s+/g, ' ')
-        .trim();
-      expect(questionTexts.get(key), `an APPROVED variant of ${key}`).toContain(heading);
-      if (key === SPELL_BREAKER_DA) spellBreakers += 1;
-      await answer(no, SPELL_BREAKER_AFTER_MS, async () => {
-        await switchAppAndBack(page);
-        await no.click();
+  /** Plays the session to its decision as Kamala's script does, then checks ENG-S1's path. */
+  const play = async (): Promise<void> => {
+    while (!(await decided.isVisible())) {
+      await expect(decided.or(purpose).or(no).or(sensor).or(otp).or(pause)).toBeVisible({
+        timeout: left(),
       });
-    } else if (await pause.isVisible()) {
-      // A cooling-off runs ten real minutes (the server refuses faked timings): the live S-1
-      // was meant to protect her before that (R-01, #291). Say why, from the server's view.
-      throw new Error(
-        `S-1 reached the cooling-off instead of the protective screen (#291)\n${await trail()}`,
-      );
-    } else if (await sensor.isVisible()) {
-      await answer(sensor, STEP_UP_AFTER_MS, () => sensor.click());
-    } else if (await otp.isVisible()) {
-      const sms = await phone.getByRole('status').filter({ hasText: 'one-time code' }).innerText();
-      const code = /\b(\d{6})\b/.exec(sms)?.[1] ?? '';
-      await answer(otp, STEP_UP_AFTER_MS, async () => {
-        await otp.fill(code);
-        await phone.getByRole('button', { name: 'Confirm' }).click();
-      });
+      if (await purpose.isVisible()) {
+        await answer(purpose, PURPOSE_AFTER_MS, () => purpose.click());
+      } else if (await no.isVisible()) {
+        const key = await awaiting();
+        const heading = (await phone.getByRole('heading', { level: 2 }).innerText())
+          .replace(/\s+/g, ' ')
+          .trim();
+        expect(questionTexts.get(key), `an APPROVED variant of ${key}`).toContain(heading);
+        if (key === SPELL_BREAKER_DA) spellBreakers += 1;
+        await answer(no, SPELL_BREAKER_AFTER_MS, async () => {
+          await switchAppAndBack(page);
+          await no.click();
+        });
+      } else if (await pause.isVisible()) {
+        // A cooling-off runs ten real minutes (the server refuses faked timings): ENG-S1
+        // protects her before that (#291).
+        throw new Error('S-1 reached the cooling-off instead of the protective screen (#291)');
+      } else if (await sensor.isVisible()) {
+        await answer(sensor, STEP_UP_AFTER_MS, () => sensor.click());
+      } else if (await otp.isVisible()) {
+        const sms = await phone
+          .getByRole('status')
+          .filter({ hasText: 'one-time code' })
+          .innerText();
+        const code = /\b(\d{6})\b/.exec(sms)?.[1] ?? '';
+        await answer(otp, STEP_UP_AFTER_MS, async () => {
+          await otp.fill(code);
+          await phone.getByRole('button', { name: 'Confirm' }).click();
+        });
+      }
     }
-  }
-  await expect(protectedScreen).toBeVisible();
-  expect(spellBreakers, 'the DA spell-breaker was asked (ENG-S1)').toBeGreaterThanOrEqual(1);
+    await expect(protectedScreen).toBeVisible();
+    expect(spellBreakers, 'the DA spell-breaker was asked (ENG-S1)').toBe(1);
 
-  const view = await page.request.get(`/api/v1/guardian/sessions/${id}`);
-  expect(view.ok()).toBe(true);
-  const session = (await view.json()) as { decision: string | null; probe_runs: Run[] };
-  expect(session.decision).toBe('PROTECTIVE_HOLD');
-  // Every DA spell-breaker she answered (counted above) is recorded.
-  const shown = session.probe_runs.filter((r) => r.probe_key === SPELL_BREAKER_DA);
-  expect(shown).toHaveLength(spellBreakers);
+    const view = await page.request.get(`/api/v1/guardian/sessions/${id}`);
+    expect(view.ok()).toBe(true);
+    const session = (await view.json()) as {
+      decision: string | null;
+      prior: { source: string };
+      probe_runs: Run[];
+    };
+    expect(session.decision).toBe('PROTECTIVE_HOLD');
+    // The story starts from its scripted prior and plays greedily (docs/06 §17, #291), so it
+    // takes ENG-S1's typed-normally path: the purpose question, then the spell-breaker.
+    expect(session.prior.source).toBe('STORY_SCRIPT');
+    const active = [...session.probe_runs]
+      .filter((r) => r.mode === 'ACTIVE')
+      .sort((a, b) => a.seq - b.seq)
+      .map((r) => r.probe_key);
+    expect(active).toEqual(['PURPOSE_QUESTION', SPELL_BREAKER_DA]);
+  };
+  try {
+    await play();
+  } catch (error) {
+    // Any failure says what the session did, from the server's view.
+    throw new Error(`${String(error)}\n${await trail()}`, { cause: error });
+  }
 });
