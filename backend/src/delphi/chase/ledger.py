@@ -32,7 +32,7 @@ def visible_until(now: datetime, lag_minutes: float) -> datetime:
     return now - timedelta(minutes=lag_minutes)
 
 
-def _us(at: datetime) -> int:
+def to_us(at: datetime) -> int:
     return (at - datetime(1970, 1, 1, tzinfo=at.tzinfo)) // timedelta(microseconds=1)
 
 
@@ -52,7 +52,7 @@ def _entries() -> Any:
 def _move(r: Row[Any]) -> LedgerMove:
     return LedgerMove(
         entry_id=r.id,
-        at_us=_us(r.at),
+        at_us=to_us(r.at),
         payment_id=str(r.payment_id),
         account_id=str(r.account_id),
         delta_paise=r.delta_paise,

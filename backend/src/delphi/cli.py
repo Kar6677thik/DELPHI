@@ -26,6 +26,7 @@ from sqlalchemy import Engine, text
 
 from delphi.api.app import create_app
 from delphi.api.contract import OPENAPI_FILE, openapi_document
+from delphi.chase.candidates import Scored
 from delphi.chase.jobs import register_chase_jobs
 from delphi.guardian.api import (
     LiveGuardian,
@@ -74,7 +75,7 @@ from delphi.probes.api import (
 )
 from delphi.probes.registry import CLASSIFIER_NAMES
 from delphi.scout.jobs import register_scout_jobs
-from delphi.sensing.api import SensingInference
+from delphi.sensing.api import MuleScores, SensingInference
 from delphi.sensing.config import load_sensing_config
 from delphi.sensing.jobs import register_sensing_jobs
 from delphi.sensing.mule_scores import MuleSweepLimits
@@ -204,8 +205,10 @@ def _api(settings: Settings) -> int:
     metrics = metrics_server(settings.metrics_port)
     threading.Thread(target=metrics.serve_forever, name="metrics", daemon=True).start()
     try:
+        app = create_app(platform, event_hub=hub, guardian_runner=live)
+        app.state.chase_candidates = chase_candidates_for(platform)
         uvicorn.run(
-            create_app(platform, event_hub=hub, guardian_runner=live),
+            app,
             host=settings.http_host,
             port=settings.http_port,
             log_config=None,  # logging is configured by configure_logging (docs/20 §1)
@@ -217,6 +220,12 @@ def _api(settings: Settings) -> int:
         free_pool()
         platform.close()
     return 0
+
+
+def chase_candidates_for(platform: Platform) -> Scored:
+    """The api's chase candidates (docs/10 §4, #112): scored with the sensing layer's mule
+    scores. Time runs REAL, as for the Guardian (`DELPHI_TIME_MODE` is not a setting yet)."""
+    return Scored(MuleScores(platform.engine, platform.clock))
 
 
 def _active_kb(platform: Platform) -> KnowledgeBase:

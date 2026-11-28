@@ -139,8 +139,16 @@ stable. The 30 days, the 80% and the 3-credit minimum are the definition above, 
 **Implementation (#113 PR 1).**
 - **Operations** (`delphi.chase.operations`): `POST /chase/operations` traces and stores
   `chase_operations` and `chase_candidates` (migration 0018).
-- **Candidates** come through a `CandidateSource`. The default is the tracer's accounts above
-  `min_trace_inr`, unscored; #112's scoring plugs in there and fills the score columns.
+- **Candidates** come through a `CandidateSource`. `delphi api` sets `Scored`
+  (`delphi.chase.candidates`, #112), which fills the score columns and the rank of §4:
+  - `p_mule` from the sensing layer's mule scores as of now (doc 13 §6);
+  - the headroom from the balance now less the account's active liens;
+  - the dwell time from the account's ledger over the last 30 days, as far as Chase can see it
+    (§2), the balance before the first entry in the window being the opening balance;
+  - an account at the home bank takes the internal latency, any other the external one.
+
+  Without one (tests, contract generation) the candidates are the tracer's accounts above
+  `min_trace_inr`, unscored.
 - **Approval:** `POST /chase/operations/{id}/liens` re-traces as of now. Each approved candidate's
   lien is `min(T_now, headroom)` (`lien_amount`): the headroom is the balance now less the
   account's active liens (PLACED and TICKET_SENT) from any operation, and less any lien set
