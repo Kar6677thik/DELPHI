@@ -364,7 +364,8 @@ the trained prior gives Kamala's and Arjun's story payments a few tenths of a pe
 story's hypothesis, a share that swings ~15× between trainings, so a live story's path was a
 coin flip. A payment carrying `story` (doc 14 §10) gets its story's scripted prior
 (`sim/config/personas.yaml` `scripted_prior`, equal to the values below), recorded on the
-session as `prior_source = STORY_SCRIPT` and shown as "scripted prior". Every other payment,
+session as `prior_source = STORY_SCRIPT` and shown as "scripted prior", and plays greedily
+(no exploration, as ENG-S1/S2 do), so the live story takes the path they pin. Every other payment,
 including free play on the mock phone, keeps the trained model's prior.
 
 - **Arjun** (prior G .69 / ATO .20 / DA .04 / INV .03 / MULE .02 / ∅ .02, ₹1,80,000, passive:

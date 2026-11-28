@@ -29,6 +29,7 @@ from sqlalchemy import create_engine, select, text
 
 from delphi.api.app import create_app
 from delphi.api.security import Principal, current_principal
+from delphi.guardian import service as service_module
 from delphi.guardian.active import Ui
 from delphi.guardian.api import LiveGuardian, live_guardian
 from delphi.guardian.phone import PhoneChannel, PhoneHub
@@ -50,7 +51,15 @@ from delphi.sim.api import scripted_priors
 
 from ._db import MIGRATIONS_DIR, engine_as, upgrade
 from .test_guardian_active import KAMALA_ANSWERS, KAMALA_PASSIVE, KAMALA_PRIOR, story_prior
-from .test_guardian_service import CLEAN, GENUINE_SURE, INR, KB_DIR, T0, Env, FixedPrior
+from .test_guardian_service import (
+    CLEAN,
+    GENUINE_SURE,
+    INR,
+    KB_DIR,
+    T0,
+    Env,
+    FixedPrior,
+)
 
 API = "/api/v1/guardian/sessions"
 PHONE = "/api/v1/phone"
@@ -431,6 +440,39 @@ def test_a_story_payment_starts_from_its_scripted_prior(env: Env) -> None:
     with env.owner.connect() as conn:
         stories = conn.execute(select(bank.payments.c.story)).scalars().all()
     assert sorted(stories, key=str) == sorted(["S1", None], key=str)
+
+
+def test_a_story_payment_does_not_explore(env: Env, monkeypatch: pytest.MonkeyPatch) -> None:
+    """#291: a story plays its script, so its plan never explores (ENG-S1/S2 run greedy);
+    any other payment may."""
+    seen: list[bool] = []
+    real = service_module.plan_step
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        seen.append(bool(kwargs["explore"]))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(service_module, "plan_step", spy)
+    p = _persona(env)
+    prior = StoryPrior(story_prior(KAMALA_PRIOR), scripted_priors())
+    live = live_guardian(env.service(prior, KAMALA_PASSIVE), env.sessions, env.clock)
+    with TestClient(_app(env, _user(env, Role.INVESTIGATOR), live), headers=BROWSER) as client:
+
+        def planned(body: dict[str, Any]) -> list[bool]:
+            seen.clear()
+            created = client.post(API, json={"payment": body}, headers=_key())
+            assert created.status_code == 201, created.text
+            sid = created.json()["id"]
+            _until(
+                lambda: dict(client.get(f"{API}/{sid}").json()),
+                lambda v: v["status"] in ("AWAITING_CUSTOMER", "DECIDED"),
+            )
+            return list(seen)
+
+        story = planned(_payment(p, story="S1"))
+        plain = planned(_payment(p, 3_000))
+    assert story and not any(story)
+    assert plain and all(plain)
 
 
 # ---------------------------------------------------------------- answering and cancelling
