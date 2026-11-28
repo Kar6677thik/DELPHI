@@ -86,6 +86,8 @@ export function CasesPage() {
   const [params] = useSearchParams();
   const campaignId = params.get('campaign_id');
   const cases = useCases(sort, campaignId);
+  const items = cases.data?.pages.flatMap((page) => page.items) ?? [];
+  const more = cases.hasNextPage;
   const now = useNow(TICK_MS);
   return (
     <section aria-labelledby="cases-title" className="max-w-[1320px]">
@@ -95,8 +97,8 @@ export function CasesPage() {
             Case queue
           </h1>
           <p className="mt-1 text-[14px] text-muted">
-            {cases.isSuccess && cases.data.items.length > 0
-              ? summary(cases.data.items, cases.data.next_cursor !== null)
+            {cases.isSuccess && items.length > 0
+              ? summary(items, more)
               : 'The payments Guardian held, for an investigator to decide.'}
           </p>
           {campaignId !== null && (
@@ -132,12 +134,12 @@ export function CasesPage() {
       <div className="mt-6">
         {cases.isPending && <p className="text-[14px] text-muted">Loading cases…</p>}
         {cases.isError && <ProblemAlert error={cases.error} title="Could not load the cases" />}
-        {cases.isSuccess && cases.data.items.length === 0 && (
+        {cases.isSuccess && items.length === 0 && (
           <p className="rounded-md border border-dashed border-control px-4 py-3 text-[13px] text-muted">
             No cases yet. Guardian holds open them.
           </p>
         )}
-        {cases.isSuccess && cases.data.items.length > 0 && (
+        {cases.isSuccess && items.length > 0 && (
           <div className="overflow-x-auto rounded-md bg-surface px-8 py-5">
             <table className="w-full min-w-[860px] text-left text-[14px]">
               <caption className="sr-only">{CAPTIONS[sort]}</caption>
@@ -170,7 +172,7 @@ export function CasesPage() {
                 </tr>
               </thead>
               <tbody>
-                {cases.data.items.map((item) => {
+                {items.map((item) => {
                   const loss = expectedLoss(item);
                   return (
                     <tr key={item.id} className="border-b border-line last:border-0">
@@ -212,9 +214,10 @@ export function CasesPage() {
                         {item.campaign_id ? (
                           <Link
                             to={`/campaigns/${item.campaign_id}`}
+                            aria-label={`Campaign of the ${item.leading_hypothesis_name} case, ${slaLabel(item, now)}`}
                             className="underline decoration-control underline-offset-4 hover:decoration-soft"
                           >
-                            View
+                            Campaign
                           </Link>
                         ) : (
                           '—'
@@ -226,6 +229,18 @@ export function CasesPage() {
               </tbody>
             </table>
           </div>
+        )}
+        {cases.hasNextPage && (
+          <button
+            type="button"
+            className="mt-4 rounded-full border border-control px-4 py-1.5 text-[13px] text-soft transition-colors hover:border-soft hover:text-ink disabled:opacity-50"
+            disabled={cases.isFetchingNextPage}
+            onClick={() => {
+              void cases.fetchNextPage();
+            }}
+          >
+            {cases.isFetchingNextPage ? 'Loading…' : 'Load more'}
+          </button>
         )}
       </div>
     </section>

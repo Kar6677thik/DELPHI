@@ -31,6 +31,10 @@ export function F3Strip({
     reached === 0
       ? 'F3 stage not known yet'
       : `F3 stage: ${LABELS[F3_STAGES[reached - 1] as (typeof F3_STAGES)[number]]}, ${String(reached)} of 4`;
+  if (compact && reached === 0) {
+    // Never an empty chain: with nothing reached, a table cell says so in words.
+    return <span className="text-[12px] text-muted">Not known yet</span>;
+  }
   return (
     <div className="flex items-center gap-2">
       <ol aria-label={summary} className="flex gap-1">

@@ -18,6 +18,13 @@ export function entityKind(entity: SharedEntity): string {
   return ENTITY_KINDS[entity.kind] ?? humanise(entity.kind);
 }
 
+/** Case times in IST, whatever the browser's zone (as the Guardian monitor shows them). */
+const OPENED = new Intl.DateTimeFormat('en-IN', {
+  dateStyle: 'medium',
+  timeStyle: 'short',
+  timeZone: 'Asia/Kolkata',
+});
+
 const LINK =
   'text-ink underline decoration-control underline-offset-4 transition-colors hover:decoration-soft';
 
@@ -49,10 +56,7 @@ export function CampaignPage() {
       {campaign.isSuccess && (
         <>
           {campaign.data.merged_into !== null && (
-            <p
-              role="status"
-              className="mt-3 rounded-md border border-control px-4 py-3 text-[13px] text-soft"
-            >
+            <p className="mt-3 rounded-md border border-control px-4 py-3 text-[13px] text-soft">
               This campaign merged into an older one, which now holds its cases:{' '}
               <Link to={`/campaigns/${campaign.data.merged_into}`} className={LINK}>
                 open that campaign
@@ -63,7 +67,7 @@ export function CampaignPage() {
           <div className="mt-4">
             <F3Strip furthest={campaign.data.f3_stage_max} />
           </div>
-          <dl className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
+          <dl className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-3">
             {[
               ['Cases', String(campaign.data.case_count)],
               ['Vulnerable victims', String(campaign.data.vulnerable_victims)],
@@ -77,12 +81,6 @@ export function CampaignPage() {
               <dt className="text-[12px] text-muted">Expected loss</dt>
               <dd className="figure mt-1 text-[20px] text-ink">
                 <MoneyText paise={campaign.data.expected_loss_paise} />
-              </dd>
-            </div>
-            <div className="rounded-md bg-surface px-4 py-3">
-              <dt className="text-[12px] text-muted">Rank score</dt>
-              <dd className="figure mt-1 text-[20px] text-ink">
-                {Math.round(campaign.data.rank_score).toLocaleString('en-IN')}
               </dd>
             </div>
           </dl>
@@ -152,7 +150,7 @@ export function CampaignPage() {
                     <tr key={c.id} className="border-b border-line last:border-0">
                       <td className="py-3 pr-6">
                         <Link to={`/cases/${c.id}`} className={LINK}>
-                          {new Date(c.opened_at).toLocaleString('en-IN')}
+                          {OPENED.format(new Date(c.opened_at))}
                         </Link>
                       </td>
                       <td className="py-3 pr-6 text-soft">{humanise(c.type)}</td>

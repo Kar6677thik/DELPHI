@@ -14,6 +14,7 @@ import { keyText } from '../lib/format';
  */
 export function CampaignsPage() {
   const campaigns = useCampaigns();
+  const items = campaigns.data?.pages.flatMap((page) => page.items) ?? [];
   return (
     <section aria-labelledby="campaigns-title" className="max-w-[1320px]">
       <h1 id="campaigns-title" className="text-[26px] font-semibold tracking-tight">
@@ -28,12 +29,12 @@ export function CampaignsPage() {
         {campaigns.isError && (
           <ProblemAlert error={campaigns.error} title="Could not load the campaigns" />
         )}
-        {campaigns.isSuccess && campaigns.data.items.length === 0 && (
+        {campaigns.isSuccess && items.length === 0 && (
           <p className="rounded-md border border-dashed border-control px-4 py-3 text-[13px] text-muted">
             No campaigns yet. They form when two or more cases share infrastructure.
           </p>
         )}
-        {campaigns.isSuccess && campaigns.data.items.length > 0 && (
+        {campaigns.isSuccess && items.length > 0 && (
           <div className="overflow-x-auto rounded-md bg-surface px-8 py-5">
             <table className="w-full min-w-[860px] text-left text-[14px]">
               <caption className="sr-only">Campaigns, highest ranked first</caption>
@@ -57,7 +58,7 @@ export function CampaignsPage() {
                 </tr>
               </thead>
               <tbody>
-                {campaigns.data.items.map((c) => (
+                {items.map((c) => (
                   <tr key={c.id} className="border-b border-line last:border-0">
                     <td className="py-3 pr-6">
                       <Link
@@ -79,10 +80,19 @@ export function CampaignsPage() {
                 ))}
               </tbody>
             </table>
-            {campaigns.data.next_cursor !== null && (
-              <p className="mt-3 text-[12px] text-muted">Showing the 50 highest ranked.</p>
-            )}
           </div>
+        )}
+        {campaigns.hasNextPage && (
+          <button
+            type="button"
+            className="mt-4 rounded-full border border-control px-4 py-1.5 text-[13px] text-soft transition-colors hover:border-soft hover:text-ink disabled:opacity-50"
+            disabled={campaigns.isFetchingNextPage}
+            onClick={() => {
+              void campaigns.fetchNextPage();
+            }}
+          >
+            {campaigns.isFetchingNextPage ? 'Loading…' : 'Load more'}
+          </button>
         )}
       </div>
     </section>

@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 
 import { getJson } from './client';
 import type { CampaignDetail, CampaignPage } from './types';
@@ -6,11 +6,20 @@ import type { CampaignDetail, CampaignPage } from './types';
 /** Every campaign query sits under this key, so a `campaign.updated` event refreshes them all. */
 export const CAMPAIGNS_ROOT_KEY = ['campaigns'] as const;
 
-/** The live campaigns (docs/16 `GET /campaigns`), highest rank first: the first page. */
+/** Campaigns per page of `GET /campaigns`. */
+export const CAMPAIGN_PAGE_SIZE = 50;
+
+/** The live campaigns (docs/16 `GET /campaigns`), highest rank first, a page at a time (docs/09 §8). */
 export function useCampaigns() {
-  return useQuery({
+  return useInfiniteQuery({
     queryKey: [...CAMPAIGNS_ROOT_KEY, 'list'],
-    queryFn: () => getJson<CampaignPage>('/campaigns?limit=50'),
+    queryFn: ({ pageParam }) => {
+      const params = new URLSearchParams({ limit: String(CAMPAIGN_PAGE_SIZE) });
+      if (pageParam) params.set('cursor', pageParam);
+      return getJson<CampaignPage>(`/campaigns?${params.toString()}`);
+    },
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.next_cursor ?? undefined,
   });
 }
 

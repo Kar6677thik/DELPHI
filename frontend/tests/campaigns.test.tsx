@@ -1,4 +1,4 @@
-import { screen, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { describe, expect, it } from 'vitest';
 
@@ -71,7 +71,8 @@ describe('campaigns', () => {
       'href',
       `/campaigns/${ID}`,
     );
-    expect(within(rows[0] as HTMLElement).getByLabelText('F3 stage not known yet')).toBeVisible();
+    // Compact, with nothing reached: words, never an empty chain.
+    expect(within(rows[0] as HTMLElement).getByText('Not known yet')).toBeVisible();
     expect(
       within(rows[1] as HTMLElement).getByLabelText('F3 stage: Execution, 3 of 4'),
     ).toBeVisible();
@@ -169,12 +170,58 @@ describe('campaigns', () => {
     );
     renderApp(`/cases?campaign_id=${ID}`);
     const row = within(await screen.findByRole('table')).getAllByRole('row')[1] as HTMLElement;
-    expect(within(row).getByRole('link', { name: 'View' })).toHaveAttribute(
+    expect(within(row).getByRole('link', { name: /^Campaign of the / })).toHaveAttribute(
       'href',
       `/campaigns/${ID}`,
     );
     expect(asked).toBe(ID);
     expect(screen.getByRole('link', { name: 'Back to the campaign' })).toBeInTheDocument();
+  });
+
+  it('pages the campaigns with the cursor', async () => {
+    setMockSession('viewer');
+    server.use(
+      http.get('/api/v1/campaigns', ({ request }) => {
+        const cursor = new URL(request.url).searchParams.get('cursor');
+        return HttpResponse.json(
+          cursor === 'c2'
+            ? {
+                items: [campaign({ id: 'c-2', leading_hypothesis: 'APP_INVESTMENT' })],
+                next_cursor: null,
+              }
+            : { items: [campaign()], next_cursor: 'c2' },
+        );
+      }),
+    );
+    const { user } = renderApp('/campaigns');
+    expect(await screen.findByRole('link', { name: 'APP digital arrest' })).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Load more' }));
+    expect(await screen.findByRole('link', { name: 'APP investment' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Load more' })).toBeNull();
+  });
+
+  it("pages a campaign's cases in the queue, so none is out of reach", async () => {
+    setMockSession('viewer');
+    const seen: string[] = [];
+    server.use(
+      http.get('/api/v1/cases', ({ request }) => {
+        const params = new URL(request.url).searchParams;
+        seen.push(params.toString());
+        return HttpResponse.json(
+          params.get('cursor') === 'p2'
+            ? { items: [mockCase({ id: 'case-51', campaign_id: ID })], next_cursor: null }
+            : { items: [mockCase({ campaign_id: ID })], next_cursor: 'p2' },
+        );
+      }),
+    );
+    const { user } = renderApp(`/cases?campaign_id=${ID}`);
+    expect(await screen.findAllByRole('row')).toHaveLength(2);
+    await user.click(screen.getByRole('button', { name: 'Load more' }));
+    await waitFor(() => {
+      expect(screen.getAllByRole('row')).toHaveLength(3);
+    });
+    expect(seen.at(-1)).toContain('cursor=p2');
+    expect(seen.at(-1)).toContain(`campaign_id=${ID}`);
   });
 
   it('refreshes campaigns and cases on campaign.updated, and maps the F3 stages', () => {
