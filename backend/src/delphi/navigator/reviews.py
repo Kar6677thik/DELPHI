@@ -83,7 +83,6 @@ NO_ANOMALY = 0.0  # docs/06 §11: no account anomaly model, so the open mass is 
 STATEMENT_TIMEOUT = "30s"
 WORK_MEM = "16MB"
 MAX_ERROR_CHARS = 500  # of the last error kept with a failed candidate
-MAX_DOUBLINGS = 32  # keeps the backoff's multiplier finite; the cap applies long before
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,8 +100,16 @@ class Backoff:
         )
 
     def after(self, attempts: int) -> timedelta:
-        """The wait after ``attempts`` failed attempts: base, doubling each time, at most cap."""
-        return min(self.base * (1 << min(attempts - 1, MAX_DOUBLINGS)), self.cap)
+        """The wait after ``attempts`` failed attempts: base, doubling each time, at most cap.
+
+        The cap is checked before multiplying: ``base * 2**n`` overflows ``timedelta`` at about
+        31 doublings for a base of a day (#306 review), which would fail the batch every run."""
+        doublings = max(attempts - 1, 0)
+        # 2**n > cap // base exactly when n >= (cap // base).bit_length(), so past that the cap
+        # applies; below it the multiplier is at most cap // base and the product fits.
+        if doublings >= (self.cap // self.base).bit_length():
+            return self.cap
+        return min(self.base * (1 << doublings), self.cap)
 
 
 @dataclass(frozen=True, slots=True)
