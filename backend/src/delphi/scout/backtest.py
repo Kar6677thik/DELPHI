@@ -20,7 +20,14 @@ were replayed. Labels are the bank's observed labels (``delphi.labels``), never 
 There is no pass/fail: the FDE engineer judges.
 
 **Bounded** (after #263): at most ``max_items`` sessions and as many cases, the newest first,
-in one transaction with ``SET LOCAL statement_timeout``/``work_mem``.
+in one transaction with ``SET LOCAL statement_timeout``/``work_mem``. Everything is loaded in a
+fixed number of statements per chunk of ``ID_CHUNK`` ids (``= ANY(:ids)``), never per item, and
+one backtest replays at a time (advisory lock 57): a busy lock raises ``BacktestBusyError``, so
+the job is retried later rather than skipped.
+
+**Labels** follow docs/05 §8's precedence (INVESTIGATOR_DISPOSITION first), the one the sensing
+trainers use, not the latest known. **The queue** is the unexplained items not dismissed from the
+Scout's queue.
 """
 
 from __future__ import annotations
@@ -33,20 +40,26 @@ from typing import Any
 from uuid import UUID
 
 import numpy as np
-from sqlalchemy import select, text
+from sqlalchemy import any_, bindparam, select, text
+from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Session, sessionmaker
 
 from delphi.engine import CompiledProfile, build_prior, compile_profile
-from delphi.guardian.api import final_decision, observe, observed_outcomes
-from delphi.guardian.tables import guardian_sessions
+from delphi.guardian.api import (
+    decided_sessions_with_prior,
+    final_decision,
+    observe,
+    outcomes_by_session,
+)
 from delphi.kb.model import GENUINE, UNEXPLAINED, KnowledgeBase
 from delphi.kb.store import active_version
-from delphi.navigator.api import case_profile, current_records
-from delphi.navigator.tables import cases
+from delphi.navigator.api import case_profile, cases_with_prior, current_outcomes_by_case
 from delphi.platform.clock import Clock
 from delphi.platform.errors import DelphiError
 from delphi.platform.jobs import JobContext
 from delphi.platform.labels import labels
+from delphi.platform.locks import BACKTEST_LOCK_KEY
 from delphi.scout.drafts import (
     DraftInvalidError,
     backtest_target,
@@ -54,6 +67,9 @@ from delphi.scout.drafts import (
     record_backtest,
     stored_spec,
 )
+from delphi.scout.queue import SubjectType
+from delphi.scout.tables import scout_queue_dismissals
+from delphi.sensing.api import label_precedence
 from delphi.sim import api as bank
 
 GUARDIAN_PROFILE = "GUARDIAN_PAYMENT"
@@ -61,10 +77,21 @@ PAYMENT = "PAYMENT"
 ACCOUNT = "ACCOUNT"
 STATEMENT_TIMEOUT = "30s"  # per statement, as in #263
 WORK_MEM = "16MB"
+ID_CHUNK = 1_000  # ids per `= ANY(:ids)` statement
 LIMITATION = (
     "A replay cannot run probes that were never run: each item keeps only the observations it "
     "has, so a draft that would have asked a different question is not credited for its answer."
 )
+
+
+class BacktestBusyError(RuntimeError):
+    """Another backtest holds lock 57. Raised, not skipped, so the job is retried: a skipped run
+    would end its revision's job as if it had run."""
+
+
+class UnfitPriorError(ValueError):
+    """A stored prior that fits neither profile (``build_prior`` refuses it): the item is
+    skipped. Any other error in a replay is a bug and is raised."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,7 +105,7 @@ class Item:
     observations: Sequence[tuple[str, str]]  # (source, outcome), in their original order
     amount_paise: int
     vulnerable: bool
-    in_queue: bool  # flagged unexplained
+    in_queue: bool  # flagged unexplained, and not dismissed from the Scout's queue
     label_subject: tuple[str, UUID] | None  # (subject type, id) of its label, if any
 
 
@@ -98,7 +125,10 @@ def replay(
     vulnerable: bool,
 ) -> Replayed:
     """The prior rebuilt (docs/06 §11), the observations applied in order, the decision."""
-    belief = build_prior(profile, p_model, anomaly_percentile)
+    try:
+        belief = build_prior(profile, p_model, anomaly_percentile)
+    except ValueError as err:
+        raise UnfitPriorError(str(err)) from err
     for source, outcome in observations:
         src = profile.sources.get(source)
         if src is None or outcome not in src.outcomes:
@@ -115,123 +145,132 @@ def _bound(session: Session) -> None:
     session.execute(text(f"SET LOCAL work_mem = '{WORK_MEM}'"))
 
 
-def _vulnerable_by_payment(session: Session, payment_ids: Sequence[UUID]) -> dict[UUID, bool]:
+def _chunks(ids: Iterable[UUID]) -> list[list[UUID]]:
+    unique = list(dict.fromkeys(ids))
+    return [unique[i : i + ID_CHUNK] for i in range(0, len(unique), ID_CHUNK)]
+
+
+def _any(ids: Sequence[UUID]) -> Any:
+    return any_(bindparam("ids", list(ids), type_=ARRAY(PG_UUID(as_uuid=True))))
+
+
+def _payments(session: Session, payment_ids: Iterable[UUID]) -> dict[UUID, tuple[int, bool]]:
+    """Each payment's amount and whether its payer is vulnerable, a chunk at a time."""
     p, a, c = bank.payments.c, bank.accounts.c, bank.customers.c
-    if not payment_ids:
-        return {}
-    rows = session.execute(
-        select(p.id, p.amount_paise, c.is_vulnerable)
-        .join(bank.accounts, a.id == p.payer_account_id)
-        .outerjoin(bank.customers, c.id == a.customer_id)
-        .where(p.id.in_(list(payment_ids)))
-    )
-    return {r.id: bool(r.is_vulnerable) for r in rows}
+    found: dict[UUID, tuple[int, bool]] = {}
+    for chunk in _chunks(payment_ids):
+        rows = session.execute(
+            select(p.id, p.amount_paise, c.is_vulnerable)
+            .join(bank.accounts, a.id == p.payer_account_id)
+            .outerjoin(bank.customers, c.id == a.customer_id)
+            .where(p.id == _any(chunk))
+        )
+        found.update({r.id: (int(r.amount_paise), bool(r.is_vulnerable)) for r in rows})
+    return found
+
+
+def _dismissed(session: Session, subject_type: SubjectType, ids: Iterable[UUID]) -> set[UUID]:
+    """The items dismissed from the Scout's queue (docs/11 §1): no longer in it."""
+    d = scout_queue_dismissals.c
+    found: set[UUID] = set()
+    for chunk in _chunks(ids):
+        found.update(
+            session.execute(
+                select(d.subject_id).where(
+                    d.subject_type == subject_type.value, d.subject_id == _any(chunk)
+                )
+            ).scalars()
+        )
+    return found
 
 
 def load_items(session: Session, clock: Clock, *, days: int, max_items: int) -> list[Item]:
     """The newest ``max_items`` decided sessions and ``max_items`` cases of the last ``days``
-    that stored their prior components."""
+    that stored their prior components, with their observations, in a few statements per
+    chunk of ids."""
     since = clock.now() - timedelta(days=days)
-    g, k, p = guardian_sessions.c, cases.c, bank.payments.c
-    sessions = list(
-        session.execute(
-            select(
-                g.id, g.payment_id, g.p_model, g.anomaly_percentile, g.unexplained, p.amount_paise
-            )
-            .join(bank.payments, p.id == g.payment_id)
-            .where(
-                g.decided_at >= since,
-                g.p_model.is_not(None),
-                g.anomaly_percentile.is_not(None),
-            )
-            .order_by(g.decided_at.desc(), g.id.desc())
-            .limit(max_items)
-        )
-    )
-    case_rows = list(
-        session.execute(
-            select(
-                k.id,
-                k.type,
-                k.subject_payment_id,
-                k.subject_account_id,
-                k.guardian_session_id,
-                k.prior_components,
-                k.unexplained,
-                k.amount_at_stake_paise,
-            )
-            .where(k.opened_at >= since)
-            .order_by(k.opened_at.desc(), k.id.desc())
-            .limit(max_items)
-        )
-    )
-    vulnerable = _vulnerable_by_payment(
+    decided = decided_sessions_with_prior(session, since=since, limit=max_items)
+    case_rows = cases_with_prior(session, since=since, limit=max_items)
+    outcomes = outcomes_by_session(
         session,
-        [r.payment_id for r in sessions]
-        + [r.subject_payment_id for r in case_rows if r.subject_payment_id is not None],
+        [s.id for s in decided]
+        + [c.guardian_session_id for c in case_rows if c.guardian_session_id is not None],
+    )
+    evidence = current_outcomes_by_case(session, [c.id for c in case_rows])
+    payments = _payments(
+        session,
+        [s.payment_id for s in decided]
+        + [c.subject_payment_id for c in case_rows if c.subject_payment_id is not None],
+    )
+    dismissed_sessions = _dismissed(
+        session, SubjectType.GUARDIAN_SESSION, (s.id for s in decided if s.unexplained)
+    )
+    dismissed_cases = _dismissed(
+        session, SubjectType.CASE, (c.id for c in case_rows if c.unexplained)
     )
     items: list[Item] = []
-    session_outcomes: dict[UUID, list[tuple[str, str]]] = {}
-    for r in sessions:
-        outcomes = list(observed_outcomes(session, r.id).items())
-        session_outcomes[r.id] = outcomes
+    for s in decided:
+        amount, vulnerable = payments.get(s.payment_id, (0, False))
         items.append(
             Item(
                 "session",
                 GUARDIAN_PROFILE,
-                dict(r.p_model),
-                float(r.anomaly_percentile),
-                outcomes,
-                int(r.amount_paise),
-                vulnerable.get(r.payment_id, False),
-                bool(r.unexplained),
-                (PAYMENT, r.payment_id),
+                s.p_model,
+                s.anomaly_percentile,
+                outcomes.get(s.id, []),
+                amount,
+                vulnerable,
+                s.unexplained and s.id not in dismissed_sessions,
+                (PAYMENT, s.payment_id),
             )
         )
     for c in case_rows:
-        stored = c.prior_components or {}
-        p_model, q = stored.get("p_model"), stored.get("anomaly_percentile")
-        if not p_model or q is None:
-            continue
-        before: list[tuple[str, str]] = []
-        if c.guardian_session_id is not None:
-            before = session_outcomes.get(c.guardian_session_id) or list(
-                observed_outcomes(session, c.guardian_session_id).items()
-            )
-        evidence = [(e.source_key, e.outcome) for e in current_records(session, c.id) if e.outcome]
+        before = outcomes.get(c.guardian_session_id, []) if c.guardian_session_id else []
         payment = c.subject_payment_id
+        subject = (
+            (PAYMENT, payment)
+            if payment is not None
+            else ((ACCOUNT, c.subject_account_id) if c.subject_account_id else None)
+        )
         items.append(
             Item(
                 "case",
                 c.type,
-                {str(h): float(v) for h, v in p_model.items()},
-                float(q),
-                [*before, *evidence],
-                int(c.amount_at_stake_paise),
-                vulnerable.get(payment, False) if payment is not None else False,
-                bool(c.unexplained),
-                (PAYMENT, payment)
-                if payment is not None
-                else ((ACCOUNT, c.subject_account_id) if c.subject_account_id else None),
+                c.p_model,
+                c.anomaly_percentile,
+                [*before, *evidence.get(c.id, [])],
+                c.amount_at_stake_paise,
+                payments.get(payment, (0, False))[1] if payment is not None else False,
+                c.unexplained and c.id not in dismissed_cases,
+                subject,
             )
         )
     return items
 
 
 def _labels(session: Session, subjects: Iterable[tuple[str, UUID]]) -> dict[tuple[str, UUID], str]:
-    wanted = list({s for s in subjects})
-    if not wanted:
-        return {}
+    """Each subject's label by docs/05 §8's precedence (an investigator's disposition over an
+    outreach over a complaint over a listing over the 60-day no-complaint), whatever order they
+    became known in. Filtered by subject type too, so ``(subject_type, subject_id, …)`` serves."""
+    rank = {source: i for i, source in enumerate(label_precedence())}
     lb = labels.c
-    rows = session.execute(
-        select(lb.subject_type, lb.subject_id, lb.hypothesis_key, lb.known_at)
-        .where(lb.subject_id.in_([i for _, i in wanted]))
-        .order_by(lb.known_at)
-    )
-    found: dict[tuple[str, UUID], str] = {}
-    for r in rows:
-        found[(r.subject_type, r.subject_id)] = r.hypothesis_key  # the latest known label wins
-    return found
+    by_type: dict[str, list[UUID]] = {}
+    for subject_type, subject_id in subjects:
+        by_type.setdefault(subject_type, []).append(subject_id)
+    best: dict[tuple[str, UUID], tuple[int, str]] = {}
+    for subject_type, ids in by_type.items():
+        for chunk in _chunks(ids):
+            rows = session.execute(
+                select(lb.subject_id, lb.hypothesis_key, lb.label_source).where(
+                    lb.subject_type == subject_type, lb.subject_id == _any(chunk)
+                )
+            )
+            for r in rows:
+                key = (subject_type, r.subject_id)
+                score = rank.get(r.label_source, len(rank))
+                if key not in best or score < best[key][0]:
+                    best[key] = (score, r.hypothesis_key)
+    return {key: hypothesis for key, (_score, hypothesis) in best.items()}
 
 
 def report(
@@ -269,7 +308,7 @@ def report(
                 )
                 for which in ("active", "candidate")
             )
-        except ValueError:  # its stored prior fits neither profile (build_prior refuses it)
+        except UnfitPriorError:  # its stored prior fits neither profile
             skipped += 1
             continue
         changes[f"{old.decision}→{new.decision}"] += 1
@@ -343,6 +382,11 @@ class RunBacktestJob:
                 return {"skipped": str(err)}
             if row.revision != revision:
                 return {"skipped": f"the draft is at revision {row.revision} now"}
+            # After the cheap checks: an older revision's job skips without waiting for the lock.
+            if not session.execute(
+                text("SELECT pg_try_advisory_xact_lock(:k)"), {"k": BACKTEST_LOCK_KEY}
+            ).scalar_one():
+                raise BacktestBusyError("another backtest is replaying; this job is retried")
             spec = stored_spec(row)
             candidate, _issues = candidate_kb(version.kb, spec)
             assert candidate is not None and spec.key is not None  # backtest_target validated it

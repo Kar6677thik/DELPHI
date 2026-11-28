@@ -36,6 +36,7 @@ __all__ = [
     "StoredArtifact",
     "active_artifacts",
     "initialisation",
+    "label_precedence",
     "request_training",
     "scout_feature_config",
     "scout_features",
@@ -130,3 +131,9 @@ def scout_features(
 
 def scout_feature_config() -> FeatureConfig:
     return load_sensing_config().features
+
+
+def label_precedence() -> tuple[str, ...]:
+    """docs/05 §8's label precedence, highest first, as the sensing trainers apply it, for
+    other readers of ``delphi.labels`` (the Scout's backtest)."""
+    return tuple(load_sensing_config().prior.label_precedence)

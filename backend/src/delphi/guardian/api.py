@@ -31,13 +31,16 @@ from delphi.guardian.procedure import (
 from delphi.guardian.service import FAIRNESS_WINDOW, PriorPort
 from delphi.guardian.store import SessionMode, SessionStatus, TerminalReason
 from delphi.guardian.views import (
+    DecidedSession,
     SessionCursor,
     SessionFilter,
     SessionRow,
     attributed_sessions_query,
+    decided_sessions_with_prior,
     get_session_row,
     list_sessions,
     observed_outcomes,
+    outcomes_by_session,
     probe_run_rows,
     unexplained_sessions_query,
 )
@@ -48,6 +51,7 @@ __all__ = [
     "PHONE_EVENT_TYPES",
     "ClientSignals",
     "DdPack",
+    "DecidedSession",
     "GuardianKpis",
     "LiveGuardian",
     "PhoneEvent",
@@ -68,6 +72,7 @@ __all__ = [
     "attributed_sessions_query",
     "build_dd_pack",
     "case_trail",
+    "decided_sessions_with_prior",
     "final_decision",
     "get_session_row",
     "guardian_kpis",
@@ -75,6 +80,7 @@ __all__ = [
     "live_guardian",
     "observe",
     "observed_outcomes",
+    "outcomes_by_session",
     "plan_step",
     "probe_run_rows",
     "render_dd_pack_html",
