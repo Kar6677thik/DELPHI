@@ -4,6 +4,7 @@ import { ADMIN_QUERY_KEY } from '../api/admin';
 import { CASES_ROOT_KEY } from '../api/cases';
 import { GUARDIAN_QUERY_KEY } from '../api/guardian';
 import { OVERVIEW_QUERY_KEY } from '../api/overview';
+import { SCOUT_QUERY_KEY } from '../api/scout';
 
 /**
  * Which cached queries an SSE event makes stale (docs/18 §1: "SSE events invalidate the relevant
@@ -17,6 +18,9 @@ export const LIVE_QUERIES: Readonly<Record<string, readonly QueryKey[]>> = {
   'guardian.session.updated': [GUARDIAN_QUERY_KEY],
   'guardian.session.decided': [GUARDIAN_QUERY_KEY, OVERVIEW_QUERY_KEY],
   'job.updated': [OVERVIEW_QUERY_KEY, ADMIN_QUERY_KEY],
+  // A run's new clusters. A page follows the jobs it starts itself (`useFollowJob`), so not
+  // every job.updated refetches the Scout.
+  'scout.cluster.created': [SCOUT_QUERY_KEY],
 };
 
 export function invalidateFor(client: QueryClient, eventType: string): void {

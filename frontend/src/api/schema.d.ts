@@ -1492,6 +1492,7 @@ export interface components {
         /**
          * DraftPatch
          * @description A partial update: the fields given replace the spec's (docs/16: partial update).
+         *     ``open_mass_share: null`` puts the default back (docs/11 §3).
          */
         DraftPatch: {
             /** Name */
