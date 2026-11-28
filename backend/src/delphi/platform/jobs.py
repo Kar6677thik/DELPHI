@@ -443,6 +443,14 @@ def get_job(session: Session, job_id: UUID) -> JobRecord | None:
     return JobRecord(*row) if row is not None else None
 
 
+def job_by_key(session: Session, idempotency_key: str) -> JobRecord | None:
+    """The job enqueued under ``idempotency_key`` (a unique-index lookup), if any."""
+    row = session.execute(
+        select(*_RECORD_COLUMNS).where(jobs.c.idempotency_key == idempotency_key)
+    ).one_or_none()
+    return JobRecord(*row) if row is not None else None
+
+
 def list_jobs(
     session: Session,
     *,

@@ -746,8 +746,9 @@ export interface paths {
          * Request Backtest
          * @description docs/11 §4: backtest the draft's current revision as a `RUN_BACKTEST` job (docs/16
          *     "→ job"). 404 for an unknown draft, 409 unless it is DRAFT or BACKTESTED, 422 with the
-         *     issues while ACTIVE + the draft breaks a KB rule. One job per revision: asking again for the
-         *     same revision returns that job.
+         *     issues while ACTIVE + the draft breaks a KB rule. One live job per revision: asking again
+         *     returns that job (``created: false``, with its ``status``) while it is queued, running or has
+         *     written its report; once it FAILED, was cancelled or was skipped, a new attempt is queued.
          */
         post: operations["request_backtest_api_v1_typology_drafts__draft_id__backtest_post"];
         delete?: never;
@@ -967,6 +968,17 @@ export interface components {
             checked: number;
             /** First Bad Id */
             first_bad_id?: number | null;
+        };
+        /** BacktestRequested */
+        BacktestRequested: {
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            /** Created */
+            created: boolean;
+            status: components["schemas"]["JobStatus"];
         };
         /**
          * Baselines
@@ -3878,7 +3890,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["RunRequested"];
+                    "application/json": components["schemas"]["BacktestRequested"];
                 };
             };
             /** @description An RFC 9457 problem (docs/16 §1) */

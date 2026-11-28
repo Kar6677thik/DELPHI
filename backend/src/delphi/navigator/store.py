@@ -18,6 +18,7 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import Connection, Float, Select, and_, cast, func, literal, null, or_, select
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -391,3 +392,58 @@ def unexplained_reviews_query(*, threshold: float, since: datetime | None = None
     if since is not None:
         query = query.where(c.disposed_at >= since)
     return query
+
+
+@dataclass(frozen=True, slots=True)
+class CaseWithPrior:
+    """A case with the prior components it stored at opening, for a replay (docs/11 §4)."""
+
+    id: UUID
+    type: str
+    subject_payment_id: UUID | None
+    subject_account_id: UUID | None
+    guardian_session_id: UUID | None
+    p_model: dict[str, float]
+    anomaly_percentile: float
+    unexplained: bool
+    amount_at_stake_paise: int
+
+
+def cases_with_prior(session: Session, *, since: datetime, limit: int) -> list[CaseWithPrior]:
+    """The newest ``limit`` cases opened since ``since`` whose ``prior_components`` hold a
+    non-empty ``p_model`` and an anomaly percentile, filtered in SQL before the limit."""
+    c = cases.c
+    rows = session.execute(
+        select(
+            c.id,
+            c.type,
+            c.subject_payment_id,
+            c.subject_account_id,
+            c.guardian_session_id,
+            c.prior_components,
+            c.unexplained,
+            c.amount_at_stake_paise,
+        )
+        .where(
+            c.opened_at >= since,
+            c.prior_components["p_model"].is_not(None),
+            c.prior_components["p_model"] != cast(literal("{}"), JSONB),
+            c.prior_components["anomaly_percentile"].as_float().is_not(None),
+        )
+        .order_by(c.opened_at.desc(), c.id.desc())
+        .limit(limit)
+    )
+    return [
+        CaseWithPrior(
+            r.id,
+            r.type,
+            r.subject_payment_id,
+            r.subject_account_id,
+            r.guardian_session_id,
+            {str(h): float(v) for h, v in r.prior_components["p_model"].items()},
+            float(r.prior_components["anomaly_percentile"]),
+            bool(r.unexplained),
+            int(r.amount_at_stake_paise),
+        )
+        for r in rows
+    ]
