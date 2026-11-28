@@ -19,7 +19,9 @@ one of the three lists.
 Sessions still running are dropped by both runners (the api's when the reset is asked for,
 the worker's here, once this reset holds its lock), so no task drives a session the reset
 deletes. The transaction runs under ``DEMO_RESET_LOCK_KEY`` (a second reset at once skips) and
-``LABEL_DELIVERY_LOCK_KEY`` (no delivery interleaves), with a statement timeout
+``LABEL_DELIVERY_LOCK_KEY`` (no delivery interleaves) and ``CAMPAIGN_RECOMPUTE_LOCK_KEY`` (the
+recompute writes ``case_entities`` then ``campaigns``, the reverse of the reset's table locks,
+so the two would deadlock; #288 review), with a statement timeout
 (``demo_reset_timeout_s``), and locks every table it writes ``IN EXCLUSIVE MODE`` (reads go on,
 writes wait), so no payment, session or case lands between its steps. The deletes are
 set-based (`DELETE … WHERE created_at > :marker`): no rows or key lists pass through Python.
@@ -39,7 +41,11 @@ from delphi.kb.store import KbStatus, kb_versions
 from delphi.platform.audit import ActorType, record
 from delphi.platform.clock import Clock
 from delphi.platform.jobs import JobContext, JobRegistry, JobType
-from delphi.platform.locks import DEMO_RESET_LOCK_KEY, LABEL_DELIVERY_LOCK_KEY
+from delphi.platform.locks import (
+    CAMPAIGN_RECOMPUTE_LOCK_KEY,
+    DEMO_RESET_LOCK_KEY,
+    LABEL_DELIVERY_LOCK_KEY,
+)
 from delphi.sim.bank import accounts, ledger_entries, sim_schedule
 from delphi.sim.catalog import datasets
 from delphi.sim.truth import label_schedule
@@ -265,6 +271,8 @@ class DemoResetJob:
                 )
             )
             session.execute(select(func.pg_advisory_xact_lock(LABEL_DELIVERY_LOCK_KEY)))
+            # Before the table locks: a recompute in flight finishes first, and none starts.
+            session.execute(select(func.pg_advisory_xact_lock(CAMPAIGN_RECOMPUTE_LOCK_KEY)))
             _lock_tables(session)
             session.execute(text("SET CONSTRAINTS ALL DEFERRED"))
             marker = _marker(session)

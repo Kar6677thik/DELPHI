@@ -154,6 +154,7 @@ def test_access(
         .replace("{user_id}", str(uuid4()))
         .replace("{version_id}", "999")
         .replace("{case_id}", str(uuid4()))
+        .replace("{campaign_id}", str(uuid4()))
         .replace("{operation_id}", str(uuid4()))
         .replace("{lien_id}", str(uuid4()))
         .replace("{item_id}", str(uuid4()))

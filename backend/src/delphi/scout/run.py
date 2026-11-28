@@ -33,8 +33,10 @@ newer one, and an older candidate it no longer finds is stale.
 **Gap fills (docs/11 §2 is silent):**
 - The sensing artifacts store no feature means or standard deviations, so the z-scores use the
   run's own items (queue and reference).
-- The F3 stage indicators are left empty: the spec names the four stages (A-07) but not how a
-  customer's events map to them (asked on #117).
+
+**F3 stages** (the owner's mapping on #255, ``delphi.scout.f3``): each item with a payment gets
+the stages its customer's events in the ``scout.f3_window_h`` before it show; they are four 0/1
+columns of the matrix.
 
 ``SCOUT_AUTO_TRIGGER`` (every 5 min) enqueues a run once ``auto_trigger_new_items`` items have
 entered the queue since the last run started (before any run: in the lookback), counted no
@@ -65,6 +67,7 @@ from delphi.platform.jobs import JobContext, JobStatus, JobType, enqueue
 from delphi.platform.locks import SCOUT_RUN_LOCK_KEY
 from delphi.platform.tables import jobs
 from delphi.scout.clustering import FeatureSpace, ScoutItem, scout
+from delphi.scout.f3 import STAGES, f3_stages
 from delphi.scout.queue import QueueItem, SubjectType, count_queue_items, queue_items
 from delphi.scout.tables import scout_clusters, scout_runs, typology_drafts
 from delphi.sensing.api import FeatureConfig, scout_feature_config, scout_features
@@ -91,7 +94,9 @@ def _channel(session: Session, payment_id: UUID | None) -> str:
     return payment.channel if payment is not None else ""
 
 
-def _load(session: Session, item: QueueItem, config: FeatureConfig) -> ScoutItem:
+def _load(
+    session: Session, item: QueueItem, config: FeatureConfig, f3_window: timedelta
+) -> ScoutItem:
     if item.subject_type is SubjectType.GUARDIAN_SESSION:
         outcomes = observed_outcomes(session, item.subject_id)
         features = (
@@ -107,6 +112,7 @@ def _load(session: Session, item: QueueItem, config: FeatureConfig) -> ScoutItem
         outcomes=outcomes,
         features=features or {},
         channel=_channel(session, item.payment_id),
+        f3_stages=f3_stages(session, item.payment_id, f3_window),
     )
 
 
@@ -119,7 +125,7 @@ def _space(kb: KnowledgeBase, items: Sequence[ScoutItem]) -> FeatureSpace:
         feature_means={n: float(v.mean()) for n, v in values.items()},
         feature_stds={n: float(v.std()) for n, v in values.items()},
         channels=CHANNELS,
-        f3_stages=(),
+        f3_stages=STAGES,
     )
 
 
@@ -162,9 +168,11 @@ def run_scout(
     since = started - timedelta(days=cfg.lookback_days)
     config = scout_feature_config()
     newest = queue_items(session, kb, since=since, limit=max_items, newest_first=True)
-    queue = [_Loaded(q, _load(session, q, config)) for q in reversed(newest)]
+    f3_window = timedelta(hours=cfg.f3_window_h)
+    queue = [_Loaded(q, _load(session, q, config, f3_window)) for q in reversed(newest)]
     reference = [
-        _load(session, r, config) for r in _reference(session, since=since, limit=max_items)
+        _load(session, r, config, f3_window)
+        for r in _reference(session, since=since, limit=max_items)
     ]
     items = [q.item for q in queue]
     result = scout(
