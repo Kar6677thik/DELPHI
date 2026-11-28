@@ -319,6 +319,8 @@ scout:
   auto_trigger_new_items: 10
   shadow_min_sessions: 200
   shadow_min_sessions_demo: 10            # used when DELPHI_TIME_MODE=DEMO
+  # cluster_selection_epsilon: 1.0       # docs/11 §2; a model default (#117), so KB v1 omits it and
+                                          # keeps its hash; a later version may set it
 time:
   demo_time_scale: 0.0333333333           # 1/30: time-scaled durations shrink 30× when DELPHI_TIME_MODE=DEMO
 elicitation:
