@@ -15,7 +15,7 @@ from sqlalchemy import text, update
 from sqlalchemy.dialects import postgresql
 
 from delphi.api.security import Permission, Principal, current_principal
-from delphi.guardian.api import unexplained_sessions_query
+from delphi.guardian.api import attributed_sessions_query, unexplained_sessions_query
 from delphi.guardian.tables import guardian_sessions
 from delphi.kb.store import active_version
 from delphi.platform.errors import DelphiError, ProblemCode
@@ -244,3 +244,13 @@ def test_the_session_source_uses_its_partial_index(env: Env) -> None:  # noqa: F
     _decided(env, unexplained=True)
     query = unexplained_sessions_query().order_by(text("entered_at"), text("subject_id")).limit(50)
     assert "guardian_sessions_unexplained_decided_idx" in _plan(env, query)
+
+
+def test_the_reference_set_uses_its_partial_index(env: Env) -> None:  # noqa: F811
+    """#255 review: `WHERE NOT unexplained` matches the reference index; `IS false` did not, so
+    every run read and sorted the whole of guardian_sessions."""
+    _decided(env, unexplained=False)
+    query = (
+        attributed_sessions_query().order_by(text("entered_at DESC"), text("subject_id")).limit(50)
+    )
+    assert "guardian_sessions_reference_decided_idx" in _plan(env, query)

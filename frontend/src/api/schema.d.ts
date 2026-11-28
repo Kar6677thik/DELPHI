@@ -792,6 +792,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/scout/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Request Run
+         * @description docs/11 §2: a manual Scout run, as a `RUN_SCOUT` job (docs/16 "→ job").
+         */
+        post: operations["request_run_api_v1_scout_runs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/scout/clusters": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Clusters
+         * @description The clusters of every run, newest first, each with its latest typology draft; docs/16
+         *     keyset paging (``limit`` ≤ 200, ``cursor``), on the ``(created_at, id)`` index.
+         */
+        get: operations["read_clusters_api_v1_scout_clusters_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/guardian/sessions": {
         parameters: {
             query?: never;
@@ -1335,6 +1376,51 @@ export interface components {
              * @default 0
              */
             paste_count: number;
+        };
+        /** ClusterPage */
+        ClusterPage: {
+            /** Items */
+            items: components["schemas"]["ClusterView"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
+        /** ClusterView */
+        ClusterView: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            /** Size */
+            size: number;
+            /** Member Refs */
+            member_refs: {
+                [key: string]: string;
+            }[];
+            /** Distinguishing Features */
+            distinguishing_features: {
+                [key: string]: unknown;
+            };
+            /** Outcome Profile */
+            outcome_profile: {
+                [key: string]: unknown;
+            };
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Draft Id */
+            draft_id: string | null;
+            /** Draft Status */
+            draft_status: string | null;
+            /** Suggested Name */
+            suggested_name: string | null;
         };
         /** CoolingOffAnswer */
         CoolingOffAnswer: {
@@ -2333,6 +2419,16 @@ export interface components {
          * @enum {string}
          */
         Role: "VIEWER" | "INVESTIGATOR" | "FDE_ENGINEER" | "ADMIN";
+        /** RunRequested */
+        RunRequested: {
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            /** Created */
+            created: boolean;
+        };
         /**
          * SessionMode
          * @enum {string}
@@ -3900,6 +3996,69 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["QueueItemView"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    request_run_api_v1_scout_runs_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunRequested"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    read_clusters_api_v1_scout_clusters_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClusterPage"];
                 };
             };
             /** @description An RFC 9457 problem (docs/16 §1) */

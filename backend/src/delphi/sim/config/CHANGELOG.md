@@ -8,6 +8,49 @@ upgrade changes them, `test_committed_freeze_matches_kb_v1_and_config` fails eve
 input changed. Then either keep the previous numpy, or regenerate with
 `uv run delphi sim freeze-response-models`, bump `generator_version` and record the upgrade here.
 
+## 17
+
+Fixes from the #192 review and the nightly (#36). S-4 is handled separately.
+
+- **GENUINE_UNUSUAL rate.** v16's new-payee streams plan genuine sessions outside the routine
+  λ, but the unusual rate was still drawn from λ alone. So each customer made 30–40% more
+  genuine sessions with the same number of unusual events: about 107 per 10,000 on `eval`
+  against 150 configured, and the nightly's slow rate check has failed on `main` since v16.
+  Each customer's unusual rate is now based on all of its genuine sessions: each new-payee
+  stream adds its expected sessions a day, `(1 + mean follow-ups) / mean_days`, to λ before the
+  150 / 9,700 scaling. Personas save no new payees, so they are unchanged.
+- **Payees saved after both accounts open** (#192 review). A payee in the population was saved
+  at a time between the customer's account opening and the history start, which could be
+  before the payee's own account was opened. It is now saved after the later of the two
+  openings.
+- **#192 nits:** the v16 entry's wording (the staged takeover is "hours before the drain"; the
+  routine draws shift), a comment on window saves clamped to the stream's start,
+  `generator.yaml`'s new-person comment (every 45 days, 0–1 follow-ups), and no code defaults
+  for `early_lead_days` and `staged_lead_hours` (`generator.yaml` sets both).
+
+**Rates on `eval`** (`uv run delphi sim stats --profile eval`; configured / history / window,
+per 10,000):
+
+| | configured | v16 | v17 |
+|---|---|---|---|
+| GENUINE_UNUSUAL | 150 | 106.9 / 110.3 | 140.8 / 143.2 |
+
+Every scenario is within ±10% of its rate again (`DELPHI_RUN_SLOW=1`
+`test_eval_matches_the_configured_rates_within_ten_percent` passes). A new fast check in
+`test_the_stats_report` keeps GENUINE_UNUSUAL within ±20% of 150 on `test` (157.6 there), so a
+change like v16's now fails in PR CI.
+
+**Separability on `eval`** is unchanged in substance (`uv run python -m scripts.prior_separability
+--profile eval`, 29 min):
+
+| | v16 | v17 |
+|---|---|---|
+| Macro AUC | 0.984 | 0.986 |
+| GENUINE / ATO / DA / INV AUC | 0.975 / 0.998 / 0.989 / 0.975 | 0.977 / 0.998 / 0.990 / 0.978 |
+| Highest single-feature AUC | 0.871 (`payee_age_days`) | 0.871 (`is_new_payee`; `payee_age_days` 0.870) |
+
+No single feature separates any fraud class above 0.90 (#166's target).
+
 ## 16
 
 Makes the simulator realistically hard for the payment prior (#166, decided on #148). The #148
@@ -17,13 +60,13 @@ habitual hour, and fraud payees' accounts were ~300 days old against genuine one
 **Fraud:**
 - **Timing.** APP payments (digital arrest, investment, collect-refund) fall at the victim's
   habitual hour ± N(0, 1.5 h) with probability 0.70, else as before. ATO keeps an off-hour
-  skew (0.40 habitual). From each instance's own stream, so other draws don't move.
+  skew (0.40 habitual). From each instance's own stream.
 - **Aged and rented mules.** 50% of mule accounts were opened 1–7 years before the history
   (the rest 5–400 days, as before).
 - **Payees saved earlier.** A digital-arrest victim saves the first mule 1–10 days ahead with
   probability 0.40, and returns to an account already paid with probability 0.50. 35% of
-  takeovers are staged: the mule is saved 4–48 h before the drain, past the new-payee
-  cooling-off.
+  takeovers are staged: the mule is saved 4–48 h before the drain, hours before the drain
+  rather than minutes.
 
 **Genuine customers:**
 - **Young accounts.** 20% of genuine non-merchant accounts (was 10%) and 35% of merchants are
@@ -31,7 +74,7 @@ habitual hour, and fraud payees' accounts were ~300 days old against genuine one
 - **New payees.** New person payees every 45 days (was 365; median ₹10,000, UPI/IMPS/NEFT
   0.40/0.40/0.20), and first visits to everyday shops every 10 days (median ₹500, scan and
   pay, 1–10 min after saving). 30% of new people and 10% of new shops are saved 0.2–10 days
-  before the first payment.
+  before the first payment. A new person payee's follow-up payments are 0–1 (were 0–3).
 - **Routine.** Once saved, a payee joins the routine: while a customer has payees saved in
   the last 45 days, 25% of its routine payments go to one of them. So new payees take a share
   of the docs/14 rate instead of adding to it (0.62 customer payments a day on `test`).
@@ -39,6 +82,10 @@ habitual hour, and fraud payees' accounts were ~300 days old against genuine one
   they are, so a new login city is no ATO tell.
 - **Salary.** The median salary is ₹40,000 (was ₹30,000, a gap value) to fund the extra
   first payments: spending per customer-month is +14% on `test`.
+
+The new-payee rules run before the routine loop, and routine adoption draws from the routine
+stream, so the routine draws and the ids after them shift as well. Generation stays
+deterministic per seed.
 
 **Separability on `eval`** (the prior trained as in `test_sensing_prior.py`; reproduce with
 `uv run python -m scripts.prior_separability --profile eval`, about 30 min):

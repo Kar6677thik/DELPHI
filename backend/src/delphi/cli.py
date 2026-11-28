@@ -15,7 +15,7 @@ import sys
 import threading
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID
 
@@ -74,6 +74,7 @@ from delphi.probes.api import (
     passive_fetchers,
 )
 from delphi.probes.registry import CLASSIFIER_NAMES
+from delphi.scout.jobs import register_scout_jobs
 from delphi.sensing.api import SensingInference
 from delphi.sensing.config import load_sensing_config
 from delphi.sensing.jobs import register_sensing_jobs
@@ -333,6 +334,13 @@ def worker_registry(
     )
     register_question_variant_jobs(
         registry, sessions=platform.sessions, clock=platform.clock, llm=llm
+    )
+    register_scout_jobs(
+        registry,
+        sessions=platform.sessions,
+        clock=platform.clock,
+        max_items=settings.scout_max_items,
+        failure_backoff=timedelta(minutes=settings.scout_failure_backoff_min),
     )
     if settings.simulation_enabled and settings.sim_database_url is None:
         # The api accepts simulated calls on this flag; a worker without the simulator's pool
