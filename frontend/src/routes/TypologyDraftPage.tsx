@@ -3,11 +3,12 @@ import { Link, useParams } from 'react-router';
 
 import { ApiError } from '../api/client';
 import { useKbContent, useKbVersions } from '../api/kb';
-import { useBacktest, useDraft, useSaveDraft } from '../api/scout';
+import { useBacktest, useDraft, useFollowJob, useSaveDraft } from '../api/scout';
 import type { DraftIssue, DraftPatch, DraftView, LikelihoodRow } from '../api/types';
 import { ProblemAlert } from '../components/ProblemAlert';
 import { RoleGate } from '../components/RoleGate';
 import { humanise, keyText } from '../lib/format';
+import { useHasPermission } from '../lib/session';
 
 /**
  * The typology draft editor (docs/18 §2 `/scout/drafts/:id`, docs/11 §3–4, #118): the draft's
@@ -25,21 +26,51 @@ const SECONDARY =
   'rounded-full border border-control px-4 py-1.5 text-[13px] text-soft transition-colors hover:border-soft hover:text-ink disabled:opacity-50';
 const PERCENT = 100;
 
-/** docs/11 §3: the elicitation helper's confidence → ESS. */
-export const CONFIDENCE = [
-  { label: 'Low', ess: 10 },
-  { label: 'Medium', ess: 20 },
-  { label: 'High', ess: 50 },
+/** docs/11 §3: the elicitation helper's confidence levels; their ESS comes from the ACTIVE KB. */
+const CONFIDENCE_LEVELS = [
+  { level: 'LOW', label: 'Low' },
+  { level: 'MEDIUM', label: 'Medium' },
+  { level: 'HIGH', label: 'High' },
 ] as const;
 
+export interface Confidence {
+  label: string;
+  ess: number;
+}
+
+/** `config.elicitation.confidence_ess` of a stored KB version, in Low → High order. */
+export function confidencePresets(content: unknown): Confidence[] {
+  if (typeof content !== 'object' || content === null) return [];
+  const config = (content as { config?: { elicitation?: { confidence_ess?: unknown } } }).config;
+  const map = config?.elicitation?.confidence_ess;
+  if (typeof map !== 'object' || map === null) return [];
+  const values = map as Record<string, unknown>;
+  return CONFIDENCE_LEVELS.flatMap(({ level, label }) => {
+    const ess = values[level];
+    return typeof ess === 'number' ? [{ label, ess }] : [];
+  });
+}
+
+/** `config.scout.lookback_days` of a stored KB version: how far back a backtest replays. */
+export function lookbackDays(content: unknown): number | null {
+  if (typeof content !== 'object' || content === null) return null;
+  const config = (content as { config?: { scout?: { lookback_days?: unknown } } }).config;
+  const days = config?.scout?.lookback_days;
+  return typeof days === 'number' ? days : null;
+}
+
 const EDITABLE = new Set(['CANDIDATE', 'DRAFT', 'BACKTESTED']);
+/** What the colour picker shows before anyone picks one; never sent unless picked. */
+const PICKER_PLACEHOLDER = '#808080';
 
 interface Spec {
   name: string;
   key: string;
   description: string;
-  color: string;
-  open_mass_share: number;
+  /** null: no colour stored, and none picked here. */
+  color: string | null;
+  /** null: none stored, so the server's default applies (docs/11 §3). */
+  open_mass_share: number | null;
   likelihoods: Record<string, LikelihoodRow>;
 }
 
@@ -67,8 +98,8 @@ export function readSpec(spec: Record<string, unknown>): Spec {
     name: str(spec.name),
     key: str(spec.key),
     description: str(spec.description),
-    color: str(spec.color) || '#7C3AED',
-    open_mass_share: typeof spec.open_mass_share === 'number' ? spec.open_mass_share : 0.5,
+    color: str(spec.color) || null,
+    open_mass_share: typeof spec.open_mass_share === 'number' ? spec.open_mass_share : null,
     likelihoods,
   };
 }
@@ -84,13 +115,26 @@ function pct(p: number): string {
   return `${(p * PERCENT).toFixed(p > 0 && p < 0.01 ? 1 : 0)}%`;
 }
 
-function useActiveOutcomes(): Record<string, string[]> {
+interface ActiveKb {
+  outcomes: Record<string, string[]>;
+  confidence: Confidence[];
+  lookbackDays: number | null;
+}
+
+/** What the editor reads from the ACTIVE KB: each source's outcomes and the config it shows. */
+function useActiveKb(): ActiveKb {
   const versions = useKbVersions();
   const activeId = versions.data?.items.find((v) => v.status === 'ACTIVE')?.id;
-  const content = useKbContent(activeId);
+  const kb = useKbContent(activeId);
   return useMemo(
-    () => Object.fromEntries((content.data?.content.sources ?? []).map((s) => [s.key, s.outcomes])),
-    [content.data],
+    () => ({
+      outcomes: Object.fromEntries(
+        (kb.data?.content.sources ?? []).map((s) => [s.key, s.outcomes]),
+      ),
+      confidence: confidencePresets(kb.data?.version.content),
+      lookbackDays: lookbackDays(kb.data?.version.content),
+    }),
+    [kb.data],
   );
 }
 
@@ -115,31 +159,45 @@ export function TypologyDraftPage() {
           </div>
         </>
       )}
-      {draft.isSuccess && (
-        <Editor key={`${draft.data.id}-${String(draft.data.version)}`} draft={draft.data} />
-      )}
+      {/* Keyed on the draft alone: a server-side version bump (a backtest, someone's save)
+          must not remount the editor and wipe unsaved edits. */}
+      {draft.isSuccess && <Editor key={draft.data.id} draft={draft.data} />}
     </section>
   );
 }
 
 function Editor({ draft }: { draft: DraftView }) {
-  const stored = readSpec(draft.spec);
-  const [spec, setSpec] = useState<Spec>(stored);
-  const outcomes = useActiveOutcomes();
+  // Unsaved edits, with the version they started from. None: the form shows the draft as the
+  // server has it now, so a version bump with nothing unsaved (a backtest) just shows through.
+  const [local, setLocal] = useState<{ version: number; spec: Spec } | null>(null);
+  const stored = useMemo(() => readSpec(draft.spec), [draft.spec]);
+  const spec = local?.spec ?? stored;
+  const kb = useActiveKb();
   const save = useSaveDraft(draft.id);
-  const editable = EDITABLE.has(draft.status);
+  const canWrite = useHasPermission('fde');
+  const conflict = save.error instanceof ApiError ? save.error.status : null;
+  const editable = EDITABLE.has(draft.status) && conflict !== 409;
+  const changedOnServer = local !== null && local.version !== draft.version;
+  const reload = () => {
+    setLocal(null);
+    save.reset();
+  };
+  const edit = (next: (s: Spec) => Spec) => {
+    setLocal((l) => ({ version: l?.version ?? draft.version, spec: next(l?.spec ?? stored) }));
+  };
   const set = (patch: Partial<Spec>) => {
-    setSpec((s) => ({ ...s, ...patch }));
+    edit((s) => ({ ...s, ...patch }));
   };
   const setRow = (source: string, row: LikelihoodRow) => {
-    setSpec((s) => ({ ...s, likelihoods: { ...s.likelihoods, [source]: row } }));
+    edit((s) => ({ ...s, likelihoods: { ...s.likelihoods, [source]: row } }));
   };
   const patch = (): DraftPatch => ({
     name: spec.name,
     key: spec.key,
     description: spec.description,
-    color: spec.color,
-    open_mass_share: spec.open_mass_share,
+    // Only what someone set: no colour or open mass share nobody chose.
+    ...(spec.color !== null && { color: spec.color }),
+    ...(spec.open_mass_share !== null && { open_mass_share: spec.open_mass_share }),
     likelihoods: Object.fromEntries(
       Object.entries(spec.likelihoods).map(([source, row]) => [
         source,
@@ -159,6 +217,24 @@ function Editor({ draft }: { draft: DraftView }) {
         {draft.editors.length > 0 && ` · edited by ${String(draft.editors.length)}`}
       </p>
 
+      {draft.status === 'SUPERSEDED' && (
+        <p className="mt-3 rounded-md border border-control px-4 py-3 text-[13px] text-soft">
+          A newer Scout run superseded this candidate. It is kept for the audit trail and can't be
+          edited.
+        </p>
+      )}
+      {changedOnServer && conflict === null && (
+        <div className="mt-3 rounded-md border border-warning/40 px-4 py-3 text-[13px]">
+          <p className="text-ink">
+            This draft changed on the server (now revision {draft.revision}) while you were editing.
+            Your edits are kept until you reload; saving them now would be refused.
+          </p>
+          <button type="button" className={`mt-2 ${SECONDARY}`} onClick={reload}>
+            Reload the draft (discards your edits)
+          </button>
+        </div>
+      )}
+
       <Issues issues={draft.issues} />
 
       <form
@@ -166,10 +242,17 @@ function Editor({ draft }: { draft: DraftView }) {
         className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,360px)_minmax(0,1fr)]"
         onSubmit={(e) => {
           e.preventDefault();
-          save.mutate({ version: draft.version, patch: patch() });
+          save.mutate(
+            { version: local?.version ?? draft.version, patch: patch() },
+            {
+              onSuccess: () => {
+                setLocal(null); // the saved draft is the server's now (useSaveDraft caches it)
+              },
+            },
+          );
         }}
       >
-        <fieldset disabled={!editable} className="space-y-4 rounded-md bg-surface p-6">
+        <fieldset disabled={!editable || !canWrite} className="space-y-4 rounded-md bg-surface p-6">
           <legend className="sr-only">Typology</legend>
           <Field label="Display name" id="draft-name">
             <input
@@ -203,15 +286,24 @@ function Editor({ draft }: { draft: DraftView }) {
             />
           </Field>
           <Field label="Colour" id="draft-color">
-            <input
-              id="draft-color"
-              type="color"
-              className="h-8 w-16 rounded border border-control bg-raised"
-              value={/^#[0-9a-fA-F]{6}$/.test(spec.color) ? spec.color : '#7C3AED'}
-              onChange={(e) => {
-                set({ color: e.target.value.toUpperCase() });
-              }}
-            />
+            <div className="flex items-center gap-3">
+              <input
+                id="draft-color"
+                type="color"
+                className="h-8 w-16 rounded border border-control bg-raised"
+                value={
+                  spec.color !== null && /^#[0-9a-fA-F]{6}$/.test(spec.color)
+                    ? spec.color
+                    : PICKER_PLACEHOLDER
+                }
+                onChange={(e) => {
+                  set({ color: e.target.value.toUpperCase() });
+                }}
+              />
+              {spec.color === null && (
+                <span className="text-[12px] text-muted">None chosen yet</span>
+              )}
+            </div>
           </Field>
           <Field label="Open mass share" id="draft-open-mass">
             <input
@@ -220,16 +312,19 @@ function Editor({ draft }: { draft: DraftView }) {
               min={0}
               max={1}
               step={0.05}
+              placeholder="Server default"
               className={`${INPUT} figure`}
-              value={spec.open_mass_share}
+              value={spec.open_mass_share ?? ''}
               onChange={(e) => {
-                set({ open_mass_share: Number(e.target.value) });
+                set({
+                  open_mass_share: e.target.value === '' ? null : Number(e.target.value),
+                });
               }}
             />
           </Field>
         </fieldset>
 
-        <fieldset disabled={!editable} className="min-w-0 rounded-md bg-surface p-6">
+        <fieldset disabled={!editable || !canWrite} className="min-w-0 rounded-md bg-surface p-6">
           <legend className="text-[16px] text-ink">Likelihood rows</legend>
           <p className="mt-1 text-[12px] text-muted">
             Weights per outcome, shown normalised. Confidence sets how much evidence the row is
@@ -244,7 +339,8 @@ function Editor({ draft }: { draft: DraftView }) {
                 key={source}
                 source={source}
                 row={row}
-                outcomes={outcomes[source]}
+                outcomes={kb.outcomes[source]}
+                confidence={kb.confidence}
                 onChange={(next) => {
                   setRow(source, next);
                 }}
@@ -255,10 +351,14 @@ function Editor({ draft }: { draft: DraftView }) {
 
         <RoleGate permission="fde">
           <div className="flex flex-wrap items-center gap-3 lg:col-span-2">
-            <button type="submit" className={PRIMARY} disabled={!editable || save.isPending}>
+            <button
+              type="submit"
+              className={PRIMARY}
+              disabled={!editable || save.isPending || changedOnServer}
+            >
               Save as revision {draft.revision + 1}
             </button>
-            {!editable && (
+            {!editable && draft.status !== 'SUPERSEDED' && (
               <p className="text-[12px] text-muted">
                 A {humanise(draft.status).toLowerCase()} draft can't be edited.
               </p>
@@ -273,12 +373,29 @@ function Editor({ draft }: { draft: DraftView }) {
       </form>
       {save.isError && (
         <div className="mt-3 space-y-2">
-          <ProblemAlert error={save.error} title="Could not save the draft" />
+          {conflict === 412 ? (
+            <div className="rounded-md border border-warning/40 px-4 py-3 text-[13px]">
+              <p className="text-ink">
+                Someone saved this draft after you started editing, so yours wasn't saved. Reload to
+                see their version, then make your change again.
+              </p>
+              <button type="button" className={`mt-2 ${SECONDARY}`} onClick={reload}>
+                Reload the draft (discards your edits)
+              </button>
+            </div>
+          ) : conflict === 409 ? (
+            <p className="rounded-md border border-warning/40 px-4 py-3 text-[13px] text-ink">
+              This draft can no longer be edited (it is {humanise(draft.status).toLowerCase()} now),
+              so nothing was saved. The form is read-only.
+            </p>
+          ) : (
+            <ProblemAlert error={save.error} title="Could not save the draft" />
+          )}
           {saveErrors.length > 0 && <Issues issues={saveErrors} title="What the KB rules refuse" />}
         </div>
       )}
 
-      <Backtest draft={draft} />
+      <Backtest draft={draft} lookbackDays={kb.lookbackDays} />
     </>
   );
 }
@@ -320,15 +437,17 @@ function RowEditor({
   source,
   row,
   outcomes,
+  confidence,
   onChange,
 }: {
   source: string;
   row: LikelihoodRow;
   outcomes: string[] | undefined;
+  confidence: readonly Confidence[];
   onChange: (row: LikelihoodRow) => void;
 }) {
   const probs = normalise(row.probs);
-  const known = CONFIDENCE.some((c) => c.ess === row.ess);
+  const known = confidence.some((c) => c.ess === row.ess);
   const titleId = `row-${source}`;
   return (
     <div role="group" aria-labelledby={titleId}>
@@ -348,7 +467,7 @@ function RowEditor({
             {!known && (
               <option value={String(row.ess)}>Empirical (ESS {figureEss(row.ess)})</option>
             )}
-            {CONFIDENCE.map((c) => (
+            {confidence.map((c) => (
               <option key={c.ess} value={String(c.ess)}>
                 {c.label} (ESS {c.ess})
               </option>
@@ -412,8 +531,10 @@ function rate(p: number | null): string {
   return p === null ? '—' : pct(p);
 }
 
-function Backtest({ draft }: { draft: DraftView }) {
+function Backtest({ draft, lookbackDays }: { draft: DraftView; lookbackDays: number | null }) {
   const backtest = useBacktest(draft.id);
+  const followed = useFollowJob(backtest.data?.job_id);
+  const status = followed.data?.status ?? backtest.data?.status;
   const report = draft.backtest_report as Report | null;
   const stale = report !== null && draft.backtested_revision !== draft.revision;
   const canRun =
@@ -438,13 +559,14 @@ function Backtest({ draft }: { draft: DraftView }) {
         </RoleGate>
       </div>
       <p className="mt-1 max-w-[80ch] text-[12px] text-muted">
-        Replays the last 30 days' sessions and cases under the ACTIVE knowledge base and under it
-        plus this draft. There is no pass mark: you judge the result.
+        Replays the last {lookbackDays === null ? 'few' : String(lookbackDays)} days' sessions and
+        cases under the ACTIVE knowledge base and under it plus this draft. There is no pass mark:
+        you judge the result.
         {!canRun && ' A draft must be saved, and have no KB issues, before a backtest.'}
       </p>
       {backtest.isSuccess && (
         <p role="status" className="mt-3 text-[13px] text-soft">
-          Backtest started. The report appears here when it ends.
+          {backtestMessage(backtest.data.created, status)}
         </p>
       )}
       {backtest.isError && (
@@ -515,4 +637,15 @@ function Stat({ label, value }: { label: string; value: string }) {
       <dd className="figure mt-1 text-[17px]">{value}</dd>
     </div>
   );
+}
+
+/** What the backtest button's answer means: a new run, or one of this revision already. */
+export function backtestMessage(created: boolean, status: string | undefined): string {
+  if (status === 'SUCCEEDED') return 'The backtest ended. Its report is below.';
+  if (status === 'FAILED' || status === 'CANCELLED')
+    return 'The backtest did not finish. Asking again starts a new one.';
+  if (created) return 'Backtest started. The report appears here when it ends.';
+  return status === 'RUNNING'
+    ? 'This revision is being backtested already. The report appears here when it ends.'
+    : 'A backtest of this revision is queued already. The report appears here when it ends.';
 }

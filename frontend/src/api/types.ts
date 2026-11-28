@@ -79,3 +79,4 @@ export type DraftStatus = Schemas['DraftStatus'];
 export type DraftIssue = Schemas['DraftIssue'];
 export type LikelihoodRow = Schemas['LikelihoodRow'];
 export type RunRequested = Schemas['RunRequested'];
+export type BacktestRequested = Schemas['BacktestRequested'];

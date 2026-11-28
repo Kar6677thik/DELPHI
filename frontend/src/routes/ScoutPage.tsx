@@ -1,6 +1,12 @@
 import { Link } from 'react-router';
 
-import { QUEUE_PAGE, useClusters, useRunScout, useScoutQueue } from '../api/scout';
+import {
+  QUEUE_COUNT_PAGE,
+  useClusters,
+  useFollowJob,
+  useRunScout,
+  useScoutQueue,
+} from '../api/scout';
 import type { ClusterView } from '../api/types';
 import { ProblemAlert } from '../components/ProblemAlert';
 import { RoleGate } from '../components/RoleGate';
@@ -47,7 +53,10 @@ function figure(value: number): string {
 export function ScoutPage() {
   const queue = useScoutQueue();
   const clusters = useClusters();
+  const items = clusters.data?.pages.flatMap((page) => page.items) ?? [];
   const run = useRunScout();
+  const followed = useFollowJob(run.data?.job_id);
+  const ended = followed.data?.status;
   const waiting = queue.data?.items.length ?? 0;
   const more = queue.data?.next_cursor != null;
   return (
@@ -68,7 +77,7 @@ export function ScoutPage() {
           </p>
           {more && (
             <p className="text-[11px] text-muted">
-              More than {String(QUEUE_PAGE)}; a run takes the newest.
+              More than {String(QUEUE_COUNT_PAGE)}; a run takes the newest.
             </p>
           )}
         </div>
@@ -86,9 +95,13 @@ export function ScoutPage() {
         </RoleGate>
         {run.isSuccess && (
           <p role="status" className="text-[13px] text-soft">
-            {run.data.created
-              ? 'Run started. The clusters appear below when it ends.'
-              : 'A run is already under way.'}
+            {ended === 'SUCCEEDED'
+              ? 'The run ended. Its clusters are below.'
+              : ended === 'FAILED' || ended === 'CANCELLED'
+                ? `The run ${ended === 'FAILED' ? 'failed' : 'was cancelled'}. See Admin → Jobs.`
+                : run.data.created
+                  ? 'Run started. The clusters appear below when it ends.'
+                  : 'A run is already under way.'}
           </p>
         )}
       </div>
@@ -110,10 +123,10 @@ export function ScoutPage() {
         </div>
       )}
       {clusters.isPending && <p className="mt-3 text-[13px] text-muted">Loading the clusters…</p>}
-      {clusters.isSuccess && clusters.data.items.length === 0 && (
+      {clusters.isSuccess && items.length === 0 && (
         <p className="mt-3 text-[13px] text-muted">No cluster yet. A run groups the queue.</p>
       )}
-      {clusters.isSuccess && clusters.data.items.length > 0 && (
+      {clusters.isSuccess && items.length > 0 && (
         <table className="mt-3 w-full text-left text-[13px]">
           <caption className="sr-only">Clusters, newest first</caption>
           <thead className="text-[12px] text-muted">
@@ -136,7 +149,7 @@ export function ScoutPage() {
             </tr>
           </thead>
           <tbody>
-            {clusters.data.items.map((c) => (
+            {items.map((c) => (
               <tr key={c.id} className="border-t border-line align-top">
                 <td className="py-3 pr-4">{c.suggested_name ?? 'Unnamed cluster'}</td>
                 <td className="figure py-3 pr-4">{c.size}</td>
@@ -174,6 +187,18 @@ export function ScoutPage() {
             ))}
           </tbody>
         </table>
+      )}
+      {clusters.hasNextPage && (
+        <button
+          type="button"
+          className="mt-4 rounded-full border border-control px-4 py-1.5 text-[13px] text-soft transition-colors hover:border-soft hover:text-ink disabled:opacity-50"
+          disabled={clusters.isFetchingNextPage}
+          onClick={() => {
+            void clusters.fetchNextPage();
+          }}
+        >
+          {clusters.isFetchingNextPage ? 'Loading…' : 'Load more'}
+        </button>
       )}
     </section>
   );

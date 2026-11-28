@@ -41,24 +41,38 @@ ADR-0008. React 18 + TypeScript (strict) + Vite, served as static files by the a
 | `/admin` | Admin | `admin` | users, datasets, sensing training, demo story runner, demo reset, jobs |
 
 **Typology Scout (#118 PR 3):**
-- `/scout` shows the unexplained items waiting (`GET /scout/queue`, counted up to one page of
-  200, then "200+"), "Run the Scout now" (`POST /scout/runs`, `fde`), and the clusters
-  (`GET /scout/clusters`, newest first): suggested name, size, the top three distinguishing
-  features (cluster mean vs the rest), when it was found, and a link to its draft with the draft's
-  status.
+- `/scout` shows the unexplained items waiting (`GET /scout/queue`, counted up to one small page
+  of 50, then "50+"; there is no count endpoint), "Run the Scout now" (`POST /scout/runs`, `fde`),
+  and the clusters (`GET /scout/clusters`, newest first, 50 at a time with "Load more", so an
+  older draft stays reachable): suggested name, size, the top three distinguishing features
+  (cluster mean vs the rest), when it was found, and a link to its draft with the draft's status.
+  The run's own job is followed (`GET /jobs/{id}`) and the page says when it ends.
 - `/scout/drafts/:id` is the draft editor (doc 11 §3–4):
-  - the display name, key, description, colour and open mass share;
+  - the display name, key, description, colour and open mass share. A colour or open mass share
+    nobody set is never sent (the picker shows a neutral grey, "None chosen yet"; the open mass
+    share field is empty, "Server default");
   - one row per likelihood source: the outcomes (named from the ACTIVE KB) take weights that are
-    shown normalised as you type; the confidence picker sets the ESS (Low 10, Medium 20, High
-    50; a cluster's empirical ESS shows as its own option);
-  - "Save as revision N" sends the normalised rows with `If-Match`; a refused save shows the
-    KB rules it breaks (`errors`), and the draft's current issues show above the form;
+    shown normalised as you type; the confidence picker sets the ESS from the ACTIVE KB's
+    `elicitation.confidence_ess` (Low, Medium, High; a cluster's empirical ESS shows as its own
+    option);
+  - **Edits survive the server.** The editor is keyed on the draft, not its version, and keeps
+    unsaved edits with the version they started from. A version bump with nothing unsaved (a
+    backtest's report) just shows through; with edits, a banner says the draft changed on the
+    server and offers "Reload the draft (discards your edits)", and Save is disabled until then.
+  - "Save as revision N" sends the normalised rows with `If-Match` (the edits' starting version).
+    A 412 says someone saved in between and offers the reload; a 409 (e.g. RUN_SCOUT superseded
+    the CANDIDATE) makes the form read-only; a 422 shows the KB rules the save breaks (`errors`),
+    and the draft's current issues show above the form. A SUPERSEDED draft says it is kept for
+    the audit trail and is read-only. Without `fde` every input is disabled;
   - the backtest: "Backtest revision N" (`fde`, only for a DRAFT or BACKTESTED draft without
-    issues) and the report: items it now explains, labelled precision, genuine payments
+    issues; it replays the KB's `scout.lookback_days`). The answer says whether a new run started
+    or one of this revision is already queued, running or done (`created`, `status`), and the
+    run's job is followed until it ends. The report: items it now explains, labelled precision, genuine payments
     disturbed, the unexplained rate before and after, the decision changes and the limitation. A
     report for an older revision is marked stale.
-  - Only CANDIDATE, DRAFT and BACKTESTED drafts can be edited. `job.updated` and
-    `scout.cluster.created` refresh both pages.
+  - Only CANDIDATE, DRAFT and BACKTESTED drafts can be edited. `scout.cluster.created` refreshes
+    both pages; a job either page started refreshes them when it ends. Not every `job.updated`
+    does (a `SIM_TICK` runs every few seconds).
   - Not yet on the page: enabling a disabled source (the API takes `enabled_sources`), the loss
     block, F3 stages and contexts, and shadow progress with promote/reject (#119).
 

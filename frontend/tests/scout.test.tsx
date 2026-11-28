@@ -3,7 +3,12 @@ import { http, HttpResponse } from 'msw';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import type { ClusterView, DraftView } from '../src/api/types';
-import { normalise, readSpec } from '../src/routes/TypologyDraftPage';
+import {
+  backtestMessage,
+  confidencePresets,
+  normalise,
+  readSpec,
+} from '../src/routes/TypologyDraftPage';
 import { problem, setMockSession } from './mocks/handlers';
 import { server } from './mocks/node';
 import { renderApp } from './renderApp';
@@ -105,8 +110,24 @@ function serve(current: DraftView = draft()): Seen {
     }),
     http.post('/api/v1/typology-drafts/:id/backtest', () => {
       seen.backtests += 1;
-      return HttpResponse.json({ job_id: crypto.randomUUID(), created: true }, { status: 202 });
+      return HttpResponse.json(
+        { job_id: crypto.randomUUID(), created: true, status: 'QUEUED' },
+        { status: 202 },
+      );
     }),
+    http.get('/api/v1/jobs/:id', ({ params }) =>
+      HttpResponse.json({
+        id: String(params.id),
+        type: 'RUN_BACKTEST',
+        status: 'RUNNING',
+        progress: 0,
+        result: null,
+        error: null,
+        attempts: 1,
+        created_at: '2026-11-25T10:00:00Z',
+        finished_at: null,
+      }),
+    ),
     http.get('/api/v1/kb/versions', () =>
       HttpResponse.json({
         items: [
@@ -147,6 +168,10 @@ function serve(current: DraftView = draft()): Seen {
             },
           },
           source_order: ['CALL_STATUS'],
+          config: {
+            elicitation: { default_ess: 20, confidence_ess: { LOW: 12, MEDIUM: 24, HIGH: 60 } },
+            scout: { lookback_days: 21 },
+          },
         },
       }),
     ),
@@ -179,6 +204,28 @@ describe('the Typology Scout', () => {
     expect(seen.runs).toBe(1);
   });
 
+  it('pages the clusters with the cursor, so an older draft stays reachable', async () => {
+    serve();
+    server.use(
+      http.get('/api/v1/scout/clusters', ({ request }) => {
+        const cursor = new URL(request.url).searchParams.get('cursor');
+        return HttpResponse.json(
+          cursor === 'older'
+            ? {
+                items: [{ ...CLUSTER, id: 'c-2', suggested_name: 'Older cluster' }],
+                next_cursor: null,
+              }
+            : { items: [CLUSTER], next_cursor: 'older' },
+        );
+      }),
+    );
+    const { user } = renderApp('/scout');
+    await screen.findByRole('row', { name: /New-payee collect scam/ });
+    await user.click(screen.getByRole('button', { name: 'Load more' }));
+    expect(await screen.findByRole('row', { name: /Older cluster/ })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Load more' })).toBeNull();
+  });
+
   it('lets a viewer read it without the run button', async () => {
     setMockSession('viewer');
     serve();
@@ -204,14 +251,15 @@ describe('the typology draft editor', () => {
     await user.clear(noCall);
     await user.type(noCall, '1');
     expect(within(row).getByText('75%')).toBeVisible();
-    await user.selectOptions(within(row).getByLabelText('Confidence'), '50');
+    // The confidence presets are the ACTIVE KB's `elicitation.confidence_ess`, not fixed numbers.
+    await user.selectOptions(within(row).getByLabelText('Confidence'), '60');
     await user.click(screen.getByRole('button', { name: 'Save as revision 3' }));
     expect(await screen.findByText('Saved as revision 3.')).toBeVisible();
     expect(seen.patches).toHaveLength(1);
     expect(seen.patches[0]?.ifMatch).toBe('"4"');
     expect(seen.patches[0]?.body).toMatchObject({
       key: 'APP_COLLECT_NEW_PAYEE',
-      likelihoods: { CALL_STATUS: { probs: [0.25, 0.75], ess: 50 } },
+      likelihoods: { CALL_STATUS: { probs: [0.25, 0.75], ess: 60 } },
     });
   });
 
@@ -272,6 +320,96 @@ describe('the typology draft editor', () => {
     expect(screen.getByRole('button', { name: 'Backtest revision 2' })).toBeDisabled();
   });
 
+  it('keeps unsaved edits when the server bumps the version, and offers a reload', async () => {
+    let current = draft();
+    serve(current);
+    server.use(http.get('/api/v1/typology-drafts/:id', () => HttpResponse.json(current)));
+    const { user, queryClient } = renderApp(`/scout/drafts/${DRAFT_ID}`);
+    const name = await screen.findByLabelText('Display name');
+    await user.clear(name);
+    await user.type(name, 'My edit');
+    // A backtest (or someone's save) bumps the version on the server.
+    current = draft({ version: 5, revision: 2, spec: { ...draft().spec, name: 'Server name' } });
+    await queryClient.invalidateQueries();
+    expect(await screen.findByText(/changed on the server/)).toBeVisible();
+    expect(screen.getByLabelText('Display name')).toHaveValue('My edit');
+    expect(screen.getByRole('button', { name: 'Save as revision 3' })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: /Reload the draft/ }));
+    expect(screen.getByLabelText('Display name')).toHaveValue('Server name');
+  });
+
+  it('takes a server-side bump quietly when nothing is unsaved', async () => {
+    let current = draft();
+    serve(current);
+    server.use(http.get('/api/v1/typology-drafts/:id', () => HttpResponse.json(current)));
+    const { queryClient } = renderApp(`/scout/drafts/${DRAFT_ID}`);
+    expect(await screen.findByLabelText('Display name')).toHaveValue('New-payee collect scam');
+    current = draft({ version: 5, spec: { ...draft().spec, name: 'After the backtest' } });
+    await queryClient.invalidateQueries();
+    await waitFor(() => {
+      expect(screen.getByLabelText('Display name')).toHaveValue('After the backtest');
+    });
+    expect(screen.queryByText(/changed on the server/)).toBeNull();
+  });
+
+  it('explains a 412 and keeps the edits until the reload', async () => {
+    serve();
+    server.use(
+      http.patch('/api/v1/typology-drafts/:id', ({ request }) =>
+        problem(412, 'Precondition Failed', 'VERSION_CONFLICT', 'Stale ETag.', request.url),
+      ),
+    );
+    const { user } = renderApp(`/scout/drafts/${DRAFT_ID}`);
+    const name = await screen.findByLabelText('Display name');
+    await user.type(name, '!');
+    await user.click(screen.getByRole('button', { name: 'Save as revision 3' }));
+    expect(await screen.findByText(/Someone saved this draft after you started/)).toBeVisible();
+    expect(screen.getByLabelText('Display name')).toHaveValue('New-payee collect scam!');
+  });
+
+  it('makes the form read-only after a 409, and for a superseded draft', async () => {
+    serve();
+    server.use(
+      http.patch('/api/v1/typology-drafts/:id', ({ request }) =>
+        problem(409, 'Conflict', 'INVALID_STATE_TRANSITION', 'Not editable.', request.url),
+      ),
+    );
+    const { user } = renderApp(`/scout/drafts/${DRAFT_ID}`);
+    await user.click(await screen.findByRole('button', { name: 'Save as revision 3' }));
+    expect(await screen.findByText(/can no longer be edited/)).toBeVisible();
+    expect(screen.getByLabelText('Display name')).toBeDisabled();
+  });
+
+  it('says a superseded draft is kept for audit and is read-only', async () => {
+    serve(draft({ status: 'SUPERSEDED' }));
+    renderApp(`/scout/drafts/${DRAFT_ID}`);
+    expect(await screen.findByText(/superseded this candidate/)).toBeVisible();
+    expect(screen.getByLabelText('Display name')).toBeDisabled();
+  });
+
+  it('never sends a colour or an open mass share nobody chose', async () => {
+    const bare = draft();
+    const seen = serve(
+      draft({ spec: { ...bare.spec, color: undefined, open_mass_share: undefined } }),
+    );
+    const { user } = renderApp(`/scout/drafts/${DRAFT_ID}`);
+    await user.type(await screen.findByLabelText('Display name'), '!');
+    await user.click(screen.getByRole('button', { name: 'Save as revision 3' }));
+    await waitFor(() => {
+      expect(seen.patches).toHaveLength(1);
+    });
+    expect(seen.patches[0]?.body).not.toHaveProperty('color');
+    expect(seen.patches[0]?.body).not.toHaveProperty('open_mass_share');
+  });
+
+  it('shows a viewer the draft with its inputs disabled', async () => {
+    setMockSession('viewer');
+    serve();
+    renderApp(`/scout/drafts/${DRAFT_ID}`);
+    expect(await screen.findByLabelText('Display name')).toBeDisabled();
+    expect(screen.queryByRole('button', { name: /Save as revision/ })).toBeNull();
+  });
+
   it('shows a missing draft as not found', async () => {
     serve();
     server.use(
@@ -294,6 +432,26 @@ describe('the editor helpers', () => {
   it('reads a stored spec leniently', () => {
     const spec = readSpec({ name: 'X', likelihoods: { A: { probs: [1], ess: 2 }, B: 'junk' } });
     expect(spec.likelihoods).toEqual({ A: { probs: [1], ess: 2 } });
-    expect(spec.open_mass_share).toBe(0.5);
+    // Nothing stored: no default here (the server's applies), and no colour nobody picked.
+    expect(spec.open_mass_share).toBeNull();
+    expect(spec.color).toBeNull();
+  });
+
+  it('reads the confidence presets from the KB, Low to High', () => {
+    expect(
+      confidencePresets({ config: { elicitation: { confidence_ess: { HIGH: 50, LOW: 10 } } } }),
+    ).toEqual([
+      { label: 'Low', ess: 10 },
+      { label: 'High', ess: 50 },
+    ]);
+    expect(confidencePresets(undefined)).toEqual([]);
+  });
+
+  it('tells a new backtest from one of the revision already', () => {
+    expect(backtestMessage(true, 'QUEUED')).toMatch(/Backtest started/);
+    expect(backtestMessage(false, 'QUEUED')).toMatch(/queued already/);
+    expect(backtestMessage(false, 'RUNNING')).toMatch(/being backtested already/);
+    expect(backtestMessage(false, 'SUCCEEDED')).toMatch(/report is below/);
+    expect(backtestMessage(true, 'FAILED')).toMatch(/Asking again/);
   });
 });

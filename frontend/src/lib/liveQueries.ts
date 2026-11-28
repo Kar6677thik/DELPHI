@@ -17,8 +17,9 @@ export const LIVE_QUERIES: Readonly<Record<string, readonly QueryKey[]>> = {
   'evidence.narrative_ready': [CASES_ROOT_KEY],
   'guardian.session.updated': [GUARDIAN_QUERY_KEY],
   'guardian.session.decided': [GUARDIAN_QUERY_KEY, OVERVIEW_QUERY_KEY],
-  // A finished RUN_SCOUT or RUN_BACKTEST brings new clusters or a report to the Scout pages.
-  'job.updated': [OVERVIEW_QUERY_KEY, ADMIN_QUERY_KEY, SCOUT_QUERY_KEY],
+  'job.updated': [OVERVIEW_QUERY_KEY, ADMIN_QUERY_KEY],
+  // A run's new clusters. A page follows the jobs it starts itself (`useFollowJob`), so not
+  // every job.updated refetches the Scout.
   'scout.cluster.created': [SCOUT_QUERY_KEY],
 };
 
