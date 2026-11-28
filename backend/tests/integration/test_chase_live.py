@@ -5,6 +5,7 @@ FR-CHS-08, #114): the simulator moves the ring's due transfers, honouring placed
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import timedelta
 from typing import Any
 from uuid import UUID, uuid4
@@ -110,18 +111,29 @@ def test_the_metrics_use_the_taint_at_approval(
     op = _post(client, "/chase/operations", {"payment_ids": [str(source)]}).json()
     candidate = next(c for c in op["candidates"] if c["account_id"] == str(internal))
     _post(client, f"/chase/operations/{op['id']}/liens", {"candidate_ids": [candidate["id"]]})
-    with env.owner.begin() as conn:  # as if the money had since been traced elsewhere
-        conn.execute(
-            text("UPDATE delphi.chase_candidates SET taint_paise = 0 WHERE id = :c"),
-            {"c": candidate["id"]},
-        )
+
+    class Lowered(TracedOnly):
+        """The re-trace finds less of the money on the liened account, as if it had since
+        been traced elsewhere, so the candidate's stored taint drops below the lien."""
+
+        def candidates(self, *args: Any) -> Any:
+            return [
+                replace(c, taint_paise=1) if c.account_id == internal else c
+                for c in super().candidates(*args)
+            ]
+
     env.clock.advance(timedelta(minutes=10))
     with env.sessions.begin() as s:
-        assert retrace_due(s, env.clock, TracedOnly(), limit=10) == 1
+        assert retrace_due(s, env.clock, Lowered(), limit=10) == 1
+    view = client.get(f"/api/v1/chase/operations/{op['id']}").json()
+    lowered = next(c for c in view["candidates"] if c["account_id"] == str(internal))
+    assert lowered["taint_paise"] == 1  # the lower taint survived the re-trace
     with env.owner.connect() as conn:
         metrics = conn.execute(
             text("SELECT metrics FROM delphi.chase_operations WHERE id = :o"), {"o": op["id"]}
         ).scalar_one()
+    # Read from the candidate, the lien would be ₹1.2L beyond its taint; from the lien's taint
+    # at approval, it is within it (#258 CodeRabbit finding).
     assert metrics["amount_frozen_beyond_taint_paise"] == 0
 
 
