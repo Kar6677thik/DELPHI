@@ -11,7 +11,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select, text
+from sqlalchemy import event, select, text
 
 from delphi.navigator.campaign_store import (
     VULNERABLE_RANK_WEIGHT,
@@ -157,6 +157,36 @@ def test_a_chain_of_shared_entities_is_one_campaign(env: Env) -> None:  # noqa: 
     again = _replay(env)
     assert again["new"] == 0 and again["changed"] == 0 and again["moved_cases"] == 0
     assert _campaign_of(env, a) == campaign
+
+
+def test_a_batch_publishes_its_events_last(env: Env) -> None:  # noqa: F811
+    """#288 CodeRabbit finding: `publish` holds the outbox lock until commit, so a batch
+    publishes once, after every campaign write and the watermark."""
+    first, second = (
+        (_case(env), _case(env, minutes=1)),
+        (_case(env, minutes=2), _case(env, minutes=3)),
+    )
+    for pair in (first, second):
+        mule = _new_account(env)
+        for case_id in pair:
+            _payee(env, case_id, mule)
+    seen: list[str] = []
+
+    def capture(_conn: Any, _cursor: Any, statement: str, *_args: Any) -> None:
+        seen.append(statement)
+
+    engine = env.sessions.kw["bind"]
+    event.listen(engine, "before_cursor_execute", capture)
+    try:
+        counts = _recompute(env)
+    finally:
+        event.remove(engine, "before_cursor_execute", capture)
+    assert counts["new"] == 2 and counts["changed"] == 2
+    writes = [i for i, q in enumerate(seen) if "campaign_watermark" in q and "UPDATE" in q]
+    writes += [i for i, q in enumerate(seen) if "delphi.campaigns" in q and "INSERT" in q]
+    events = [i for i, q in enumerate(seen) if "outbox_events" in q and "INSERT" in q]
+    assert writes and len(events) == 2
+    assert min(events) > max(writes)
 
 
 def test_a_merge_keeps_the_oldest_campaign(env: Env) -> None:  # noqa: F811
