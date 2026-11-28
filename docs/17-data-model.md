@@ -160,7 +160,7 @@ campaigns(id, leading_hypothesis, case_count, f3_stage_max, expected_loss_paise,
           vulnerable_victims, rank_score, merged_into null, created_at, updated_at)
 review_sweep_failures(account_id pk, attempts, last_error, next_attempt_at, created_at,
                       updated_at)
-       -- migration 0021 (#290); a candidate of ACCOUNT_REVIEW_SWEEP whose review failed to
+       -- migration 0022 (#290); a candidate of ACCOUNT_REVIEW_SWEEP whose review failed to
        -- open, skipped until next_attempt_at; deleted when its review opens (doc 09 §1)
 labels(id, subject_type, subject_id, hypothesis_key, label_source, known_at, created_at,
        unique(subject_type, subject_id, label_source))   idx (subject_type, known_at)
