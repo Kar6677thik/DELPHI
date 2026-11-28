@@ -133,6 +133,8 @@ class _Builder:
             self.spec.customers + persona_count
         )
         self.accounts: list[Account] = []
+        # Established payees' save times wait for every account to exist (see ``saves``).
+        self.pending_saves: list[tuple[int, datetime, float]] = []
         self.merchants_by_category: dict[str, list[UUID]] = {}
         self.external_count = 0
 
@@ -160,6 +162,19 @@ class _Builder:
         opening = self.cfg.opening_balance_inr
         median = opening.median * self.cfg.income_amount_scale[income_band] * _PAISE_PER_INR
         return round(median * math.exp(opening.sigma * rng.standard_normal()))
+
+    def saves(self, payees: list[Payee]) -> list[Payee]:
+        """Each established payee saved between the later of the customer's and the payee's
+        account openings and the history start, to the second: a customer cannot have saved a
+        shop or a person whose account did not exist yet (#192 review)."""
+        opened = {a.id: a.opened_at for a in self.accounts}
+        out = list(payees)
+        for index, customer_opened, u in self.pending_saves:
+            payee = out[index]
+            low = max(customer_opened, opened[payee.account_id])
+            seconds = max(int((self.start - low).total_seconds()), 1)
+            out[index] = replace(payee, added_at=low + timedelta(seconds=int(u * seconds)))
+        return out
 
     def merchants(self) -> None:
         rng = keyed_rng(self.spec.seed, "merchants")
@@ -299,13 +314,16 @@ class _Builder:
             if account_id in chosen:
                 continue  # a customer saves each beneficiary once: draw again
             chosen.add(account_id)
+            # Saved some time between the later of the two accounts' openings and the history
+            # start (#192 review): one draw now, the instant once the payee's account is known.
+            self.pending_saves.append((len(payees), opened_at, float(rng.random())))
             payees.append(
                 Payee(
                     id=self.ids["payee"].next(),
                     customer_id=customer.id,
                     account_id=account_id,
                     label=label,
-                    added_at=between(rng, opened_at, self.start),
+                    added_at=self.start,  # set by ``saves``
                 )
             )
         return customer
@@ -375,5 +393,5 @@ def generate_population(
         customers=tuple(customers),
         accounts=tuple(_with_minimal_kyc(config, builder.spec.seed, builder.accounts)),
         devices=tuple(devices),
-        payees=tuple(payees),
+        payees=tuple(builder.saves(payees)),
     )
