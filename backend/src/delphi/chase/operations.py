@@ -447,7 +447,7 @@ def placed_lien_totals(conn: Connection, account_ids: Iterable[UUID]) -> dict[UU
     return {r[0]: int(r[1]) for r in rows}
 
 
-def _metrics(session: Session, op: Any) -> dict[str, Any]:
+def current_metrics(session: Session, op: Any) -> dict[str, Any]:
     """The operation's §6 metrics, from each lien's taint at approval: re-traces overwrite the
     candidates' taint, so it can't come from there (#258 review)."""
     lien = liens.c
@@ -497,10 +497,11 @@ def retrace_due(session: Session, clock: Clock, source: CandidateSource, *, limi
     """docs/10 §5 step 5: re-trace up to ``limit`` due OPEN operations (``due_for_retrace``), in
     the caller's transaction, which ``bound_trace`` bounds. New candidates appear, existing ones
     get their taint, balance and score now; liens are not changed. The operation's metrics are
-    refreshed. Returns how many re-traced."""
+    refreshed. Their CHASE_UPDATED events are published together at the end. Returns how many
+    re-traced."""
     now = clock.now()
     bound_trace(session)
-    done = 0
+    retraced: list[UUID] = []
     for op in due_for_retrace(session, now, limit=limit):
         version = get_version(session, op.kb_version_id)
         assert version is not None
@@ -543,8 +544,14 @@ def retrace_due(session: Session, clock: Clock, source: CandidateSource, *, limi
         session.execute(
             update(chase_operations)
             .where(chase_operations.c.id == op.id)
-            .values(last_traced_at=now, metrics=_metrics(session, op), version=op.version + 1)
+            .values(
+                last_traced_at=now, metrics=current_metrics(session, op), version=op.version + 1
+            )
         )
-        publish(session, EventType.CHASE_UPDATED, str(op.id), {"operation_id": str(op.id)})
-        done += 1
-    return done
+        retraced.append(op.id)
+    # Published after every trace, still in this transaction: `publish` holds the outbox lock
+    # until commit, so publishing per operation would make every other publisher wait through
+    # the rest of the batch's traces (#285, #258 review).
+    for op_id in retraced:
+        publish(session, EventType.CHASE_UPDATED, str(op_id), {"operation_id": str(op_id)})
+    return len(retraced)

@@ -10,7 +10,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
-from sqlalchemy import text
+from sqlalchemy import event, text
 
 from delphi.api.security import Principal
 from delphi.chase.api import TracedOnly, placed_lien_totals, retrace_due
@@ -155,6 +155,35 @@ def test_a_retrace_takes_at_most_its_limit_and_skips_while_busy(
         busy = job(ctx)
     assert busy["retraced"] == 0 and busy["retrace_skipped"] == "busy"
     assert job(ctx)["retraced"] == 2  # two batches of one
+
+
+def test_a_retrace_publishes_its_events_after_every_trace(
+    env: Env,  # noqa: F811
+    writer: tuple[TestClient, Principal],  # noqa: F811
+) -> None:
+    """#258 review: the outbox lock is held from the first publish to the commit, so the batch
+    publishes its CHASE_UPDATED events only once every operation is traced."""
+    client, _ = writer
+    for _ in range(2):
+        source, _internal, _external = _scam(env)
+        _post(client, "/chase/operations", {"payment_ids": [str(source)]})
+    env.clock.advance(timedelta(minutes=10))
+    seen: list[str] = []
+
+    def capture(_conn: Any, _cursor: Any, statement: str, *_args: Any) -> None:
+        seen.append(statement)
+
+    engine = env.sessions.kw["bind"]
+    event.listen(engine, "before_cursor_execute", capture)
+    try:
+        with env.sessions.begin() as s:
+            assert retrace_due(s, env.clock, TracedOnly(), limit=10) == 2
+    finally:
+        event.remove(engine, "before_cursor_execute", capture)
+    traces = [i for i, q in enumerate(seen) if "chase_candidates" in q and "INSERT" in q]
+    events = [i for i, q in enumerate(seen) if "outbox_events" in q and "INSERT" in q]
+    assert traces and len(events) == 2
+    assert min(events) > max(traces)
 
 
 def test_the_tick_holds_its_payers_lien_locks(env: Env) -> None:  # noqa: F811

@@ -39,6 +39,7 @@ from delphi.chase.operations import (
     CandidateSource,
     TracedOnly,
     active_liens_paise,
+    current_metrics,
     lock_lien_accounts,
     retrace_due,
 )
@@ -177,10 +178,12 @@ def process_tickets(
 
 
 def _close(session: Session, clock: Clock, op: Any, *, by: UUID | None, reason: str) -> None:
+    """A closed operation is never re-traced, so its metrics are computed here, from its liens
+    as they are now: a ticket acknowledged in the same transaction counts (#258 review)."""
     session.execute(
         update(chase_operations)
         .where(chase_operations.c.id == op.id)
-        .values(status="CLOSED", version=op.version + 1)
+        .values(status="CLOSED", metrics=current_metrics(session, op), version=op.version + 1)
     )
     record(
         session,

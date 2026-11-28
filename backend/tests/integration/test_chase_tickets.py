@@ -130,6 +130,39 @@ def test_the_operation_closes_after_the_golden_hour_with_nothing_pending(
     assert status == "CLOSED"
 
 
+def test_closing_stores_the_metrics_of_a_lien_placed_in_the_same_run(
+    env: Env,  # noqa: F811
+    writer: tuple[TestClient, Principal],  # noqa: F811
+) -> None:
+    """#258 review: the run that acknowledges the last ticket and closes the operation stores
+    the final metrics. A closed operation is never re-traced, so nothing would refresh them."""
+    client, _ = writer
+    view, _external, _ticket = _ticketed(client, env)
+    job = ChaseRetraceJob(
+        env.sessions,
+        env.clock,
+        lambda _s: lambda _t: ACK_AFTER,
+        tickets_per_run=200,
+        retrace_batch=10,
+        retrace_max_per_run=50,
+    )
+    ctx: Any = JobContext.__new__(JobContext)
+    env.clock.advance(timedelta(minutes=90))  # acknowledged, and past the golden hour
+    assert job(ctx) == {"acknowledged": 1, "expired": 0, "closed": 1, "retraced": 0}
+    with env.owner.connect() as conn:
+        status, metrics = conn.execute(
+            select(chase_operations.c.status, chase_operations.c.metrics).where(
+                chase_operations.c.id == UUID(view["id"])
+            )
+        ).one()
+    lien = _lien(client, view["id"])
+    assert status == "CLOSED" and lien["status"] == "PLACED"
+    assert metrics["tracing_delay_s"] is not None and metrics["tracing_delay_s"] > 0
+    # Placed at 90 minutes, after the golden hour: nothing recovered within it.
+    assert metrics["tracing_delay_s"] == 90 * 60
+    assert metrics["recovered_in_golden_hour_paise"] == 0
+
+
 def test_release_and_manual_close(
     env: Env,  # noqa: F811
     writer: tuple[TestClient, Principal],  # noqa: F811
