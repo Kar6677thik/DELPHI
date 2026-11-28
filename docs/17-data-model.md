@@ -55,7 +55,8 @@ devices(id, customer_id → customers, fingerprint, os, first_seen_at)
 payees(id, customer_id, account_id, label, added_at, unique(customer_id, account_id))
 payments(id, payer_account_id, payee_account_id, amount_paise > 0, channel, initiated_at,
          device_id null, status, origin, executed_at null, scheduled_by null, created_at,
-         story_local_time null)  -- a DEMO_STORY payment's scripted IST "HH:MM" (doc 14 §10)
+         story_local_time null,  -- a DEMO_STORY payment's scripted IST "HH:MM" (doc 14 §10)
+         story null)             -- the demo story it plays (S1…S4): its scripted prior (#291)
    idx: (payer_account_id, initiated_at), (payee_account_id, initiated_at), (status)
 ledger_entries(id bigint identity, account_id, payment_id, delta_paise, balance_after_paise, at)
    idx: (account_id, at)
@@ -198,7 +199,7 @@ probe_yield_daily(source_key, day, n, mean_info_yield_bits, primary key(source_k
 question_variants(id, probe_key, language, text, options jsonb, status, generated_by (HUMAN|LLM),
                   llm_call_id null, job_id null, reviewed_by null, reviewed_at null,
                   included_in_kb_version null, created_at)
-       -- migration 0021 (#110); reviewed ⇔ not PENDING_REVIEW; included only if APPROVED;
+       -- migration 0022 (#110); reviewed ⇔ not PENDING_REVIEW; included only if APPROVED;
        -- llm_call_id ⇔ LLM; text 1–300 chars; idx (status, created_at, id), (job_id),
        -- (included_in_kb_version); reviewed_by has no FK (the audit chain names the reviewer)
 variant_exposures(customer_id, variant_id, last_shown_at, primary key(customer_id, variant_id))
