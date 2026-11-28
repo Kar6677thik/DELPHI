@@ -1,5 +1,7 @@
 import { expect, type Locator, type Page, test } from '@playwright/test';
 
+import { approvedTexts, resetToSeed } from './demo';
+
 // E2E-S1, the Guardian half (docs/21 §4, #101): Kamala, on a call with an unknown number and
 // typing normally, pays a "safe account" at her script's 23:40 (#291); answering what is asked
 // as her persona script does (purpose, then the spell-breaker with an app switch), she ends on
@@ -16,8 +18,8 @@ const STEP_UP_AFTER_MS = 2_000;
 /** Staging the story is a worker job; each probe waits on the planner. */
 const STAGED_WITHIN_MS = 60_000;
 const DECIDED_WITHIN_MS = 90_000;
-/** No `te` variant of the spell-breaker is APPROVED in KB v1 (#4), so she reads English. */
-const SPELL_BREAKER_EN = /police|officer|arrest/i;
+/** Kamala reads Telugu: an APPROVED `te` spell-breaker if the KB has one, else English (#4). */
+const KAMALA_LANGUAGE = 'te';
 
 /** One app switch (docs/08 §4 `visibility_hidden_count`): the page hides, then comes back. */
 async function switchAppAndBack(page: Page): Promise<void> {
@@ -29,13 +31,24 @@ async function switchAppAndBack(page: Page): Promise<void> {
   }
 }
 
-test('E2E-S1 (Guardian): Kamala answers as scripted and is protected', async ({ page }) => {
+test('E2E-S1 (Guardian): Kamala answers as scripted and is protected', async ({
+  page,
+  baseURL,
+}) => {
   test.setTimeout(4 * 60_000);
   await page.goto('/');
   await page.getByLabel('Username').fill(USERNAME);
   await page.getByLabel('Password').fill(PASSWORD);
   await page.getByRole('button', { name: 'Sign in' }).click();
   await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible();
+  // From the seed: earlier journeys' S-1 runs change her history (payee saved, 24 h counts),
+  // and with it the prior and the path (#291).
+  await resetToSeed(page, baseURL);
+  const spellBreakerTexts = await approvedTexts(
+    page.request,
+    'SPELL_BREAKER_DIGITAL_ARREST',
+    KAMALA_LANGUAGE,
+  );
 
   await page.goto('/phone?story=S1');
   await expect(page.getByText(/S-1 Kamala is staged/)).toBeVisible({ timeout: STAGED_WITHIN_MS });
@@ -81,7 +94,10 @@ test('E2E-S1 (Guardian): Kamala answers as scripted and is protected', async ({ 
     if (await purpose.isVisible()) {
       await answer(purpose, PURPOSE_AFTER_MS, () => purpose.click());
     } else if (await no.isVisible()) {
-      await expect(phone.getByRole('heading', { level: 2 })).toHaveText(SPELL_BREAKER_EN);
+      const heading = (await phone.getByRole('heading', { level: 2 }).innerText())
+        .replace(/\s+/g, ' ')
+        .trim();
+      expect(spellBreakerTexts, 'an APPROVED spell-breaker variant').toContain(heading);
       spellBreakers += 1;
       await answer(no, SPELL_BREAKER_AFTER_MS, async () => {
         await switchAppAndBack(page);
