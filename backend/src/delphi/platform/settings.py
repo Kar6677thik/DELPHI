@@ -159,6 +159,10 @@ class Settings(BaseSettings):
     yield_drift_ratio: float = Field(default=0.7, gt=0, lt=1)
     yield_min_recent_count: int = Field(default=30, ge=1)
     yield_min_baseline_count: int = Field(default=30, ge=1)
+    # Off-policy evaluation of the first active probe (docs/12 §3).
+    ope_bootstrap_resamples: int = Field(default=1_000, ge=100, le=100_000)
+    ope_min_ess: float = Field(default=30.0, gt=0)
+    ope_min_support_coverage: float = Field(default=0.5, gt=0, le=1)
 
     http_host: str = "0.0.0.0"  # nosec B104: binds inside the pod only (docs/23 §4)
     http_port: Port = 8000
