@@ -92,10 +92,13 @@ def test_a_backtest_reports_and_marks_the_draft_backtested(
     again = fde.post(url, headers={**BROWSER, "Idempotency-Key": str(uuid4())})
     assert again.json() == {**queued.json(), "created": False}  # one job per revision
     with env.owner.connect() as conn:
-        params = conn.execute(
-            text("SELECT params FROM delphi.jobs WHERE type = 'RUN_BACKTEST'")
-        ).scalar_one()
+        row = conn.execute(
+            text("SELECT params, max_attempts FROM delphi.jobs WHERE type = 'RUN_BACKTEST'")
+        ).one()
+    params, max_attempts = row
     assert params == {"draft_id": str(candidate), "revision": 2}
+    # A busy lock is a failed attempt, so it gets more than the platform's 3 (#300 review).
+    assert max_attempts == 6  # DELPHI_SCOUT_BACKTEST_MAX_ATTEMPTS
 
     result = RunBacktestJob(env.sessions, env.clock, max_items=500)(_ctx(params))
     assert result == {"draft_id": str(candidate), "revision": 2, "written": True}

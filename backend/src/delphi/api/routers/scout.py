@@ -451,6 +451,7 @@ def request_backtest(
             idempotency_key=backtest_key(draft_id, row.revision, attempt),
             params={"draft_id": str(draft_id), "revision": row.revision},
             created_by=principal.user_id,
+            max_attempts=platform.settings.scout_backtest_max_attempts,
         )
         status = JobStatus.QUEUED.value if earlier is None else earlier.status
         return HTTPStatus.ACCEPTED, {

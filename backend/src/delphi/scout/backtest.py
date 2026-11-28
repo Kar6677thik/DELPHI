@@ -23,7 +23,8 @@ There is no pass/fail: the FDE engineer judges.
 in one transaction with ``SET LOCAL statement_timeout``/``work_mem``. Everything is loaded in a
 fixed number of statements per chunk of ``ID_CHUNK`` ids (``= ANY(:ids)``), never per item, and
 one backtest replays at a time (advisory lock 57): a busy lock raises ``BacktestBusyError``, so
-the job is retried later rather than skipped.
+the job is retried later rather than skipped
+(``DELPHI_SCOUT_BACKTEST_MAX_ATTEMPTS`` attempts, set when the API enqueues it).
 
 **Labels** follow docs/05 §8's precedence (INVESTIGATOR_DISPOSITION first), the one the sensing
 trainers use, not the latest known. **The queue** is the unexplained items not dismissed from the
