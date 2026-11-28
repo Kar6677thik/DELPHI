@@ -610,6 +610,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/chase/operations/{operation_id}/liens/{lien_id}/release": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Release
+         * @description docs/05 §6: a PLACED lien is released, with the reason; 409 for any other status.
+         */
+        post: operations["release_api_v1_chase_operations__operation_id__liens__lien_id__release_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/chase/operations/{operation_id}/close": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Close
+         * @description docs/10 §5 step 7: a manual close, at any time; 409 once closed.
+         */
+        post: operations["close_api_v1_chase_operations__operation_id__close_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/scout/queue": {
         parameters: {
             query?: never;
@@ -642,6 +682,47 @@ export interface paths {
          *     concurrent dismissal of the same item won.
          */
         post: operations["dismiss_item_api_v1_scout_queue__item_id__dismiss_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/scout/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Request Run
+         * @description docs/11 §2: a manual Scout run, as a `RUN_SCOUT` job (docs/16 "→ job").
+         */
+        post: operations["request_run_api_v1_scout_runs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/scout/clusters": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Clusters
+         * @description The clusters of every run, newest first, each with its latest typology draft; docs/16
+         *     keyset paging (``limit`` ≤ 200, ``cursor``), on the ``(created_at, id)`` index.
+         */
+        get: operations["read_clusters_api_v1_scout_clusters_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1185,6 +1266,51 @@ export interface components {
              */
             paste_count: number;
         };
+        /** ClusterPage */
+        ClusterPage: {
+            /** Items */
+            items: components["schemas"]["ClusterView"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
+        /** ClusterView */
+        ClusterView: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            /** Size */
+            size: number;
+            /** Member Refs */
+            member_refs: {
+                [key: string]: string;
+            }[];
+            /** Distinguishing Features */
+            distinguishing_features: {
+                [key: string]: unknown;
+            };
+            /** Outcome Profile */
+            outcome_profile: {
+                [key: string]: unknown;
+            };
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Draft Id */
+            draft_id: string | null;
+            /** Draft Status */
+            draft_status: string | null;
+            /** Suggested Name */
+            suggested_name: string | null;
+        };
         /** CoolingOffAnswer */
         CoolingOffAnswer: {
             cooling_off: components["schemas"]["CoolingOffIn"];
@@ -1683,6 +1809,10 @@ export interface components {
             placed_at: string | null;
             /** Review Due At */
             review_due_at: string | null;
+            /** Released At */
+            released_at: string | null;
+            /** Release Reason */
+            release_reason: string | null;
         };
         /** LoginRequest */
         LoginRequest: {
@@ -1771,6 +1901,8 @@ export interface components {
             telemetry?: components["schemas"]["TelemetryIn"] | null;
             /** Story Local Time */
             story_local_time?: string | null;
+            /** Story Job Id */
+            story_job_id?: string | null;
         };
         /** PaymentSummary */
         PaymentSummary: {
@@ -1920,6 +2052,11 @@ export interface components {
             top_features: {
                 [key: string]: unknown;
             }[];
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "MODEL" | "STORY_SCRIPT";
         };
         /**
          * ProbeResponseRequest
@@ -2111,11 +2248,26 @@ export interface components {
                 [key: string]: components["schemas"]["CheckView"];
             };
         };
+        /** ReleaseLien */
+        ReleaseLien: {
+            /** Reason */
+            reason: string;
+        };
         /**
          * Role
          * @enum {string}
          */
         Role: "VIEWER" | "INVESTIGATOR" | "FDE_ENGINEER" | "ADMIN";
+        /** RunRequested */
+        RunRequested: {
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            /** Created */
+            created: boolean;
+        };
         /**
          * SessionMode
          * @enum {string}
@@ -3340,6 +3492,77 @@ export interface operations {
             };
         };
     };
+    release_api_v1_chase_operations__operation_id__liens__lien_id__release_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                operation_id: string;
+                lien_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReleaseLien"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChaseView"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    close_api_v1_chase_operations__operation_id__close_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                operation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChaseView"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     read_queue_api_v1_scout_queue_get: {
         parameters: {
             query?: {
@@ -3396,6 +3619,69 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["QueueItemView"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    request_run_api_v1_scout_runs_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunRequested"];
+                };
+            };
+            /** @description An RFC 9457 problem (docs/16 §1) */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    read_clusters_api_v1_scout_clusters_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClusterPage"];
                 };
             };
             /** @description An RFC 9457 problem (docs/16 §1) */

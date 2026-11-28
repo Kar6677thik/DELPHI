@@ -15,7 +15,7 @@ import sys
 import threading
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID
 
@@ -26,6 +26,7 @@ from sqlalchemy import Engine, text
 
 from delphi.api.app import create_app
 from delphi.api.contract import OPENAPI_FILE, openapi_document
+from delphi.chase.jobs import register_chase_jobs
 from delphi.guardian.api import (
     LiveGuardian,
     WorkerGuardian,
@@ -34,6 +35,7 @@ from delphi.guardian.api import (
     worker_guardian,
 )
 from delphi.guardian.service import GuardianService
+from delphi.guardian.story_prior import StoryPrior
 from delphi.kb.canonical import content_sha256
 from delphi.kb.issues import KbValidationError
 from delphi.kb.loader import load_and_validate
@@ -71,11 +73,12 @@ from delphi.probes.api import (
     passive_fetchers,
 )
 from delphi.probes.registry import CLASSIFIER_NAMES
+from delphi.scout.jobs import register_scout_jobs
 from delphi.sensing.api import SensingInference
 from delphi.sensing.config import load_sensing_config
 from delphi.sensing.jobs import register_sensing_jobs
 from delphi.sensing.mule_scores import MuleSweepLimits
-from delphi.sim.api import PROFILES, dataset_exists, request_dataset
+from delphi.sim.api import PROFILES, dataset_exists, request_dataset, scripted_priors
 from delphi.sim.customer import LiveCustomer
 from delphi.sim.dataset import generate_dataset
 from delphi.sim.generator_config import load_generator_config
@@ -246,10 +249,12 @@ def _guardian_service(
         telemetry,
     )
     executor = passive_executor(settings.passive_probe_threads)
+    # A demo story's payment starts from the story's scripted prior (docs/06 §17, #291).
+    prior = StoryPrior(inference, scripted_priors())
     service = GuardianService(
         platform.sessions,
         platform.clock,
-        inference,
+        prior,
         fetchers,
         executor,
         otp_key=settings.otp_key,
@@ -305,6 +310,12 @@ def worker_registry(
         clock=platform.clock,
         mule_sweep=MuleSweepLimits.of(settings),
     )
+    register_chase_jobs(
+        registry,
+        sessions=platform.sessions,
+        clock=platform.clock,
+        tickets_per_run=settings.chase_tickets_per_run,
+    )
     llm = LlmService(
         platform.sessions,
         platform.clock,
@@ -319,6 +330,13 @@ def worker_registry(
         clock=platform.clock,
         p_mule_fallback=load_sensing_config().features.mule_score_fallback,
         review_limits=SweepLimits.of(settings),
+    )
+    register_scout_jobs(
+        registry,
+        sessions=platform.sessions,
+        clock=platform.clock,
+        max_items=settings.scout_max_items,
+        failure_backoff=timedelta(minutes=settings.scout_failure_backoff_min),
     )
     if settings.simulation_enabled and settings.sim_database_url is None:
         # The api accepts simulated calls on this flag; a worker without the simulator's pool

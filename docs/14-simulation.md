@@ -547,7 +547,9 @@ The worker runs a `SIM_TICK` job every 10 s (wall clock). It:
 2. Emits background live payments at `demo_background_rate` (default 1 every 20 s), through
    Guardian with `SimCustomerChannel` (runner `WORKER`), so the monitor always shows traffic and
    shadow mode accumulates sessions.
-3. Acknowledges CFCFRMS tickets whose latency has elapsed, and expires overdue ones.
+
+The CFCFRMS tickets (§9) are settled by `CHASE_RETRACE`, not here: it acknowledges the tickets
+whose simulated latency has elapsed and expires overdue ones (doc 10 §5, #113).
 
 Label arrivals are delivered by the separate `LABEL_DELIVERY` job from
 `sim_truth.label_schedule` (doc 04 §5.4). `bank.sim_schedule` never holds labels, so the app
@@ -641,6 +643,12 @@ Details where the scripts are silent:
   script's `local_time` (S-1: 23:40 IST) goes on the payment instead (`story_local_time`, #291):
   the job writes it in autoplay and returns it in the interactive `payment` body, and the prior's
   hour features read it (doc 13 §3). Everything else about the payment is real time.
+- **The story's prior is scripted** (#291): the job puts the story's name on the payment
+  (`story`): on the autoplay payment it makes, and, for the phone, the server sets it once the
+  payment matches the job that staged it (its `story_job_id`, doc 16). The Guardian starts the session from the story's `scripted_prior`
+  (`personas.yaml`, doc 06 §17) instead of the trained model's, recorded as
+  `prior_source = STORY_SCRIPT`. The trained prior's share of the story's hypothesis is a few
+  tenths of a percent and swings ~15× between trainings.
 - **Idempotency.** The payment's id is keyed by the job, so a retry after a lost lease finds the
   payment its first attempt made, and the runner returns its session (one per payment). Each run
   is one short transaction.

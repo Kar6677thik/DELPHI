@@ -298,9 +298,11 @@ to start, exit code 2, naming the variable, if one is missing or invalid.
 | `DELPHI_WORKER_POLL_INTERVAL_S` / `DELPHI_WORKER_HEARTBEAT_MAX_AGE_S` | `1.0` / `30` | worker | doc 20 §3 |
 | `DELPHI_DEMO_RESET_TIMEOUT_S` | `60` | worker | the demo reset's statement timeout (doc 14 §10, FR-SIM-08) |
 | `DELPHI_OUTBOX_RETENTION_H` / `DELPHI_IDEMPOTENCY_RETENTION_H` | `24` / `24` | worker | doc 17 §6 |
+| `DELPHI_SCOUT_MAX_ITEMS` / `DELPHI_SCOUT_FAILURE_BACKOFF_MIN` | `500` / `60` | worker | doc 11 §2: the most queue items (and reference sessions) one `RUN_SCOUT` loads, and how long the auto-trigger waits after a failed run |
 | `DELPHI_REVIEW_SWEEP_BATCH` / `DELPHI_REVIEW_SWEEP_MAX_PER_RUN` / `DELPHI_REVIEW_COMPLAINT_LOOKBACK_DAYS` | `25` / `100` / `30` | worker | doc 09 §1: reviews opened per transaction and per run, and the oldest complaint that opens one |
 | `DELPHI_MULE_SWEEP_BATCH` / `DELPHI_MULE_SWEEP_MAX_PER_RUN` | `200` / `2000` | worker | doc 13 §6: accounts rescored per transaction and per `MULE_SWEEP` run |
 | `DELPHI_YIELD_RECENT_DAYS` / `DELPHI_YIELD_BASELINE_DAYS` / `DELPHI_YIELD_DRIFT_RATIO` / `DELPHI_YIELD_MIN_RECENT_COUNT` / `DELPHI_YIELD_MIN_BASELINE_COUNT` | `7` / `28` / `0.7` / `30` / `30` | worker | doc 12 §5 |
+| `DELPHI_CHASE_TICKETS_PER_RUN` | `200` | worker | doc 10 §5: CFCFRMS tickets `CHASE_RETRACE` settles per run |
 | `DELPHI_SECRET_KEY` | unset | api | Secret `delphi-app` (`openssl rand -hex 32`; 32 characters or more). Keys the Guardian's OTP digest (doc 08 §4). Required in `demo` wherever the Guardian runs; `dev` and `test` fall back to a fixed development key |
 | `DELPHI_PUBLIC_ORIGIN` | unset | api | ConfigMap: `https://delphi.karthiksurkanti.in`. The Origin that mutating requests must carry (CSRF, doc 19 §4). Unset in development: the request's own origin |
 | `DELPHI_CLIENT_IP_HEADER` | unset | api | ConfigMap: `CF-Connecting-IP`. The header with the real client IP behind the tunnel, used for the login lockout and audit. Safe because only the node (the host tunnel) can reach the api pod (§4 NetworkPolicies) |

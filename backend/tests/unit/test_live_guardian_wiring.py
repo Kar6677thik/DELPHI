@@ -13,6 +13,7 @@ from sqlalchemy import create_engine
 from delphi.api.app import create_app
 from delphi.cli import live_guardian_for
 from delphi.guardian.api import LiveGuardian
+from delphi.guardian.story_prior import StoryPrior
 from delphi.kb.loader import load_and_validate
 from delphi.kb.model import KnowledgeBase
 from delphi.platform.clock import SystemClock
@@ -46,7 +47,9 @@ def test_the_slot_uses_the_sensing_inference_as_its_prior() -> None:
     live, free_pool = live_guardian_for(_platform(), kb_source=_repo_kb)
     try:
         assert isinstance(live, LiveGuardian)
-        assert isinstance(live.service._prior, SensingInference)
+        # A demo story's payment gets its scripted prior; every other, the sensing inference.
+        assert isinstance(live.service._prior, StoryPrior)
+        assert isinstance(live.service._prior.inner, SensingInference)
         assert set(live.service._fetchers) == {
             "BENEFICIARY_INTEL",
             "COUNTERPARTY_PHONE_RISK",

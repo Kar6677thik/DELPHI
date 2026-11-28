@@ -55,7 +55,8 @@ devices(id, customer_id → customers, fingerprint, os, first_seen_at)
 payees(id, customer_id, account_id, label, added_at, unique(customer_id, account_id))
 payments(id, payer_account_id, payee_account_id, amount_paise > 0, channel, initiated_at,
          device_id null, status, origin, executed_at null, scheduled_by null, created_at,
-         story_local_time null)  -- a DEMO_STORY payment's scripted IST "HH:MM" (doc 14 §10)
+         story_local_time null,  -- a DEMO_STORY payment's scripted IST "HH:MM" (doc 14 §10)
+         story null)             -- the demo story it plays (S1…S4): its scripted prior (#291)
    idx: (payer_account_id, initiated_at), (payee_account_id, initiated_at), (status)
 ledger_entries(id bigint identity, account_id, payment_id, delta_paise, balance_after_paise, at)
    idx: (account_id, at)
@@ -270,7 +271,8 @@ chain, 43 outbox publishing (doc 04 §5.5), 44 the bootstrap admin, 45 dataset r
 dataset writes, 47 loading KB v1, 48 storing a sensing model artifact, 49 label delivery
 (#263), 50 the ACCOUNT_REVIEW sweep (doc 09 §1), 51 the demo reset, 54 `MULE_SWEEP` (doc 13
 §6); and class 52 for the two-key lien-account locks `(52, hashtext(account_id))` (doc 10 §5,
-FR-CHS-05). Verifying a window checks that its first entry links to the entry just before the
+FR-CHS-05); 55 `RUN_SCOUT` (doc 11 §2). Verifying a window checks that its first entry links to
+the entry just before the
 window (or to the genesis hash), so a deleted or edited earlier entry is caught too. `GET
 /admin/audit/verify?from=&to=` recomputes the chain. The DD pack verifies the entries for its
 subject. Audited actions: every state transition of every aggregate, logins (success and
